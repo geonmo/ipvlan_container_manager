@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}DRBD 설정 결과 - HA Container Manager{% endblock %}
+{% block nav_drbd %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <div class="d-flex align-items-center mb-4">
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> DRBD 설정 파일 생성 완료</h2>
+      <a href="/drbd/" class="btn btn-outline-secondary btn-sm ms-auto">
+        <i class="bi bi-arrow-left"></i> 다시 설정
+      </a>
+    </div>
+
+    <!-- .res 파일 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-primary text-white d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-code-fill"></i> {{ result.res_filename }}</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('resContent')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="resContent" class="code-editor" data-mode="shell">{{ result.res_file }}</textarea>
+      </div>
+    </div>
+
+    <!-- Ansible 인벤토리 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-warning text-dark d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> inventory.yml (Ansible)</span>
+        <button class="btn btn-sm btn-dark ms-auto" onclick="copyText('inventoryContent')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="inventoryContent" class="code-editor" data-mode="yaml">{{ result.inventory_yaml }}</textarea>
+      </div>
+    </div>
+
+    <!-- Ansible Playbook 명령 안내 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-success text-white fw-bold">
+        <i class="bi bi-terminal-fill"></i> Ansible 배포 명령
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-2">아래 파일을 저장한 후 Ansible을 실행하세요:</p>
+        <pre class="bg-dark text-light p-3 rounded"><code># 1. 파일 저장
+mkdir -p ansible/
+# inventory.yml → ansible/inventory.yml 저장
+# ansible/playbooks/deploy_drbd.yml 은 이미 포함되어 있습니다
+
+# 2. DRBD 배포 실행
+ansible-playbook -i ansible/inventory.yml \
+  ansible/playbooks/deploy_drbd.yml \
+  -e "res_filename={{ result.res_filename }}"</code></pre>
+      </div>
+    </div>
+
+    <!-- DRBD 초기화 명령 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-secondary text-white fw-bold">
+        <i class="bi bi-info-circle-fill"></i> DRBD 초기화 절차 (배포 후)
+      </div>
+      <div class="card-body">
+        <ul class="list-group list-group-flush">
+          {% for cmd in result.init_commands %}
+          <li class="list-group-item font-monospace small {% if cmd starts_with('#') %}text-muted bg-light{% endif %}">
+            {{ cmd }}
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+
+    <!-- 다음 단계 -->
+    <div class="alert alert-info d-flex align-items-center">
+      <i class="bi bi-arrow-right-circle-fill fs-4 me-3"></i>
+      <div>
+        <strong>다음 단계:</strong> Quadlet 유닛 파일을 생성하여 컨테이너를 systemd 서비스로 등록하세요.
+        <a href="/quadlet/" class="btn btn-info btn-sm ms-2">Quadlet 변환 →</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyText(id) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.value || el.textContent).then(() => {
+    alert('클립보드에 복사되었습니다.');
+  });
+}
+</script>
+{% endblock %}

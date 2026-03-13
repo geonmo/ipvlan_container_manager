@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Quadlet 생성 결과 - HA Container Manager{% endblock %}
+{% block nav_quadlet %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    {% if error %}
+    <div class="alert alert-danger">
+      <i class="bi bi-exclamation-triangle-fill"></i> <strong>오류:</strong> {{ error }}
+    </div>
+    <a href="/quadlet/" class="btn btn-secondary">← 다시 시도</a>
+    {% else %}
+    <div class="d-flex align-items-center mb-4">
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> Quadlet 유닛 파일 생성 완료</h2>
+      <a href="/quadlet/" class="btn btn-outline-secondary btn-sm ms-auto">
+        <i class="bi bi-arrow-left"></i> 다시 설정
+      </a>
+    </div>
+
+    <!-- 생성된 유닛 파일들 -->
+    {% for file in result.files %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-header d-flex align-items-center
+        {% if file.0 ends_with('.volume') %}bg-secondary text-white
+        {% elif file.0 ends_with('.network') %}bg-info text-white
+        {% elif file.0 ends_with('.pod') %}bg-dark text-white
+        {% else %}bg-success text-white{% endif %}">
+        <span class="fw-bold"><i class="bi bi-file-earmark-code-fill"></i> {{ file.0 }}</span>
+        <span class="badge bg-light text-dark ms-2">
+          {% if file.0 ends_with('.volume') %}Volume
+          {% elif file.0 ends_with('.network') %}Network
+          {% elif file.0 ends_with('.pod') %}Pod
+          {% else %}Container{% endif %}
+        </span>
+        <button class="btn btn-sm btn-light ms-auto"
+                onclick="copyContent(this)"
+                data-content="{{ file.1 | escape }}">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea class="code-editor" data-mode="shell">{{ file.1 }}</textarea>
+      </div>
+    </div>
+    {% endfor %}
+
+    <!-- Ansible Playbook -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-warning text-dark d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> deploy_quadlet.yml (Ansible Playbook)</span>
+        <button class="btn btn-sm btn-dark ms-auto" onclick="copyText('ansiblePlaybook')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="ansiblePlaybook" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
+      </div>
+    </div>
+
+    <!-- 설치 경로 안내 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-secondary text-white fw-bold">
+        <i class="bi bi-info-circle-fill"></i> 수동 배포 방법
+      </div>
+      <div class="card-body">
+        <pre class="bg-dark text-light p-3 rounded small"><code># 유닛 파일을 각 노드에 복사
+scp *.container *.pod *.volume *.network \
+    root@node1:/etc/containers/systemd/
+
+# systemd 데몬 리로드 및 서비스 확인
+systemctl daemon-reload
+systemctl list-units --type=service | grep -E '\.service'
+
+# 특정 컨테이너 서비스 시작 테스트
+systemctl start myapp.service
+systemctl status myapp.service</code></pre>
+      </div>
+    </div>
+
+    <div class="alert alert-info d-flex align-items-center">
+      <i class="bi bi-arrow-right-circle-fill fs-4 me-3"></i>
+      <div>
+        <strong>다음 단계:</strong> Pacemaker에 DRBD와 Quadlet 서비스를 HA 리소스로 등록하세요.
+        <a href="/pacemaker/" class="btn btn-info btn-sm ms-2">Pacemaker 설정 →</a>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyText(id) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.value || el.textContent);
+}
+function copyContent(btn) {
+  const text = btn.dataset.content
+    .replace(/&amp;/g,'&').replace(/&lt;/g,'<')
+    .replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#x27;/g,"'");
+  navigator.clipboard.writeText(text);
+}
+</script>
+{% endblock %}

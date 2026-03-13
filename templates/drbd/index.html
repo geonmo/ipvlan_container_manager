@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% block title %}DRBD 설정 - HA Container Manager{% endblock %}
+{% block nav_drbd %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <h2 class="fw-bold mb-1"><i class="bi bi-database-fill text-primary"></i> DRBD 리소스 설정</h2>
+    <p class="text-muted mb-4">DRBD <code>.res</code> 파일과 Ansible 인벤토리를 생성하여 클러스터 노드에 배포합니다.</p>
+
+    <form action="/drbd/generate" method="post" id="drbdForm">
+
+      <!-- 리소스 기본 정보 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white fw-bold">
+          <i class="bi bi-gear-fill"></i> 리소스 기본 정보
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">리소스 이름 <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" name="resource_name" value="r0" required
+                     placeholder="예: r0, drbd0">
+              <div class="form-text">생성될 파일명: <code>&lt;name&gt;.res</code></div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">프로토콜</label>
+              <select class="form-select" name="protocol">
+                <option value="C" selected>C - 동기식 (권장, HA 환경)</option>
+                <option value="B">B - 반동기식</option>
+                <option value="A">A - 비동기식</option>
+              </select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Minor 번호</label>
+              <input type="number" class="form-control" name="minor" value="0" min="0" max="255">
+              <div class="form-text">장치: <code>/dev/drbd&lt;minor&gt;</code></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 노드 설정 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-success text-white fw-bold">
+          <i class="bi bi-pc-display-horizontal"></i> 클러스터 노드 설정
+        </div>
+        <div class="card-body">
+          <div class="row g-4">
+            <!-- 노드 1 -->
+            <div class="col-md-6">
+              <h6 class="fw-bold text-success border-bottom pb-2">노드 1 (Primary 후보)</h6>
+              <div class="mb-2">
+                <label class="form-label">호스트명 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="node1_hostname" required placeholder="node1.example.com">
+              </div>
+              <div class="mb-2">
+                <label class="form-label">IP 주소 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="node1_ip" required placeholder="192.168.1.11">
+              </div>
+              <div class="mb-2">
+                <label class="form-label">디스크 장치 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="node1_disk" required placeholder="/dev/sdb">
+              </div>
+              <div class="mb-2">
+                <label class="form-label">메타 디스크</label>
+                <input type="text" class="form-control" name="node1_meta" value="internal" placeholder="internal">
+              </div>
+              <div class="mb-2">
+                <label class="form-label">포트</label>
+                <input type="number" class="form-control" name="node1_port" value="7789">
+              </div>
+            </div>
+            <!-- 노드 2 -->
+            <div class="col-md-6">
+              <h6 class="fw-bold text-success border-bottom pb-2">노드 2 (Secondary 후보)</h6>
+              <div class="mb-2">
+                <label class="form-label">호스트명 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="node2_hostname" required placeholder="node2.example.com">
+              </div>
+              <div class="mb-2">
+                <label class="form-label">IP 주소 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="node2_ip" required placeholder="192.168.1.12">
+              </div>
+              <div class="mb-2">
+                <label class="form-label">디스크 장치 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" name="node2_disk" required placeholder="/dev/sdb">
+              </div>
+              <div class="mb-2">
+                <label class="form-label">메타 디스크</label>
+                <input type="text" class="form-control" name="node2_meta" value="internal">
+              </div>
+              <div class="mb-2">
+                <label class="form-label">포트</label>
+                <input type="number" class="form-control" name="node2_port" value="7789">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Net/Disk/Startup 옵션 (접이식) -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-secondary text-white fw-bold">
+          <button class="btn btn-link text-white p-0 text-decoration-none" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#advancedOpts">
+            <i class="bi bi-sliders"></i> 고급 옵션 (Net / Disk / Startup)
+          </button>
+        </div>
+        <div class="collapse" id="advancedOpts">
+          <div class="card-body">
+            <div class="row g-3">
+              <!-- Net options -->
+              <div class="col-md-4">
+                <h6 class="fw-semibold">Net 옵션</h6>
+                <div class="form-check mb-2">
+                  <input class="form-check-input" type="checkbox" name="allow_two_primaries" id="allowTwoPrimaries">
+                  <label class="form-check-label" for="allowTwoPrimaries">allow-two-primaries</label>
+                  <div class="form-text">Dual-Primary 모드 (OCFS2 등 필요시)</div>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label">after-sb-0pri</label>
+                  <select class="form-select form-select-sm" name="after_sb_0pri">
+                    <option value="discard-younger-primary" selected>discard-younger-primary</option>
+                    <option value="discard-older-primary">discard-older-primary</option>
+                    <option value="discard-zero-changes">discard-zero-changes</option>
+                    <option value="disconnect">disconnect</option>
+                  </select>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label">after-sb-1pri</label>
+                  <select class="form-select form-select-sm" name="after_sb_1pri">
+                    <option value="discard-secondary" selected>discard-secondary</option>
+                    <option value="call-pri-lost">call-pri-lost</option>
+                    <option value="disconnect">disconnect</option>
+                  </select>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label">after-sb-2pri</label>
+                  <select class="form-select form-select-sm" name="after_sb_2pri">
+                    <option value="disconnect" selected>disconnect</option>
+                    <option value="call-pri-lost-after-sb">call-pri-lost-after-sb</option>
+                  </select>
+                </div>
+              </div>
+              <!-- Disk options -->
+              <div class="col-md-4">
+                <h6 class="fw-semibold">Disk 옵션</h6>
+                <div class="mb-2">
+                  <label class="form-label">on-io-error</label>
+                  <select class="form-select form-select-sm" name="on_io_error">
+                    <option value="passthrough" selected>passthrough</option>
+                    <option value="detach">detach</option>
+                    <option value="panic">panic</option>
+                  </select>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label">fencing</label>
+                  <select class="form-select form-select-sm" name="fencing">
+                    <option value="resource-only" selected>resource-only</option>
+                    <option value="resource-and-stonith">resource-and-stonith</option>
+                    <option value="dont-care">dont-care</option>
+                  </select>
+                </div>
+              </div>
+              <!-- Startup options -->
+              <div class="col-md-4">
+                <h6 class="fw-semibold">Startup 옵션</h6>
+                <div class="mb-2">
+                  <label class="form-label">wfc-timeout (초)</label>
+                  <input type="number" class="form-control form-control-sm" name="wfc_timeout" value="15">
+                </div>
+                <div class="mb-2">
+                  <label class="form-label">degr-wfc-timeout (초)</label>
+                  <input type="number" class="form-control form-control-sm" name="degr_wfc_timeout" value="60">
+                </div>
+                <div class="mb-2">
+                  <label class="form-label">become-primary-on (노드명)</label>
+                  <input type="text" class="form-control form-control-sm" name="become_primary_on"
+                         placeholder="비워두면 미설정">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ansible 설정 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-warning text-dark fw-bold">
+          <i class="bi bi-send-fill"></i> Ansible 배포 설정
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">SSH 사용자</label>
+              <input type="text" class="form-control" name="ansible_user" value="root">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">SSH 개인키 경로</label>
+              <input type="text" class="form-control" name="ansible_ssh_key" value="~/.ssh/id_rsa">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">옵션</label>
+              <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" name="ansible_become" id="ansibleBecome" checked>
+                <label class="form-check-label" for="ansibleBecome">sudo (become) 사용</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-primary btn-lg">
+          <i class="bi bi-gear-fill"></i> 설정 파일 생성
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-lg" onclick="loadExample()">
+          <i class="bi bi-lightning-fill"></i> 예시 값 입력
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function loadExample() {
+  const f = document.forms['drbdForm'];
+  f.resource_name.value = 'r0';
+  f.minor.value = '0';
+  f.node1_hostname.value = 'node1.ha.local';
+  f.node1_ip.value = '192.168.10.11';
+  f.node1_disk.value = '/dev/sdb';
+  f.node2_hostname.value = 'node2.ha.local';
+  f.node2_ip.value = '192.168.10.12';
+  f.node2_disk.value = '/dev/sdb';
+}
+</script>
+{% endblock %}

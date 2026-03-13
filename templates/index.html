@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}HA Container Manager - 홈{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+
+    <div class="text-center mb-5">
+      <h1 class="display-5 fw-bold">
+        <i class="bi bi-hdd-network-fill text-warning"></i> HA Container Manager
+      </h1>
+      <p class="lead text-muted">
+        DRBD + Quadlet + Pacemaker 기반 RHEL9 고가용성 컨테이너 클러스터 설정 도우미
+      </p>
+    </div>
+
+    <!-- 워크플로 안내 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-dark text-white fw-bold">
+        <i class="bi bi-diagram-3"></i> 설정 워크플로
+      </div>
+      <div class="card-body">
+        <div class="row text-center g-3">
+          <div class="col-md-4">
+            <div class="border rounded p-3 h-100 bg-white">
+              <div class="fs-1 text-primary mb-2"><i class="bi bi-database-fill"></i></div>
+              <h5 class="fw-bold">1단계: DRBD 설정</h5>
+              <p class="text-muted small">
+                클러스터 노드 정보를 입력하여 DRBD <code>.res</code> 파일을 생성하고
+                Ansible로 <code>/etc/drbd.d/</code>에 배포합니다.
+              </p>
+              <a href="/drbd/" class="btn btn-primary btn-sm">
+                <i class="bi bi-arrow-right-circle"></i> DRBD 설정 시작
+              </a>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="border rounded p-3 h-100 bg-white">
+              <div class="fs-1 text-success mb-2"><i class="bi bi-box-seam-fill"></i></div>
+              <h5 class="fw-bold">2단계: Quadlet 변환</h5>
+              <p class="text-muted small">
+                실행 중인 Podman 컨테이너를 분석하여 Quadlet 유닛 파일
+                (<code>.container</code>, <code>.pod</code>, <code>.volume</code>)로 변환합니다.
+              </p>
+              <a href="/quadlet/" class="btn btn-success btn-sm">
+                <i class="bi bi-arrow-right-circle"></i> Quadlet 변환 시작
+              </a>
+            </div>
+          </div>
+          <div class="col-md-4">
+            <div class="border rounded p-3 h-100 bg-white">
+              <div class="fs-1 text-danger mb-2"><i class="bi bi-heart-pulse-fill"></i></div>
+              <h5 class="fw-bold">3단계: Pacemaker 설정</h5>
+              <p class="text-muted small">
+                DRBD Promotable Clone 리소스와 Quadlet Systemd 리소스를 Pacemaker에 등록하고
+                <code>pcs</code> 스크립트를 생성합니다.
+              </p>
+              <a href="/pacemaker/" class="btn btn-danger btn-sm">
+                <i class="bi bi-arrow-right-circle"></i> Pacemaker 설정 시작
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 전제 조건 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-secondary text-white fw-bold">
+        <i class="bi bi-info-circle"></i> 전제 조건 (AlmaLinux9 / RHEL9)
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <h6 class="fw-bold text-primary"><i class="bi bi-check2-circle"></i> 필수 패키지</h6>
+            <pre class="bg-dark text-light p-3 rounded small"><code># ELRepo 저장소 활성화
+dnf install -y elrepo-release
+dnf config-manager --enable elrepo
+
+# DRBD 패키지 설치
+dnf install -y drbd9x-utils kmod-drbd9x
+
+# Pacemaker / Corosync
+dnf install -y pacemaker pcs corosync
+
+# Podman
+dnf install -y podman</code></pre>
+          </div>
+          <div class="col-md-6">
+            <h6 class="fw-bold text-success"><i class="bi bi-check2-circle"></i> 네트워크 구성</h6>
+            <ul class="small text-muted">
+              <li>클러스터 노드 간 전용 네트워크 인터페이스 권장</li>
+              <li>DRBD 동기화용 포트 (기본 7789) 방화벽 허용</li>
+              <li>IPVLAN 컨테이너 네트워크용 호스트 NIC 설정</li>
+              <li>corosync 통신 포트 (5404, 5405 UDP) 허용</li>
+            </ul>
+            <h6 class="fw-bold text-warning mt-3"><i class="bi bi-check2-circle"></i> Ansible 관리 서버</h6>
+            <ul class="small text-muted">
+              <li>이 웹 서버에서 SSH 키 기반 접근 가능</li>
+              <li>Ansible 설치 필요: <code>pip install ansible</code></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 아키텍처 설명 -->
+    <div class="card shadow-sm">
+      <div class="card-header bg-info text-white fw-bold">
+        <i class="bi bi-layers"></i> 아키텍처 개요
+      </div>
+      <div class="card-body small text-muted">
+        <p>
+          이 도구는 <strong>2-노드 HA 클러스터</strong>를 구성합니다.
+          DRBD로 블록 스토리지를 Active/Passive 방식으로 복제하고,
+          Quadlet을 통해 systemd가 Podman 컨테이너를 서비스로 관리합니다.
+          Pacemaker는 DRBD Promoted 노드에서만 컨테이너가 실행되도록 제약조건을 관리합니다.
+        </p>
+        <div class="text-center my-3">
+          <code class="bg-dark text-light p-2 rounded d-inline-block">
+            [Node 1] DRBD Primary ← Promoted → Quadlet Container (IPVLAN)
+            <br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↕ DRBD Sync
+            <br>
+            [Node 2] DRBD Secondary ← Standby
+          </code>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block title %}Pacemaker 설정 - HA Container Manager{% endblock %}
+{% block nav_pacemaker %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <h2 class="fw-bold mb-1"><i class="bi bi-heart-pulse-fill text-danger"></i> Pacemaker 설정</h2>
+    <p class="text-muted mb-4">DRBD Promotable Clone 및 Quadlet Systemd 리소스를 Pacemaker에 등록하는 <code>pcs</code> 스크립트를 생성합니다.</p>
+
+    <form action="/pacemaker/generate" method="post" id="pmForm">
+
+      <!-- 클러스터 기본 설정 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-danger text-white fw-bold">
+          <i class="bi bi-diagram-2-fill"></i> 클러스터 기본 설정
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">클러스터 이름</label>
+              <input type="text" class="form-control" name="cluster_name" value="ha-cluster" required>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">노드 1 이름</label>
+              <input type="text" class="form-control" name="node1_name" placeholder="node1.ha.local" required>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">노드 2 이름</label>
+              <input type="text" class="form-control" name="node2_name" placeholder="node2.ha.local" required>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">No-Quorum Policy</label>
+              <select class="form-select" name="no_quorum_policy">
+                <option value="stop" selected>stop (권장)</option>
+                <option value="freeze">freeze</option>
+                <option value="ignore">ignore</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Migration Threshold</label>
+              <input type="number" class="form-control" name="migration_threshold" value="3">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Failure Timeout</label>
+              <input type="text" class="form-control" name="failure_timeout" value="60s">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">STONITH</label>
+              <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" name="stonith_enabled" id="stonithEnabled">
+                <label class="form-check-label" for="stonithEnabled">STONITH 활성화</label>
+                <div class="form-text text-warning">⚠ 테스트 환경에서는 비활성화 권장</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DRBD 리소스 설정 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white fw-bold">
+          <i class="bi bi-database-fill"></i> DRBD Promotable Clone 리소스
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Pacemaker 리소스 이름</label>
+              <input type="text" class="form-control" name="drbd_resource_name" value="drbd-r0" required>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">DRBD .res 리소스 이름</label>
+              <input type="text" class="form-control" name="drbd_res_name" value="r0" required>
+              <div class="form-text">.res 파일의 <code>resource &lt;name&gt;</code></div>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">Clone 이름</label>
+              <input type="text" class="form-control" name="drbd_clone_name" value="drbd-r0-clone" required>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">선호 Primary 노드</label>
+              <input type="text" class="form-control" name="drbd_preferred_primary"
+                     placeholder="비워두면 자동">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label fw-semibold">On Fail</label>
+              <select class="form-select" name="drbd_on_fail">
+                <option value="fence" selected>fence</option>
+                <option value="block">block</option>
+                <option value="stop">stop</option>
+                <option value="demote">demote</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <div class="form-check mt-4">
+                <input class="form-check-input" type="checkbox" name="drbd_notify" id="drbdNotify" checked>
+                <label class="form-check-label" for="drbdNotify">notify 활성화</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Systemd 리소스 (Quadlet) -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
+          <span><i class="bi bi-boxes"></i> Quadlet Systemd 리소스 목록 (JSON)</span>
+          <button type="button" class="btn btn-sm btn-light ms-auto" onclick="loadSvcExample()">
+            <i class="bi bi-lightning-fill"></i> 예시
+          </button>
+        </div>
+        <div class="card-body p-0">
+          <textarea id="svcJson" name="systemd_resources_json" class="code-editor"
+                    data-mode="javascript" style="min-height:200px">[]</textarea>
+        </div>
+        <div class="card-footer small text-muted">
+          <code>resource_name</code>: Pacemaker 리소스 이름,
+          <code>systemd_unit</code>: systemd 유닛 이름 (예: <code>myapp.service</code>),
+          <code>resource_type</code>: container | pod | volume
+        </div>
+      </div>
+
+      <!-- 제약조건 설정 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-secondary text-white fw-bold">
+          <i class="bi bi-link-45deg"></i> 리소스 제약조건
+        </div>
+        <div class="card-body">
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="auto_constraints"
+                   id="autoConstraints" checked>
+            <label class="form-check-label fw-semibold" for="autoConstraints">
+              자동 제약조건 생성
+            </label>
+            <div class="form-text">
+              DRBD Promoted 후 서비스 시작 (Order) +
+              동일 노드 실행 (Colocation: INFINITY) 규칙을 자동 생성합니다.
+            </div>
+          </div>
+
+          <!-- 수동 Order 제약조건 -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">수동 Order 제약조건 (JSON, 선택)</label>
+            <textarea name="order_constraints_json" class="code-editor" data-mode="javascript"
+                      style="min-height:80px">[]</textarea>
+            <div class="form-text">
+              예: <code>[{"id":"ord-1","first":"drbd-r0-clone","first_action":"promote","then":"myapp","then_action":"start","kind":"Mandatory"}]</code>
+            </div>
+          </div>
+
+          <!-- 수동 Colocation 제약조건 -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">수동 Colocation 제약조건 (JSON, 선택)</label>
+            <textarea name="colocation_constraints_json" class="code-editor" data-mode="javascript"
+                      style="min-height:80px">[]</textarea>
+          </div>
+
+          <!-- Location 제약조건 -->
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Location 제약조건 (선호 노드, JSON, 선택)</label>
+            <textarea name="location_constraints_json" class="code-editor" data-mode="javascript"
+                      style="min-height:80px">[]</textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ansible 설정 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-warning text-dark fw-bold">
+          <i class="bi bi-send-fill"></i> Ansible 배포 설정
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">대상 호스트 (첫 번째 노드에서 실행됨)</label>
+              <input type="text" class="form-control" name="ansible_hosts" placeholder="all">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">SSH 사용자</label>
+              <input type="text" class="form-control" name="ansible_user" value="root">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">SSH 개인키</label>
+              <input type="text" class="form-control" name="ansible_ssh_key" value="~/.ssh/id_rsa">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-danger btn-lg">
+          <i class="bi bi-gear-fill"></i> pcs 스크립트 생성
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-lg" onclick="loadExample()">
+          <i class="bi bi-lightning-fill"></i> 예시 값 입력
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function loadExample() {
+  const f = document.forms['pmForm'];
+  f.node1_name.value = 'node1.ha.local';
+  f.node2_name.value = 'node2.ha.local';
+  f.drbd_preferred_primary.value = 'node1.ha.local';
+  loadSvcExample();
+}
+
+function loadSvcExample() {
+  const example = JSON.stringify([
+    {
+      "resource_name": "svc-myapp",
+      "systemd_unit": "myapp.service",
+      "resource_type": "container",
+      "monitor_interval": "30s",
+      "start_timeout": "60s",
+      "stop_timeout": "60s",
+      "clone": false
+    }
+  ], null, 2);
+  const el = document.getElementById('svcJson');
+  if (el._cmEditor) el._cmEditor.setValue(example);
+  else el.value = example;
+}
+</script>
+{% endblock %}

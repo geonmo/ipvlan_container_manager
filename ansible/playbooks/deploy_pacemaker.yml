@@ -1,0 +1,90 @@
+---
+# Pacemaker 설정 배포 Playbook
+# 사용법:
+#   ansible-playbook -i inventory.yml deploy_pacemaker.yml \
+#     -e "pcs_script_path=/path/to/pacemaker_setup.sh"
+
+- name: Pacemaker 패키지 설치 및 서비스 구성
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Pacemaker / Corosync / pcs 패키지 설치
+      dnf:
+        name:
+          - pacemaker
+          - pcs
+          - corosync
+          - fence-agents-all
+        state: present
+
+    - name: pcsd 서비스 활성화 및 시작
+      systemd:
+        name: pcsd
+        state: started
+        enabled: yes
+
+    - name: hacluster 사용자 비밀번호 설정
+      user:
+        name: hacluster
+        password: "{{ hacluster_password | password_hash('sha512') }}"
+      when: hacluster_password is defined
+      no_log: true
+
+    - name: 방화벽 pcs/corosync 포트 허용
+      firewalld:
+        service: "{{ item }}"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop:
+        - high-availability
+      ignore_errors: yes
+
+- name: Pacemaker 클러스터 설정 적용 (첫 번째 노드에서만 실행)
+  hosts: all
+  become: yes
+  run_once: true
+  vars:
+    pcs_script_path: "{{ playbook_dir }}/files/pacemaker_setup.sh"
+
+  tasks:
+    - name: pcs 설정 스크립트 복사
+      copy:
+        src: "{{ pcs_script_path }}"
+        dest: /tmp/pacemaker_setup.sh
+        mode: "0750"
+
+    - name: 클러스터 인증 (pcs host auth)
+      command: >
+        pcs host auth
+        {% for host in ansible_play_hosts %}{{ host }} {% endfor %}
+        -u hacluster -p {{ hacluster_password }}
+      run_once: true
+      when: hacluster_password is defined
+      no_log: true
+
+    - name: pcs 설정 스크립트 실행
+      command: /tmp/pacemaker_setup.sh
+      register: pcs_result
+
+    - name: pcs 설정 결과 출력
+      debug:
+        var: pcs_result.stdout_lines
+
+    - name: 임시 스크립트 삭제
+      file:
+        path: /tmp/pacemaker_setup.sh
+        state: absent
+
+  post_tasks:
+    - name: 클러스터 상태 확인
+      command: pcs status
+      register: pcs_status
+      changed_when: false
+      run_once: true
+
+    - name: 클러스터 상태 출력
+      debug:
+        var: pcs_status.stdout_lines
+      run_once: true

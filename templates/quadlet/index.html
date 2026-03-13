@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block title %}Quadlet 변환 - HA Container Manager{% endblock %}
+{% block nav_quadlet %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <h2 class="fw-bold mb-1"><i class="bi bi-box-seam-fill text-success"></i> Quadlet 유닛 파일 생성</h2>
+    <p class="text-muted mb-4">Podman 컨테이너를 systemd Quadlet 유닛으로 변환합니다.</p>
+
+    <!-- 탭 -->
+    <ul class="nav nav-tabs mb-4" id="quadletTab">
+      <li class="nav-item">
+        <a class="nav-link active" data-bs-toggle="tab" href="#manualTab">
+          <i class="bi bi-pencil-fill"></i> 수동 입력
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#inspectTab">
+          <i class="bi bi-search"></i> podman inspect JSON
+        </a>
+      </li>
+    </ul>
+
+    <div class="tab-content">
+
+      <!-- 수동 입력 탭 -->
+      <div class="tab-pane fade show active" id="manualTab">
+        <form action="/quadlet/generate" method="post" id="quadletForm">
+
+          <!-- IPVLAN 네트워크 -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-info text-white fw-bold">
+              <i class="bi bi-diagram-3-fill"></i> IPVLAN 네트워크 설정
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">네트워크 이름</label>
+                  <input type="text" class="form-control" name="net_name" placeholder="ipvlan0">
+                  <div class="form-text">생성: <code>&lt;name&gt;.network</code></div>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-semibold">드라이버</label>
+                  <select class="form-select" name="net_driver">
+                    <option value="ipvlan" selected>ipvlan</option>
+                    <option value="macvlan">macvlan</option>
+                    <option value="bridge">bridge</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-semibold">호스트 인터페이스</label>
+                  <input type="text" class="form-control" name="net_interface" placeholder="eth0">
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-semibold">서브넷</label>
+                  <input type="text" class="form-control" name="net_subnet" placeholder="192.168.1.0/24">
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-semibold">게이트웨이</label>
+                  <input type="text" class="form-control" name="net_gateway" placeholder="192.168.1.1">
+                </div>
+                <div class="col-md-1">
+                  <label class="form-label fw-semibold">IPVLAN 모드</label>
+                  <select class="form-select" name="net_ipvlan_mode">
+                    <option value="l2" selected>l2</option>
+                    <option value="l3">l3</option>
+                    <option value="l3s">l3s</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Volume 설정 -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-secondary text-white fw-bold">
+              <i class="bi bi-hdd-fill"></i> Volume 설정 (선택)
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">볼륨 이름</label>
+                  <input type="text" class="form-control" name="vol_name" placeholder="data">
+                  <div class="form-text">생성: <code>&lt;name&gt;.volume</code></div>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">드라이버</label>
+                  <input type="text" class="form-control" name="vol_driver" value="local">
+                </div>
+                <div class="col-md-5">
+                  <label class="form-label fw-semibold">옵션 (줄당 하나)</label>
+                  <textarea class="form-control" name="vol_options" rows="2"
+                            placeholder="type=nfs&#10;o=addr=192.168.1.100,rw"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Pod 설정 -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-dark text-white fw-bold">
+              <i class="bi bi-collection-fill"></i> Pod 설정 (선택)
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">Pod 이름</label>
+                  <input type="text" class="form-control" name="pod_name" placeholder="mypod">
+                  <div class="form-text">생성: <code>&lt;name&gt;.pod</code></div>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">네트워크 (위 네트워크 이름 참조)</label>
+                  <input type="text" class="form-control" name="pod_network" placeholder="ipvlan0">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">포트 매핑 (줄당 하나)</label>
+                  <textarea class="form-control" name="pod_ports" rows="2"
+                            placeholder="8080:80&#10;8443:443"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Container 설정 (JSON 에디터) -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
+              <span><i class="bi bi-boxes"></i> 컨테이너 설정 (JSON 배열)</span>
+              <button type="button" class="btn btn-sm btn-light ms-auto" onclick="loadContainerExample()">
+                <i class="bi bi-lightning-fill"></i> 예시
+              </button>
+            </div>
+            <div class="card-body p-0">
+              <textarea id="containersJson" name="containers_json" class="code-editor" data-mode="javascript"
+                        style="min-height:250px">[]</textarea>
+            </div>
+            <div class="card-footer small text-muted">
+              <code>podman inspect &lt;container&gt; | podman inspect</code> 출력을 붙여넣거나 직접 JSON 작성
+            </div>
+          </div>
+
+          <!-- Ansible 설정 -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-warning text-dark fw-bold">
+              <i class="bi bi-send-fill"></i> Ansible 배포 설정
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label">대상 호스트 (줄당 하나 또는 그룹)</label>
+                  <textarea class="form-control" name="ansible_hosts" rows="2"
+                            placeholder="node1.ha.local&#10;node2.ha.local"></textarea>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">SSH 사용자</label>
+                  <input type="text" class="form-control" name="ansible_user" value="root">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">SSH 개인키 경로</label>
+                  <input type="text" class="form-control" name="ansible_ssh_key" value="~/.ssh/id_rsa">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-success btn-lg">
+            <i class="bi bi-gear-fill"></i> Quadlet 유닛 파일 생성
+          </button>
+        </form>
+      </div>
+
+      <!-- podman inspect 탭 -->
+      <div class="tab-pane fade" id="inspectTab">
+        <form action="/quadlet/from-inspect" method="post">
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-dark text-white fw-bold">
+              <i class="bi bi-terminal-fill"></i> podman inspect 출력 붙여넣기
+            </div>
+            <div class="card-body">
+              <p class="text-muted small">
+                아래 명령으로 컨테이너 정보를 가져와 붙여넣으세요:
+                <code>podman inspect &lt;container_name&gt;</code>
+              </p>
+              <textarea name="inspect_json" class="code-editor" data-mode="javascript"
+                        style="min-height:300px" placeholder="[ { &quot;Id&quot;: ... } ]"></textarea>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-dark btn-lg">
+            <i class="bi bi-arrow-right-circle"></i> Quadlet 파일 생성
+          </button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function loadContainerExample() {
+  const example = JSON.stringify([
+    {
+      "Name": "myapp",
+      "ImageName": "registry.example.com/myapp:latest",
+      "Config": {
+        "Image": "registry.example.com/myapp:latest",
+        "Env": ["APP_ENV=production", "DB_HOST=db.ha.local"]
+      },
+      "Mounts": [
+        {"Source": "data", "Destination": "/var/data", "Mode": "rw"}
+      ],
+      "NetworkSettings": {
+        "Ports": {"8080/tcp": [{"HostPort": "8080"}]},
+        "Networks": {
+          "ipvlan0": {"IPAddress": "192.168.1.100"}
+        }
+      }
+    }
+  ], null, 2);
+
+  const editor = document.getElementById('containersJson');
+  if (editor._cmEditor) {
+    editor._cmEditor.setValue(example);
+  } else {
+    editor.value = example;
+  }
+}
+</script>
+{% endblock %}

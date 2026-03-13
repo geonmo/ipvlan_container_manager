@@ -1,0 +1,112 @@
+/* HA Container Manager - Custom Styles */
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* CodeMirror 에디터 스타일 */
+.CodeMirror {
+  height: auto;
+  min-height: 120px;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  border: none;
+  border-radius: 0;
+}
+
+.CodeMirror-scroll {
+  min-height: 120px;
+}
+
+/* 코드 에디터 textarea (CodeMirror 초기화 전) */
+textarea.code-editor {
+  width: 100%;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+  background: #263238;
+  color: #eeffff;
+  border: none;
+  padding: 12px;
+  display: block;
+}
+
+/* 카드 헤더 아이콘 간격 */
+.card-header i {
+  margin-right: 6px;
+}
+
+/* 네비게이션 개선 */
+.navbar-brand {
+  font-size: 1.1rem;
+  letter-spacing: 0.3px;
+}
+
+/* 폼 레이블 */
+.form-label {
+  margin-bottom: 4px;
+  font-size: 0.875rem;
+}
+
+/* 코드 뱃지 */
+code {
+  background: #f1f3f5;
+  color: #e83e8c;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.bg-dark code {
+  background: rgba(255,255,255,0.1);
+  color: #80cbc4;
+}
+
+/* 결과 카드 hover 효과 */
+.card {
+  transition: box-shadow 0.2s;
+}
+
+.card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
+}
+
+/* 워크플로 카드 */
+.col-md-4 .border:hover {
+  border-color: #0d6efd !important;
+  transform: translateY(-2px);
+  transition: all 0.2s;
+}
+
+/* Pre 블록 */
+pre {
+  margin: 0;
+}
+
+pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+
+/* 모바일 대응 */
+@media (max-width: 768px) {
+  .CodeMirror {
+    font-size: 11px;
+  }
+  h2 {
+    font-size: 1.4rem;
+  }
+}
+
+/* 탭 스타일 */
+.nav-tabs .nav-link {
+  color: #495057;
+}
+.nav-tabs .nav-link.active {
+  font-weight: 600;
+}
+
+/* 알림 박스 */
+.alert {
+  border-radius: 8px;
+}

@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Pacemaker 설정 결과 - HA Container Manager{% endblock %}
+{% block nav_pacemaker %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <div class="d-flex align-items-center mb-4">
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> Pacemaker 설정 파일 생성 완료</h2>
+      <a href="/pacemaker/" class="btn btn-outline-secondary btn-sm ms-auto">
+        <i class="bi bi-arrow-left"></i> 다시 설정
+      </a>
+    </div>
+
+    <!-- pcs 스크립트 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-danger text-white d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-terminal-fill"></i> pacemaker_setup.sh (pcs 명령 스크립트)</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('pcsScript')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="pcsScript" class="code-editor" data-mode="shell">{{ result.pcs_script }}</textarea>
+      </div>
+    </div>
+
+    <!-- CIB XML 스니펫 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-secondary text-white d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-code-fill"></i> CIB XML 스니펫 (참고용)</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('cibXml')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="cibXml" class="code-editor" data-mode="shell">{{ result.cib_xml }}</textarea>
+      </div>
+    </div>
+
+    <!-- Ansible Playbook -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-warning text-dark d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> deploy_pacemaker.yml (Ansible Playbook)</span>
+        <button class="btn btn-sm btn-dark ms-auto" onclick="copyText('ansiblePm')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="ansiblePm" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
+      </div>
+    </div>
+
+    <!-- 수동 실행 안내 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-dark text-white fw-bold">
+        <i class="bi bi-info-circle-fill"></i> 수동 실행 절차
+      </div>
+      <div class="card-body">
+        <pre class="bg-dark text-light p-3 rounded small"><code># 1. 스크립트 복사 및 실행 (첫 번째 노드에서)
+scp pacemaker_setup.sh root@node1:/tmp/
+ssh root@node1 "bash /tmp/pacemaker_setup.sh"
+
+# 2. 클러스터 상태 확인
+pcs status
+pcs resource show
+pcs constraint show
+
+# 3. DRBD 상태 확인
+drbdadm status
+
+# 4. Quadlet 서비스 상태 확인
+systemctl status myapp.service</code></pre>
+      </div>
+    </div>
+
+    <!-- 완료 메시지 -->
+    <div class="alert alert-success d-flex align-items-center">
+      <i class="bi bi-check-circle-fill fs-4 me-3"></i>
+      <div>
+        <strong>설정 완료!</strong> DRBD + Quadlet + Pacemaker 기반 HA 컨테이너 클러스터 설정이 완성되었습니다.
+        문제 발생 시 <code>pcs status</code> 및 <code>journalctl -xe</code>로 로그를 확인하세요.
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyText(id) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.value || el.textContent).then(() => {
+    alert('클립보드에 복사되었습니다.');
+  });
+}
+</script>
+{% endblock %}
