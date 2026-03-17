@@ -6,26 +6,56 @@
 <div class="row justify-content-center">
   <div class="col-lg-10">
     <h2 class="fw-bold mb-1"><i class="bi bi-database-fill text-primary"></i> DRBD 리소스 설정</h2>
-    <p class="text-muted mb-4">DRBD <code>.res</code> 파일과 Ansible 인벤토리를 생성하여 클러스터 노드에 배포합니다.</p>
+    <p class="text-muted mb-4">DRBD <code>.res</code> 파일과 Ansible 플레이북을 생성하여 클러스터 노드에 배포합니다.</p>
 
-    <form action="/drbd/generate" method="post" id="drbdForm">
+    <form action="/drbd/generate" method="post" id="drbdForm" onsubmit="return serializeNodes()">
+      <input type="hidden" name="nodes_json" id="nodesJson">
 
       <!-- 리소스 기본 정보 -->
       <div class="card shadow-sm mb-4">
-        <div class="card-header bg-primary text-white fw-bold">
-          <i class="bi bi-gear-fill"></i> 리소스 기본 정보
+        <div class="card-header bg-primary text-white fw-bold d-flex align-items-center">
+          <span><i class="bi bi-gear-fill"></i> 리소스 기본 정보</span>
+          <button type="button" class="btn btn-sm btn-light ms-auto" onclick="scanDrbd()" id="btnScan">
+            <i class="bi bi-search"></i> /etc/drbd.d 스캔 &amp; DB 조회
+          </button>
         </div>
         <div class="card-body">
+
+          <!-- 스캔 결과 패널 -->
+          <div id="scanPanel" class="d-none mb-3">
+            <div class="border rounded p-3 bg-light">
+              <div class="d-flex align-items-center mb-2">
+                <span class="fw-semibold text-success me-2"><i class="bi bi-check-circle-fill"></i> 스캔 결과</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" onclick="closeScan()">
+                  <i class="bi bi-x"></i> 닫기
+                </button>
+              </div>
+              <div class="row g-2">
+                <div class="col-md-8">
+                  <select class="form-select" id="scannedSelect" onchange="loadScanned(this.value)">
+                    <option value="">-- 리소스 선택 --</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <button type="button" class="btn btn-success w-100" onclick="loadScanned('__new__')">
+                    <i class="bi bi-plus-circle-fill"></i> 새 리소스 생성
+                  </button>
+                </div>
+              </div>
+              <div id="scanEntryInfo" class="mt-2 small text-muted d-none"></div>
+            </div>
+          </div>
+
           <div class="row g-3">
             <div class="col-md-4">
               <label class="form-label fw-semibold">리소스 이름 <span class="text-danger">*</span></label>
-              <input type="text" class="form-control" name="resource_name" value="r0" required
-                     placeholder="예: r0, drbd0">
+              <input type="text" class="form-control" name="resource_name" id="resourceName" value="r0" required
+                     placeholder="예: r0, drbd0" oninput="updateLvPreviews()">
               <div class="form-text">생성될 파일명: <code>&lt;name&gt;.res</code></div>
             </div>
             <div class="col-md-4">
               <label class="form-label fw-semibold">프로토콜</label>
-              <select class="form-select" name="protocol">
+              <select class="form-select" name="protocol" id="protocol">
                 <option value="C" selected>C - 동기식 (권장, HA 환경)</option>
                 <option value="B">B - 반동기식</option>
                 <option value="A">A - 비동기식</option>
@@ -33,73 +63,50 @@
             </div>
             <div class="col-md-4">
               <label class="form-label fw-semibold">Minor 번호</label>
-              <input type="number" class="form-control" name="minor" value="0" min="0" max="255">
+              <input type="number" class="form-control" name="minor" id="minor" value="0" min="0" max="255">
               <div class="form-text">장치: <code>/dev/drbd&lt;minor&gt;</code></div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- 노드 설정 -->
+      <!-- 클러스터 노드 설정 (셔틀) -->
       <div class="card shadow-sm mb-4">
-        <div class="card-header bg-success text-white fw-bold">
-          <i class="bi bi-pc-display-horizontal"></i> 클러스터 노드 설정
+        <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
+          <span><i class="bi bi-pc-display-horizontal"></i> 클러스터 노드 설정</span>
+          <span class="ms-3 badge bg-light text-dark" id="nodeCountBadge">0 노드</span>
+          <a href="/nodes/" class="btn btn-sm btn-light ms-auto" target="_blank">
+            <i class="bi bi-pencil-fill"></i> 노드 풀 편집
+          </a>
         </div>
         <div class="card-body">
-          <div class="row g-4">
-            <!-- 노드 1 -->
-            <div class="col-md-6">
-              <h6 class="fw-bold text-success border-bottom pb-2">노드 1 (Primary 후보)</h6>
-              <div class="mb-2">
-                <label class="form-label">호스트명 <span class="text-danger">*</span></label>
-                <input type="text" class="form-control" name="node1_hostname" required placeholder="node1.example.com">
-              </div>
-              <div class="mb-2">
-                <label class="form-label">IP 주소 <span class="text-danger">*</span></label>
-                <input type="text" class="form-control" name="node1_ip" required placeholder="192.168.1.11">
-              </div>
-              <div class="mb-2">
-                <label class="form-label">디스크 장치 <span class="text-danger">*</span></label>
-                <input type="text" class="form-control" name="node1_disk" required placeholder="/dev/sdb">
-              </div>
-              <div class="mb-2">
-                <label class="form-label">메타 디스크</label>
-                <input type="text" class="form-control" name="node1_meta" value="internal" placeholder="internal">
-              </div>
-              <div class="mb-2">
-                <label class="form-label">포트</label>
-                <input type="number" class="form-control" name="node1_port" value="7789">
-              </div>
+          <div class="row g-2">
+            <!-- 왼쪽: 풀 -->
+            <div class="col-md-4">
+              <div class="fw-semibold small text-muted mb-1">노드 풀 <span class="badge bg-secondary" id="poolBadge">0</span></div>
+              <ul class="list-group" id="nodePoolList" style="min-height:120px;max-height:280px;overflow-y:auto"></ul>
             </div>
-            <!-- 노드 2 -->
-            <div class="col-md-6">
-              <h6 class="fw-bold text-success border-bottom pb-2">노드 2 (Secondary 후보)</h6>
-              <div class="mb-2">
-                <label class="form-label">호스트명 <span class="text-danger">*</span></label>
-                <input type="text" class="form-control" name="node2_hostname" required placeholder="node2.example.com">
-              </div>
-              <div class="mb-2">
-                <label class="form-label">IP 주소 <span class="text-danger">*</span></label>
-                <input type="text" class="form-control" name="node2_ip" required placeholder="192.168.1.12">
-              </div>
-              <div class="mb-2">
-                <label class="form-label">디스크 장치 <span class="text-danger">*</span></label>
-                <input type="text" class="form-control" name="node2_disk" required placeholder="/dev/sdb">
-              </div>
-              <div class="mb-2">
-                <label class="form-label">메타 디스크</label>
-                <input type="text" class="form-control" name="node2_meta" value="internal">
-              </div>
-              <div class="mb-2">
-                <label class="form-label">포트</label>
-                <input type="number" class="form-control" name="node2_port" value="7789">
-              </div>
+            <!-- 가운데: 버튼 -->
+            <div class="col-md-1 d-flex flex-column justify-content-center align-items-center gap-2">
+              <button type="button" class="btn btn-outline-success btn-sm" id="nodePoolList_add" title="선택 추가">
+                <i class="bi bi-arrow-right"></i>
+              </button>
+            </div>
+            <!-- 오른쪽: 선택된 노드 + disk 설정 -->
+            <div class="col-md-7">
+              <div class="fw-semibold small text-muted mb-1">선택된 노드 (디스크 설정 포함)</div>
+              <ul class="list-group" id="nodeSelectedList" style="min-height:120px;max-height:280px;overflow-y:auto"></ul>
             </div>
           </div>
         </div>
+        <div class="card-footer text-muted small">
+          <i class="bi bi-info-circle"></i>
+          최소 2개, 최대 7개. 3개 이상 시 DRBD 9 <code>connection-mesh</code> 자동 생성.
+          노드 풀이 비어있으면 <a href="/nodes/" target="_blank">노드 풀 편집</a>에서 먼저 노드를 추가하세요.
+        </div>
       </div>
 
-      <!-- Net/Disk/Startup 옵션 (접이식) -->
+      <!-- 고급 옵션 -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-secondary text-white fw-bold">
           <button class="btn btn-link text-white p-0 text-decoration-none" type="button"
@@ -110,26 +117,24 @@
         <div class="collapse" id="advancedOpts">
           <div class="card-body">
             <div class="row g-3">
-              <!-- Net options -->
               <div class="col-md-4">
                 <h6 class="fw-semibold">Net 옵션</h6>
                 <div class="form-check mb-2">
                   <input class="form-check-input" type="checkbox" name="allow_two_primaries" id="allowTwoPrimaries">
                   <label class="form-check-label" for="allowTwoPrimaries">allow-two-primaries</label>
-                  <div class="form-text">Dual-Primary 모드 (OCFS2 등 필요시)</div>
                 </div>
                 <div class="mb-2">
                   <label class="form-label">after-sb-0pri</label>
-                  <select class="form-select form-select-sm" name="after_sb_0pri">
-                    <option value="discard-younger-primary" selected>discard-younger-primary</option>
+                  <select class="form-select form-select-sm" name="after_sb_0pri" id="afterSb0pri">
+                    <option value="discard-zero-changes" selected>discard-zero-changes</option>
+                    <option value="discard-younger-primary">discard-younger-primary</option>
                     <option value="discard-older-primary">discard-older-primary</option>
-                    <option value="discard-zero-changes">discard-zero-changes</option>
                     <option value="disconnect">disconnect</option>
                   </select>
                 </div>
                 <div class="mb-2">
                   <label class="form-label">after-sb-1pri</label>
-                  <select class="form-select form-select-sm" name="after_sb_1pri">
+                  <select class="form-select form-select-sm" name="after_sb_1pri" id="afterSb1pri">
                     <option value="discard-secondary" selected>discard-secondary</option>
                     <option value="call-pri-lost">call-pri-lost</option>
                     <option value="disconnect">disconnect</option>
@@ -137,18 +142,17 @@
                 </div>
                 <div class="mb-2">
                   <label class="form-label">after-sb-2pri</label>
-                  <select class="form-select form-select-sm" name="after_sb_2pri">
+                  <select class="form-select form-select-sm" name="after_sb_2pri" id="afterSb2pri">
                     <option value="disconnect" selected>disconnect</option>
                     <option value="call-pri-lost-after-sb">call-pri-lost-after-sb</option>
                   </select>
                 </div>
               </div>
-              <!-- Disk options -->
               <div class="col-md-4">
                 <h6 class="fw-semibold">Disk 옵션</h6>
                 <div class="mb-2">
                   <label class="form-label">on-io-error</label>
-                  <select class="form-select form-select-sm" name="on_io_error">
+                  <select class="form-select form-select-sm" name="on_io_error" id="onIoError">
                     <option value="passthrough" selected>passthrough</option>
                     <option value="detach">detach</option>
                     <option value="panic">panic</option>
@@ -156,27 +160,26 @@
                 </div>
                 <div class="mb-2">
                   <label class="form-label">fencing</label>
-                  <select class="form-select form-select-sm" name="fencing">
+                  <select class="form-select form-select-sm" name="fencing" id="fencing">
                     <option value="resource-only" selected>resource-only</option>
                     <option value="resource-and-stonith">resource-and-stonith</option>
                     <option value="dont-care">dont-care</option>
                   </select>
                 </div>
               </div>
-              <!-- Startup options -->
               <div class="col-md-4">
                 <h6 class="fw-semibold">Startup 옵션</h6>
                 <div class="mb-2">
                   <label class="form-label">wfc-timeout (초)</label>
-                  <input type="number" class="form-control form-control-sm" name="wfc_timeout" value="15">
+                  <input type="number" class="form-control form-control-sm" name="wfc_timeout" id="wfcTimeout" value="15">
                 </div>
                 <div class="mb-2">
                   <label class="form-label">degr-wfc-timeout (초)</label>
-                  <input type="number" class="form-control form-control-sm" name="degr_wfc_timeout" value="60">
+                  <input type="number" class="form-control form-control-sm" name="degr_wfc_timeout" id="degrWfcTimeout" value="60">
                 </div>
                 <div class="mb-2">
-                  <label class="form-label">become-primary-on (노드명)</label>
-                  <input type="text" class="form-control form-control-sm" name="become_primary_on"
+                  <label class="form-label">become-primary-on</label>
+                  <input type="text" class="form-control form-control-sm" name="become_primary_on" id="becomePrimaryOn"
                          placeholder="비워두면 미설정">
                 </div>
               </div>
@@ -226,16 +229,362 @@
 
 {% block scripts %}
 <script>
-function loadExample() {
-  const f = document.forms['drbdForm'];
-  f.resource_name.value = 'r0';
-  f.minor.value = '0';
-  f.node1_hostname.value = 'node1.ha.local';
-  f.node1_ip.value = '192.168.10.11';
-  f.node1_disk.value = '/dev/sdb';
-  f.node2_hostname.value = 'node2.ha.local';
-  f.node2_ip.value = '192.168.10.12';
-  f.node2_disk.value = '/dev/sdb';
+const MAX_NODES = 7;
+const MIN_NODES = 2;
+const LS_KEY = 'drbd_form_state';
+
+// nodes: [{hostname, ip, disk_type, disk, lvm_vg, lvm_size, meta, port}]
+// 셔틀의 오른쪽(선택) 목록과 동기화됨
+let nodes = [];
+
+// ── 스캔 상태 ─────────────────────────────────────────────────
+let scanData = { resources: [], next_minor: 0, next_port: 7789 };
+
+// ── 셔틀: 풀 → 선택 ──────────────────────────────────────────
+function rebuildPoolList() {
+  const usedHostnames = new Set(nodes.map(n => n.hostname));
+  const pool = getNodePool();
+  const ul = document.getElementById('nodePoolList');
+  ul.innerHTML = '';
+  document.getElementById('poolBadge').textContent = pool.length;
+  pool.filter(p => !usedHostnames.has(p.hostname)).forEach(p => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item list-group-item-action py-2';
+    li.dataset.hostname = p.hostname;
+    li.dataset.ip = p.ip || '';
+    li.innerHTML = `<span class="fw-semibold">${esc(p.hostname)}</span> <small class="text-muted ms-1">${esc(p.ip)}</small>`;
+    li.onclick = () => li.classList.toggle('active');
+    ul.appendChild(li);
+  });
 }
+
+function renderSelectedNodes() {
+  const resName = document.getElementById('resourceName')?.value || 'r0';
+  const ul = document.getElementById('nodeSelectedList');
+  ul.innerHTML = '';
+  nodes.forEach((node, i) => {
+    const isLvm = node.disk_type === 'lvm';
+    const li = document.createElement('li');
+    li.className = 'list-group-item py-2';
+    li.dataset.hostname = node.hostname;
+    li.innerHTML = `
+      <div class="d-flex align-items-center mb-1">
+        <span class="fw-semibold me-2">${esc(node.hostname)}</span>
+        <small class="text-muted me-2">${esc(node.ip)}</small>
+        ${i===0?'<span class="badge bg-warning text-dark me-auto">Primary 후보</span>':'<span class="me-auto"></span>'}
+        <button type="button" class="btn btn-sm btn-outline-danger shuttle-remove ms-1" title="제거">
+          <i class="bi bi-arrow-left"></i>
+        </button>
+      </div>
+      <div class="row gx-2 gy-1">
+        <div class="col-4">
+          <select class="form-select form-select-sm" onchange="setNodeField(${i},'disk_type',this.value);renderSelectedNodes()">
+            <option value="block" ${!isLvm?'selected':''}>블록 장치</option>
+            <option value="lvm"   ${isLvm?'selected':''}>LVM</option>
+          </select>
+        </div>
+        <div class="col-3">
+          <input type="number" class="form-control form-control-sm" placeholder="포트"
+            value="${node.port}" oninput="setNodeField(${i},'port',parseInt(this.value)||7789)">
+        </div>
+        <div class="col-5">
+          <input type="text" class="form-control form-control-sm" placeholder="meta-disk"
+            value="${esc(node.meta)}" oninput="setNodeField(${i},'meta',this.value)">
+        </div>
+        ${isLvm ? `
+        <div class="col-4">
+          <input class="form-control form-control-sm" placeholder="VG 이름"
+            value="${esc(node.lvm_vg)}" oninput="setNodeField(${i},'lvm_vg',this.value)">
+        </div>
+        <div class="col-4">
+          <input class="form-control form-control-sm" placeholder="LV 크기 (10G)"
+            value="${esc(node.lvm_size)}" oninput="setNodeField(${i},'lvm_size',this.value)">
+        </div>
+        <div class="col-4">
+          <span class="form-control form-control-sm bg-light text-muted" style="font-size:0.75rem">LV: ${esc(resName)}</span>
+        </div>` : `
+        <div class="col-12">
+          <input class="form-control form-control-sm" placeholder="/dev/sdb"
+            value="${esc(node.disk)}" oninput="setNodeField(${i},'disk',this.value)">
+        </div>`}
+      </div>`;
+    li.querySelector('.shuttle-remove').addEventListener('click', () => {
+      nodes.splice(i, 1);
+      renderSelectedNodes();
+      rebuildPoolList();
+      updateNodeCountBadge();
+    });
+    ul.appendChild(li);
+  });
+  updateNodeCountBadge();
+}
+
+function updateNodeCountBadge() {
+  document.getElementById('nodeCountBadge').textContent = `${nodes.length} 노드`;
+}
+
+function setNodeField(i, field, value) { nodes[i][field] = value; }
+
+function updateLvPreviews() {
+  renderSelectedNodes();
+}
+
+// ← 추가 버튼
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('nodePoolList_add').addEventListener('click', () => {
+    const pool = getNodePool();
+    document.querySelectorAll('#nodePoolList li.active').forEach(li => {
+      if (nodes.length >= MAX_NODES) return;
+      const poolItem = pool.find(p => p.hostname === li.dataset.hostname);
+      const maxPort = nodes.reduce((m, n) => Math.max(m, n.port), 7788);
+      nodes.push({
+        hostname:  li.dataset.hostname,
+        ip:        li.dataset.ip,
+        disk_type: 'block',
+        disk:      '',
+        lvm_vg:    '',
+        lvm_size:  '',
+        meta:      'internal',
+        port:      maxPort + 1,
+      });
+    });
+    renderSelectedNodes();
+    rebuildPoolList();
+  });
+});
+
+function serializeNodes() {
+  saveFormToStorage();
+  document.getElementById('nodesJson').value = JSON.stringify(nodes);
+  return true;
+}
+
+// ── localStorage 저장/복원 ────────────────────────────────────
+function saveFormToStorage() {
+  try {
+    const state = {
+      resource_name:      document.getElementById('resourceName').value,
+      protocol:           document.getElementById('protocol').value,
+      minor:              document.getElementById('minor').value,
+      nodes:              nodes,
+      allow_two_primaries: document.getElementById('allowTwoPrimaries').checked,
+      after_sb_0pri:      document.getElementById('afterSb0pri').value,
+      after_sb_1pri:      document.getElementById('afterSb1pri').value,
+      after_sb_2pri:      document.getElementById('afterSb2pri').value,
+      on_io_error:        document.getElementById('onIoError').value,
+      fencing:            document.getElementById('fencing').value,
+      wfc_timeout:        document.getElementById('wfcTimeout').value,
+      degr_wfc_timeout:   document.getElementById('degrWfcTimeout').value,
+      become_primary_on:  document.getElementById('becomePrimaryOn').value,
+      ansible_user:       document.querySelector('[name="ansible_user"]').value,
+      ansible_ssh_key:    document.querySelector('[name="ansible_ssh_key"]').value,
+      ansible_become:     document.getElementById('ansibleBecome').checked,
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(state));
+  } catch(_) {}
+}
+
+function loadFormFromStorage() {
+  const raw = localStorage.getItem(LS_KEY);
+  if (raw) {
+    try {
+      const s = JSON.parse(raw);
+      if (s.resource_name !== undefined)
+        document.getElementById('resourceName').value = s.resource_name;
+      if (s.protocol)       setSelectValue('protocol', s.protocol);
+      if (s.minor !== undefined)
+        document.getElementById('minor').value = s.minor;
+      if (Array.isArray(s.nodes) && s.nodes.length > 0)
+        nodes = s.nodes;
+      if (s.allow_two_primaries !== undefined)
+        document.getElementById('allowTwoPrimaries').checked = s.allow_two_primaries;
+      if (s.after_sb_0pri)  setSelectValue('afterSb0pri', s.after_sb_0pri);
+      if (s.after_sb_1pri)  setSelectValue('afterSb1pri', s.after_sb_1pri);
+      if (s.after_sb_2pri)  setSelectValue('afterSb2pri', s.after_sb_2pri);
+      if (s.on_io_error)    setSelectValue('onIoError', s.on_io_error);
+      if (s.fencing)        setSelectValue('fencing', s.fencing);
+      if (s.wfc_timeout !== undefined)
+        document.getElementById('wfcTimeout').value = s.wfc_timeout;
+      if (s.degr_wfc_timeout !== undefined)
+        document.getElementById('degrWfcTimeout').value = s.degr_wfc_timeout;
+      if (s.become_primary_on !== undefined)
+        document.getElementById('becomePrimaryOn').value = s.become_primary_on;
+      if (s.ansible_user)
+        document.querySelector('[name="ansible_user"]').value = s.ansible_user;
+      if (s.ansible_ssh_key)
+        document.querySelector('[name="ansible_ssh_key"]').value = s.ansible_ssh_key;
+      if (s.ansible_become !== undefined)
+        document.getElementById('ansibleBecome').checked = s.ansible_become;
+    } catch(_) {}
+  }
+  renderSelectedNodes();
+}
+
+window.addEventListener('beforeunload', saveFormToStorage);
+
+// ── /drbd/scan 호출 ───────────────────────────────────────────
+async function scanDrbd() {
+  const btn = document.getElementById('btnScan');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 스캔 중...';
+  try {
+    const res = await fetch('/drbd/scan');
+    scanData = await res.json();
+
+    const sel = document.getElementById('scannedSelect');
+    sel.innerHTML = '<option value="">-- 리소스 선택 (로드) --</option>';
+
+    // 파일 그룹
+    const fileRes = scanData.resources.filter(r => r.source === 'file');
+    if (fileRes.length) {
+      const grp = document.createElement('optgroup');
+      grp.label = '📁 /etc/drbd.d 파일';
+      fileRes.forEach((r, _) => {
+        const opt = document.createElement('option');
+        opt.value = r.resource_name;
+        const dbBadge = r.in_db ? ' [DB저장됨]' : '';
+        opt.textContent = `${r.resource_name}  (minor=${r.minor}, ${r.nodes.length}노드)${dbBadge}`;
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    }
+
+    // DB 그룹 (파일에 없는 것)
+    const dbOnly = scanData.resources.filter(r => r.source === 'db');
+    if (dbOnly.length) {
+      const grp = document.createElement('optgroup');
+      grp.label = '🗄️ DB 저장 리소스';
+      dbOnly.forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r.resource_name;
+        opt.textContent = `${r.resource_name}  (minor=${r.minor}, ${r.nodes.length}노드)  ${r.updated_at.slice(0,10)}`;
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    }
+
+    if (!scanData.resources.length) {
+      sel.innerHTML += '<option disabled>스캔 결과 없음</option>';
+    }
+
+    document.getElementById('scanPanel').classList.remove('d-none');
+    document.getElementById('scanEntryInfo').classList.add('d-none');
+  } catch (e) {
+    alert('스캔 실패: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-search"></i> /etc/drbd.d 스캔 &amp; DB 조회';
+  }
+}
+
+function loadScanned(name) {
+  if (!name) return;
+
+  // 신규 리소스
+  if (name === '__new__') {
+    document.getElementById('resourceName').value = '';
+    document.getElementById('minor').value = scanData.next_minor ?? 0;
+    // 기존 노드들의 포트를 next_port 기준으로 초기화
+    const basePort = scanData.next_port ?? 7789;
+    nodes = [];
+    renderSelectedNodes();
+    rebuildPoolList();
+    showInfo(`✨ 신규 리소스: minor=${scanData.next_minor}, 시작 포트=${basePort}`);
+    return;
+  }
+
+  const r = scanData.resources.find(x => x.resource_name === name);
+  if (!r) return;
+
+  document.getElementById('resourceName').value = r.resource_name;
+  document.getElementById('minor').value = r.minor;
+  setSelectValue('protocol', r.protocol);
+
+  // 고급 옵션 복원 (DB 엔트리에만 있음)
+  if (r.net_options_json) {
+    try {
+      const net = JSON.parse(r.net_options_json);
+      document.getElementById('allowTwoPrimaries').checked = !!net.allow_two_primaries;
+      setSelectValue('afterSb0pri', net.after_sb_0pri);
+      setSelectValue('afterSb1pri', net.after_sb_1pri);
+      setSelectValue('afterSb2pri', net.after_sb_2pri);
+    } catch(_) {}
+  }
+  if (r.disk_options_json) {
+    try {
+      const disk = JSON.parse(r.disk_options_json);
+      setSelectValue('onIoError', disk.on_io_error);
+      setSelectValue('fencing', disk.fencing);
+    } catch(_) {}
+  }
+  if (r.startup_options_json) {
+    try {
+      const s = JSON.parse(r.startup_options_json);
+      document.getElementById('wfcTimeout').value      = s.wfc_timeout ?? 15;
+      document.getElementById('degrWfcTimeout').value  = s.degr_wfc_timeout ?? 60;
+      document.getElementById('becomePrimaryOn').value = s.become_primary_on ?? '';
+    } catch(_) {}
+  }
+
+  // 노드 복원
+  try {
+    const rawNodes = Array.isArray(r.nodes) ? r.nodes : JSON.parse(r.nodes);
+    nodes = rawNodes.map(n => ({
+      hostname:  n.hostname  || '',
+      ip:        n.ip        || '',
+      disk_type: n.disk_type || 'block',
+      disk:      n.disk      || '',
+      lvm_vg:    n.lvm_vg    || '',
+      lvm_size:  n.lvm_size  || '',
+      meta:      n.meta      || 'internal',
+      port:      n.port      || 7789,
+    }));
+  } catch(_) {}
+
+  renderSelectedNodes();
+  rebuildPoolList();
+
+  const srcLabel = r.source === 'db' ? '🗄️ DB' : '📁 파일';
+  const dbInfo   = r.in_db ? ` · DB 업데이트: ${r.updated_at.slice(0,10)}` : '';
+  showInfo(`${srcLabel}: ${r.resource_name} · minor=${r.minor} · ${r.nodes.length}노드${dbInfo}`);
+}
+
+function showInfo(msg) {
+  const el = document.getElementById('scanEntryInfo');
+  el.textContent = msg;
+  el.classList.remove('d-none');
+}
+
+function closeScan() {
+  document.getElementById('scanPanel').classList.add('d-none');
+}
+
+function setSelectValue(id, val) {
+  const el = document.getElementById(id);
+  if (!el || !val) return;
+  for (let i = 0; i < el.options.length; i++) {
+    if (el.options[i].value === val) { el.selectedIndex = i; return; }
+  }
+}
+
+// ── 예시 값 ────────────────────────────────────────────────────
+function loadExample() {
+  nodes = [
+    { hostname:'node1.ha.local', ip:'192.168.10.11', disk_type:'block', disk:'/dev/sdb', lvm_vg:'', lvm_size:'', meta:'internal', port:7789 },
+    { hostname:'node2.ha.local', ip:'192.168.10.12', disk_type:'block', disk:'/dev/sdb', lvm_vg:'', lvm_size:'', meta:'internal', port:7789 },
+  ];
+  document.getElementById('resourceName').value = 'r0';
+  document.getElementById('minor').value = '0';
+  renderSelectedNodes();
+  rebuildPoolList();
+}
+
+function esc(str) {
+  return (str||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// 초기화
+loadFormFromStorage();
+rebuildPoolList();
 </script>
 {% endblock %}

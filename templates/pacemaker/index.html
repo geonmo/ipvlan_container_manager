@@ -21,13 +21,22 @@
               <label class="form-label fw-semibold">클러스터 이름</label>
               <input type="text" class="form-control" name="cluster_name" value="ha-cluster" required>
             </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">노드 1 이름</label>
-              <input type="text" class="form-control" name="node1_name" placeholder="node1.ha.local" required>
-            </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">노드 2 이름</label>
-              <input type="text" class="form-control" name="node2_name" placeholder="node2.ha.local" required>
+            <div class="col-12">
+              <label class="form-label fw-semibold">클러스터 노드 선택</label>
+              <input type="hidden" name="nodes_json" id="pmNodesJson" value="[]">
+              <div class="row g-2">
+                <div class="col-md-5">
+                  <div class="small text-muted mb-1">노드 풀 <a href="/nodes/" target="_blank" class="ms-1"><i class="bi bi-pencil"></i></a></div>
+                  <ul class="list-group" id="pmPoolList" style="min-height:80px;max-height:180px;overflow-y:auto"></ul>
+                </div>
+                <div class="col-md-1 d-flex flex-column justify-content-center align-items-center gap-2">
+                  <button type="button" class="btn btn-outline-primary btn-sm" id="pmPoolList_add"><i class="bi bi-arrow-right"></i></button>
+                </div>
+                <div class="col-md-6">
+                  <div class="small text-muted mb-1">선택된 노드 <span class="badge bg-secondary" id="pmNodeCount">0</span></div>
+                  <ul class="list-group" id="pmSelectedList" style="min-height:80px;max-height:180px;overflow-y:auto"></ul>
+                </div>
+              </div>
             </div>
             <div class="col-md-3">
               <label class="form-label fw-semibold">No-Quorum Policy</label>
@@ -202,10 +211,65 @@
 
 {% block scripts %}
 <script>
+// ── Pacemaker 노드 셔틀 ───────────────────────────────────────
+let pmNodes = [];
+
+function pmRebuildPool() {
+  const used = new Set(pmNodes.map(n => n.hostname));
+  const ul = document.getElementById('pmPoolList');
+  ul.innerHTML = '';
+  getNodePool().filter(p => !used.has(p.hostname)).forEach(p => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item list-group-item-action py-1';
+    li.dataset.hostname = p.hostname;
+    li.dataset.ip = p.ip || '';
+    li.innerHTML = `<span class="fw-semibold">${p.hostname}</span> <small class="text-muted">${p.ip}</small>`;
+    li.onclick = () => li.classList.toggle('active');
+    ul.appendChild(li);
+  });
+}
+
+function pmRenderSelected() {
+  const ul = document.getElementById('pmSelectedList');
+  ul.innerHTML = '';
+  pmNodes.forEach((n, i) => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item d-flex align-items-center py-1 gap-2';
+    li.innerHTML = `
+      <span class="fw-semibold flex-grow-1">${n.hostname}</span>
+      <small class="text-muted">${n.ip}</small>
+      <button type="button" class="btn btn-sm btn-outline-danger ms-1"><i class="bi bi-arrow-left"></i></button>`;
+    li.querySelector('button').addEventListener('click', () => {
+      pmNodes.splice(i, 1);
+      pmRenderSelected(); pmRebuildPool(); pmSyncJson();
+    });
+    ul.appendChild(li);
+  });
+  document.getElementById('pmNodeCount').textContent = pmNodes.length;
+  pmSyncJson();
+}
+
+function pmSyncJson() {
+  document.getElementById('pmNodesJson').value = JSON.stringify(pmNodes);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  pmRebuildPool();
+  document.getElementById('pmPoolList_add').addEventListener('click', () => {
+    document.querySelectorAll('#pmPoolList li.active').forEach(li => {
+      pmNodes.push({ hostname: li.dataset.hostname, ip: li.dataset.ip });
+    });
+    pmRenderSelected(); pmRebuildPool();
+  });
+});
+
 function loadExample() {
   const f = document.forms['pmForm'];
-  f.node1_name.value = 'node1.ha.local';
-  f.node2_name.value = 'node2.ha.local';
+  pmNodes = [
+    { hostname:'node1.ha.local', ip:'192.168.10.11' },
+    { hostname:'node2.ha.local', ip:'192.168.10.12' },
+  ];
+  pmRenderSelected(); pmRebuildPool();
   f.drbd_preferred_primary.value = 'node1.ha.local';
   loadSvcExample();
 }

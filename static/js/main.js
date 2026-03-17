@@ -67,6 +67,69 @@ function copyToClipboard(text) {
   return Promise.resolve();
 }
 
+// ── 노드 풀 (localStorage) ────────────────────────────────────
+const ICM_NODES_KEY    = 'icm_nodes';
+const ICM_NETS_KEY     = 'icm_networks';
+
+function getNodePool()    { try { return JSON.parse(localStorage.getItem(ICM_NODES_KEY) || '[]'); } catch(_){ return []; } }
+function getNetworkPool() { try { return JSON.parse(localStorage.getItem(ICM_NETS_KEY)  || '[]'); } catch(_){ return []; } }
+function saveNodePool(arr)    { localStorage.setItem(ICM_NODES_KEY, JSON.stringify(arr)); }
+function saveNetworkPool(arr) { localStorage.setItem(ICM_NETS_KEY,  JSON.stringify(arr)); }
+
+/**
+ * 셔틀 위젯 초기화
+ * @param {string} leftId  - 왼쪽(풀) <ul> id
+ * @param {string} rightId - 오른쪽(선택) <ul> id
+ * @param {Function} getItems    - () => [{label, value}] 풀 아이템 목록
+ * @param {Function} onAdd       - (item) => rendered <li> innerHTML (추가 시 오른쪽에 넣을 HTML)
+ * @param {Function} onGetValues - (rightUl) => any  폼 제출 전 값 추출 콜백
+ */
+function initShuttle(leftId, rightId, getItems, onAdd) {
+  const leftUl  = document.getElementById(leftId);
+  const rightUl = document.getElementById(rightId);
+  if (!leftUl || !rightUl) return;
+
+  function rebuildLeft() {
+    const used = new Set(
+      Array.from(rightUl.querySelectorAll('li[data-hostname]'))
+           .map(li => li.dataset.hostname)
+    );
+    leftUl.innerHTML = '';
+    getItems().forEach(item => {
+      if (used.has(item.hostname)) return;
+      const li = document.createElement('li');
+      li.className = 'list-group-item list-group-item-action shuttle-item py-2';
+      li.dataset.hostname = item.hostname;
+      li.dataset.ip = item.ip || '';
+      li.innerHTML = `<span class="fw-semibold">${esc(item.hostname)}</span> <small class="text-muted">${esc(item.ip)}</small>`;
+      li.onclick = () => li.classList.toggle('active');
+      leftUl.appendChild(li);
+    });
+  }
+
+  window[leftId + '_rebuildLeft'] = rebuildLeft;
+
+  document.getElementById(leftId + '_add')?.addEventListener('click', () => {
+    leftUl.querySelectorAll('li.active').forEach(li => {
+      li.classList.remove('active');
+      const item = { hostname: li.dataset.hostname, ip: li.dataset.ip };
+      const newLi = document.createElement('li');
+      newLi.className = 'list-group-item shuttle-item py-1';
+      newLi.dataset.hostname = item.hostname;
+      newLi.dataset.ip = item.ip;
+      newLi.innerHTML = onAdd(item);
+      newLi.querySelector('.shuttle-remove')?.addEventListener('click', () => {
+        newLi.remove();
+        rebuildLeft();
+      });
+      rightUl.appendChild(newLi);
+      rebuildLeft();
+    });
+  });
+
+  rebuildLeft();
+}
+
 /**
  * HTML 엔티티 디코딩
  */

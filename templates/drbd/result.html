@@ -5,20 +5,73 @@
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-10">
+
+    {% if error %}
+    <div class="alert alert-danger">
+      <i class="bi bi-exclamation-triangle-fill"></i> <strong>오류:</strong> {{ error }}
+    </div>
+    <a href="/drbd/" class="btn btn-secondary">← 다시 시도</a>
+
+    {% else %}
+
     <div class="d-flex align-items-center mb-4">
       <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> DRBD 설정 파일 생성 완료</h2>
-      <a href="/drbd/" class="btn btn-outline-secondary btn-sm ms-auto">
-        <i class="bi bi-arrow-left"></i> 다시 설정
-      </a>
+      <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-success btn-sm" onclick="saveToDb()">
+          <i class="bi bi-cloud-arrow-up-fill"></i> DB에 저장
+        </button>
+        <a href="/drbd/" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-arrow-left"></i> 다시 설정
+        </a>
+      </div>
     </div>
+
+    <div id="saveAlert" class="alert d-none mb-3" role="alert"></div>
+
+    <!-- DB 저장용 숨김 폼 데이터 -->
+    <form id="saveForm" style="display:none">
+      <input name="resource_name"     value="{{ result.save_form.resource_name }}">
+      <input name="protocol"          value="{{ result.save_form.protocol }}">
+      <input name="minor"             value="{{ result.save_form.minor }}">
+      <input name="nodes_json"        value="{{ result.save_form.nodes_json }}">
+      <input name="after_sb_0pri"     value="{{ result.save_form.after_sb_0pri }}">
+      <input name="after_sb_1pri"     value="{{ result.save_form.after_sb_1pri }}">
+      <input name="after_sb_2pri"     value="{{ result.save_form.after_sb_2pri }}">
+      <input name="on_io_error"       value="{{ result.save_form.on_io_error }}">
+      <input name="fencing"           value="{{ result.save_form.fencing }}">
+      <input name="wfc_timeout"       value="{{ result.save_form.wfc_timeout }}">
+      <input name="degr_wfc_timeout"  value="{{ result.save_form.degr_wfc_timeout }}">
+      <input name="become_primary_on" value="{{ result.save_form.become_primary_on }}">
+      <input name="source"            value="manual">
+      {% if result.save_form.allow_two_primaries %}
+      <input name="allow_two_primaries" value="on">
+      {% endif %}
+    </form>
+
+    {% if result.has_lvm %}
+    <div class="alert alert-warning d-flex align-items-center mb-4">
+      <i class="bi bi-layers-fill fs-5 me-2"></i>
+      <div>
+        <strong>LVM 모드:</strong>
+        DRBD 디스크로 LVM LV를 사용합니다.
+        아래 Ansible 플레이북에 LV 자동 생성 태스크가 포함되어 있습니다.
+        (<code>/dev/&lt;VG&gt;/{{ result.res_filename | replace(from=".res", to="") }}</code>)
+      </div>
+    </div>
+    {% endif %}
 
     <!-- .res 파일 -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-primary text-white d-flex align-items-center">
         <span class="fw-bold"><i class="bi bi-file-earmark-code-fill"></i> {{ result.res_filename }}</span>
-        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('resContent')">
-          <i class="bi bi-clipboard"></i> 복사
-        </button>
+        <div class="ms-auto d-flex gap-2">
+          <button class="btn btn-sm btn-light" onclick="copyText('resContent')">
+            <i class="bi bi-clipboard"></i> 복사
+          </button>
+          <form method="post" action="/drbd/download" style="display:inline">
+            <!-- 다운로드는 현재 res 내용을 그대로 재전송할 수 없으므로 복사 후 저장 안내 -->
+          </form>
+        </div>
       </div>
       <div class="card-body p-0">
         <textarea id="resContent" class="code-editor" data-mode="shell">{{ result.res_file }}</textarea>
@@ -38,26 +91,30 @@
       </div>
     </div>
 
-    <!-- Ansible Playbook 명령 안내 -->
+    <!-- Ansible 플레이북 (생성됨) -->
     <div class="card shadow-sm mb-4">
-      <div class="card-header bg-success text-white fw-bold">
-        <i class="bi bi-terminal-fill"></i> Ansible 배포 명령
+      <div class="card-header d-flex align-items-center
+        {% if result.has_lvm %}bg-danger text-white{% else %}bg-success text-white{% endif %}">
+        <span class="fw-bold">
+          <i class="bi bi-file-earmark-play-fill"></i>
+          deploy_drbd.yml
+          {% if result.has_lvm %}
+          <span class="badge bg-light text-danger ms-1">LVM 포함</span>
+          {% endif %}
+        </span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansiblePlaybook')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
       </div>
-      <div class="card-body">
-        <p class="text-muted small mb-2">아래 파일을 저장한 후 Ansible을 실행하세요:</p>
-        <pre class="bg-dark text-light p-3 rounded"><code># 1. 파일 저장
-mkdir -p ansible/
-# inventory.yml → ansible/inventory.yml 저장
-# ansible/playbooks/deploy_drbd.yml 은 이미 포함되어 있습니다
-
-# 2. DRBD 배포 실행
-ansible-playbook -i ansible/inventory.yml \
-  ansible/playbooks/deploy_drbd.yml \
-  -e "res_filename={{ result.res_filename }}"</code></pre>
+      <div class="card-body p-0">
+        <textarea id="ansiblePlaybook" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
+      </div>
+      <div class="card-footer small text-muted">
+        실행: <code>ansible-playbook -i inventory.yml deploy_drbd.yml</code>
       </div>
     </div>
 
-    <!-- DRBD 초기화 명령 -->
+    <!-- DRBD 초기화 절차 -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-secondary text-white fw-bold">
         <i class="bi bi-info-circle-fill"></i> DRBD 초기화 절차 (배포 후)
@@ -65,7 +122,7 @@ ansible-playbook -i ansible/inventory.yml \
       <div class="card-body">
         <ul class="list-group list-group-flush">
           {% for cmd in result.init_commands %}
-          <li class="list-group-item font-monospace small {% if cmd starts_with('#') %}text-muted bg-light{% endif %}">
+          <li class="list-group-item font-monospace small {% if cmd | starts_with(pat="#") %}text-muted bg-light{% endif %}">
             {{ cmd }}
           </li>
           {% endfor %}
@@ -81,6 +138,8 @@ ansible-playbook -i ansible/inventory.yml \
         <a href="/quadlet/" class="btn btn-info btn-sm ms-2">Quadlet 변환 →</a>
       </div>
     </div>
+
+    {% endif %}
   </div>
 </div>
 {% endblock %}
@@ -91,6 +150,34 @@ function copyText(id) {
   const el = document.getElementById(id);
   navigator.clipboard.writeText(el.value || el.textContent).then(() => {
     alert('클립보드에 복사되었습니다.');
+  });
+}
+
+function saveToDb() {
+  const form = document.getElementById('saveForm');
+  const data = new URLSearchParams();
+  form.querySelectorAll('input').forEach(input => {
+    data.append(input.name, input.value);
+  });
+
+  fetch('/drbd/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: data.toString(),
+  })
+  .then(r => r.json())
+  .then(res => {
+    const alert = document.getElementById('saveAlert');
+    alert.className = 'alert ' + (res.ok ? 'alert-success' : 'alert-danger');
+    alert.textContent = res.message;
+    alert.classList.remove('d-none');
+    setTimeout(() => alert.classList.add('d-none'), 5000);
+  })
+  .catch(e => {
+    const alert = document.getElementById('saveAlert');
+    alert.className = 'alert alert-danger';
+    alert.textContent = '저장 요청 실패: ' + e.message;
+    alert.classList.remove('d-none');
   });
 }
 </script>

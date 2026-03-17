@@ -28,21 +28,36 @@
       <div class="tab-pane fade show active" id="manualTab">
         <form action="/quadlet/generate" method="post" id="quadletForm">
 
-          <!-- IPVLAN 네트워크 -->
+          <!-- IPVLAN 네트워크 - 풀에서 선택 또는 직접 입력 -->
           <div class="card shadow-sm mb-4">
-            <div class="card-header bg-info text-white fw-bold">
-              <i class="bi bi-diagram-3-fill"></i> IPVLAN 네트워크 설정
+            <div class="card-header bg-info text-white fw-bold d-flex align-items-center">
+              <span><i class="bi bi-diagram-3-fill"></i> IPVLAN 네트워크 설정</span>
+              <a href="/nodes/" target="_blank" class="btn btn-sm btn-light ms-auto">
+                <i class="bi bi-pencil-fill"></i> 네트워크 풀 편집
+              </a>
             </div>
             <div class="card-body">
+              <!-- 풀에서 불러오기 -->
+              <div class="mb-3" id="netPickerRow">
+                <label class="form-label fw-semibold small">네트워크 풀에서 선택</label>
+                <div class="d-flex gap-2 align-items-center">
+                  <select class="form-select form-select-sm w-auto" id="netPoolSelect">
+                    <option value="">-- 풀에서 선택 --</option>
+                  </select>
+                  <button type="button" class="btn btn-sm btn-outline-info" onclick="loadNetFromPool()">
+                    <i class="bi bi-arrow-down-circle"></i> 불러오기
+                  </button>
+                </div>
+              </div>
               <div class="row g-3">
                 <div class="col-md-3">
                   <label class="form-label fw-semibold">네트워크 이름</label>
-                  <input type="text" class="form-control" name="net_name" placeholder="ipvlan0">
+                  <input type="text" class="form-control" name="net_name" id="netName" placeholder="ipvlan0">
                   <div class="form-text">생성: <code>&lt;name&gt;.network</code></div>
                 </div>
                 <div class="col-md-2">
                   <label class="form-label fw-semibold">드라이버</label>
-                  <select class="form-select" name="net_driver">
+                  <select class="form-select" name="net_driver" id="netDriver">
                     <option value="ipvlan" selected>ipvlan</option>
                     <option value="macvlan">macvlan</option>
                     <option value="bridge">bridge</option>
@@ -50,19 +65,19 @@
                 </div>
                 <div class="col-md-2">
                   <label class="form-label fw-semibold">호스트 인터페이스</label>
-                  <input type="text" class="form-control" name="net_interface" placeholder="eth0">
+                  <input type="text" class="form-control" name="net_interface" id="netInterface" placeholder="eth0">
                 </div>
                 <div class="col-md-2">
                   <label class="form-label fw-semibold">서브넷</label>
-                  <input type="text" class="form-control" name="net_subnet" placeholder="192.168.1.0/24">
+                  <input type="text" class="form-control" name="net_subnet" id="netSubnet" placeholder="192.168.1.0/24">
                 </div>
                 <div class="col-md-2">
                   <label class="form-label fw-semibold">게이트웨이</label>
-                  <input type="text" class="form-control" name="net_gateway" placeholder="192.168.1.1">
+                  <input type="text" class="form-control" name="net_gateway" id="netGateway" placeholder="192.168.1.1">
                 </div>
                 <div class="col-md-1">
                   <label class="form-label fw-semibold">IPVLAN 모드</label>
-                  <select class="form-select" name="net_ipvlan_mode">
+                  <select class="form-select" name="net_ipvlan_mode" id="netIpvlanMode">
                     <option value="l2" selected>l2</option>
                     <option value="l3">l3</option>
                     <option value="l3s">l3s</option>
@@ -139,23 +154,35 @@
             </div>
           </div>
 
-          <!-- Ansible 설정 -->
+          <!-- Ansible 배포 - 노드 셔틀 -->
           <div class="card shadow-sm mb-4">
             <div class="card-header bg-warning text-dark fw-bold">
               <i class="bi bi-send-fill"></i> Ansible 배포 설정
             </div>
             <div class="card-body">
-              <div class="row g-3">
-                <div class="col-md-4">
-                  <label class="form-label">대상 호스트 (줄당 하나 또는 그룹)</label>
-                  <textarea class="form-control" name="ansible_hosts" rows="2"
-                            placeholder="node1.ha.local&#10;node2.ha.local"></textarea>
+              <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">대상 노드 선택</label>
+                  <textarea name="ansible_hosts" id="quadletHosts" class="d-none"></textarea>
+                  <div class="row g-2">
+                    <div class="col-6">
+                      <div class="small text-muted mb-1">노드 풀 <a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i></a></div>
+                      <ul class="list-group" id="qPoolList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
+                    </div>
+                    <div class="col-auto d-flex flex-column justify-content-center gap-2">
+                      <button type="button" class="btn btn-outline-warning btn-sm" id="qPoolList_add"><i class="bi bi-arrow-right"></i></button>
+                    </div>
+                    <div class="col">
+                      <div class="small text-muted mb-1">선택됨</div>
+                      <ul class="list-group" id="qSelectedList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
+                    </div>
+                  </div>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                   <label class="form-label">SSH 사용자</label>
                   <input type="text" class="form-control" name="ansible_user" value="root">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-3">
                   <label class="form-label">SSH 개인키 경로</label>
                   <input type="text" class="form-control" name="ansible_ssh_key" value="~/.ssh/id_rsa">
                 </div>
@@ -198,6 +225,81 @@
 
 {% block scripts %}
 <script>
+// ── Quadlet 노드 셔틀 ─────────────────────────────────────────
+let qNodes = [];
+
+function qRebuildPool() {
+  const used = new Set(qNodes.map(n => n.hostname));
+  const ul = document.getElementById('qPoolList');
+  ul.innerHTML = '';
+  getNodePool().filter(p => !used.has(p.hostname)).forEach(p => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item list-group-item-action py-1';
+    li.dataset.hostname = p.hostname;
+    li.innerHTML = `<span class="fw-semibold">${p.hostname}</span> <small class="text-muted">${p.ip}</small>`;
+    li.onclick = () => li.classList.toggle('active');
+    ul.appendChild(li);
+  });
+}
+
+function qRenderSelected() {
+  const ul = document.getElementById('qSelectedList');
+  ul.innerHTML = '';
+  qNodes.forEach((n, i) => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item d-flex align-items-center py-1 gap-2';
+    li.innerHTML = `<span class="flex-grow-1">${n.hostname}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger"><i class="bi bi-arrow-left"></i></button>`;
+    li.querySelector('button').addEventListener('click', () => {
+      qNodes.splice(i, 1); qRenderSelected(); qRebuildPool(); qSyncHosts();
+    });
+    ul.appendChild(li);
+  });
+  qSyncHosts();
+}
+
+function qSyncHosts() {
+  document.getElementById('quadletHosts').value = qNodes.map(n => n.hostname).join('\n');
+}
+
+// ── 네트워크 풀 ───────────────────────────────────────────────
+function initNetPool() {
+  const sel = document.getElementById('netPoolSelect');
+  sel.innerHTML = '<option value="">-- 풀에서 선택 --</option>';
+  getNetworkPool().forEach((n, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = `${n.name} (${n.driver}, ${n.interface})`;
+    sel.appendChild(opt);
+  });
+}
+
+function loadNetFromPool() {
+  const idx = parseInt(document.getElementById('netPoolSelect').value);
+  if (isNaN(idx)) return;
+  const n = getNetworkPool()[idx];
+  if (!n) return;
+  document.getElementById('netName').value        = n.name        || '';
+  document.getElementById('netInterface').value   = n.interface   || '';
+  document.getElementById('netSubnet').value      = n.subnet      || '';
+  document.getElementById('netGateway').value     = n.gateway     || '';
+  const drv = document.getElementById('netDriver');
+  const mod = document.getElementById('netIpvlanMode');
+  for (let o of drv.options) if (o.value === n.driver) { drv.value = n.driver; break; }
+  for (let o of mod.options) if (o.value === n.ipvlan_mode) { mod.value = n.ipvlan_mode; break; }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  qRebuildPool();
+  initNetPool();
+  document.getElementById('qPoolList_add').addEventListener('click', () => {
+    document.querySelectorAll('#qPoolList li.active').forEach(li => {
+      qNodes.push({ hostname: li.dataset.hostname });
+    });
+    qRenderSelected(); qRebuildPool();
+  });
+});
+
 function loadContainerExample() {
   const example = JSON.stringify([
     {

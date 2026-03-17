@@ -3,19 +3,35 @@ use crate::models::quadlet::{QuadletContainer, QuadletNetwork, QuadletPod, Quadl
 /// .volume 유닛 파일 생성
 pub fn generate_volume_unit(vol: &QuadletVolume) -> String {
     let mut out = String::new();
+
+    // [Unit] Description (NFS 등 특수 볼륨)
+    let has_type = vol.options.iter().any(|o| o.to_lowercase().starts_with("type="));
+    if has_type {
+        out.push_str("[Unit]\n");
+        out.push_str(&format!("Description=Volume {}\n\n", vol.name));
+    }
+
     out.push_str("[Volume]\n");
+    out.push_str(&format!("VolumeName={}\n", vol.name));
     if !vol.driver.is_empty() {
         out.push_str(&format!("Driver={}\n", vol.driver));
     }
     for opt in &vol.options {
-        out.push_str(&format!("Options={}\n", opt));
+        // type=nfs, device=..., o=... 등은 별도 키로 분리
+        if let Some(val) = opt.strip_prefix("type=") {
+            out.push_str(&format!("Type={}\n", val));
+        } else if let Some(val) = opt.strip_prefix("device=") {
+            out.push_str(&format!("Device={}\n", val));
+        } else {
+            out.push_str(&format!("Options={}\n", opt));
+        }
     }
     for label in &vol.labels {
         out.push_str(&format!("Label={}\n", label));
     }
     out.push('\n');
     out.push_str("[Install]\n");
-    out.push_str("WantedBy=default.target\n");
+    out.push_str("WantedBy=multi-user.target\n");
     out
 }
 
@@ -25,34 +41,50 @@ pub fn generate_network_unit(net: &QuadletNetwork) -> String {
     out.push_str("[Network]\n");
     out.push_str(&format!("Driver={}\n", net.driver));
 
-    if !net.interface.is_empty() {
-        out.push_str(&format!("NetworkInterface={}\n", net.interface));
-    }
     if !net.subnet.is_empty() {
         out.push_str(&format!("Subnet={}\n", net.subnet));
     }
     if !net.gateway.is_empty() {
         out.push_str(&format!("Gateway={}\n", net.gateway));
     }
-    if net.driver == "ipvlan" && !net.ipvlan_mode.is_empty() {
+    // ipvlan/macvlan은 IPv6 기본 비활성화
+    if net.driver == "ipvlan" || net.driver == "macvlan" {
+        out.push_str("IPv6=no\n");
+    }
+    // 부모 인터페이스: NetworkInterface= 대신 Options=parent= 사용
+    if !net.interface.is_empty() {
+        out.push_str(&format!("Options=parent={}\n", net.interface));
+    }
+    if (net.driver == "ipvlan" || net.driver == "macvlan") && !net.ipvlan_mode.is_empty() {
         out.push_str(&format!("Options=mode={}\n", net.ipvlan_mode));
     }
     for opt in &net.options {
         out.push_str(&format!("Options={}\n", opt));
     }
-    out.push('\n');
-    out.push_str("[Install]\n");
-    out.push_str("WantedBy=default.target\n");
     out
 }
 
 /// .pod 유닛 파일 생성
 pub fn generate_pod_unit(pod: &QuadletPod) -> String {
     let mut out = String::new();
-    out.push_str("[Pod]\n");
+
+    // [Unit] 섹션: 네트워크 의존성
     if let Some(net) = &pod.network {
         if !net.is_empty() {
-            out.push_str(&format!("Network={}.network\n", net));
+            let svc = format!("{}.network", net);
+            out.push_str("[Unit]\n");
+            out.push_str(&format!("After={}\n", svc));
+            out.push_str(&format!("Requires={}\n", svc));
+            out.push('\n');
+        }
+    }
+
+    out.push_str("[Pod]\n");
+    out.push_str(&format!("PodName={}\n", pod.name));
+    if let Some(net) = &pod.network {
+        if !net.is_empty() {
+            // Quadlet에서 네트워크 파일은 systemd-<name> 으로 참조
+            out.push_str(&format!("Network=systemd-{}\n", net));
         }
     }
     for port in &pod.publish_ports {
@@ -61,12 +93,6 @@ pub fn generate_pod_unit(pod: &QuadletPod) -> String {
     for label in &pod.labels {
         out.push_str(&format!("Label={}\n", label));
     }
-    out.push('\n');
-    out.push_str("[Service]\n");
-    out.push_str("Restart=on-failure\n");
-    out.push('\n');
-    out.push_str("[Install]\n");
-    out.push_str("WantedBy=default.target\n");
     out
 }
 
@@ -74,17 +100,20 @@ pub fn generate_pod_unit(pod: &QuadletPod) -> String {
 pub fn generate_container_unit(c: &QuadletContainer) -> String {
     let mut out = String::new();
 
-    // [Unit] 섹션: 의존성
+    // [Unit] 섹션: 의존성 (pod 의존이면 .pod, 그 외 .service)
     if !c.depends_on.is_empty() {
         out.push_str("[Unit]\n");
         for dep in &c.depends_on {
-            out.push_str(&format!("After={}.service\n", dep));
-            out.push_str(&format!("Requires={}.service\n", dep));
+            // pod 이름과 동일한 dep이면 .pod suffix, 아니면 .service
+            let suffix = if c.pod.as_deref() == Some(dep.as_str()) { "pod" } else { "service" };
+            out.push_str(&format!("After={}.{}\n", dep, suffix));
+            out.push_str(&format!("Requires={}.{}\n", dep, suffix));
         }
         out.push('\n');
     }
 
     out.push_str("[Container]\n");
+    out.push_str(&format!("ContainerName={}\n", c.name));
     out.push_str(&format!("Image={}\n", c.image));
 
     // pod 소속
@@ -145,12 +174,8 @@ pub fn generate_container_unit(c: &QuadletContainer) -> String {
 
     out.push('\n');
     out.push_str("[Service]\n");
-    out.push_str("Restart=on-failure\n");
-    out.push_str("TimeoutStartSec=60\n");
-    out.push_str("TimeoutStopSec=60\n");
-    out.push('\n');
-    out.push_str("[Install]\n");
-    out.push_str("WantedBy=default.target\n");
+    out.push_str("Restart=no\n");
+    out.push_str("TimeoutStartSec=0\n");
     out
 }
 

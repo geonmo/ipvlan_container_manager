@@ -5,9 +5,16 @@ use serde::{Deserialize, Serialize};
 pub struct DrbdNode {
     pub hostname: String,
     pub ip: String,
-    pub disk_device: String, // e.g. /dev/sdb
-    pub meta_disk: String,   // e.g. internal
+    /// block 장치 경로 (disk_type == "block" 일 때 사용, e.g. /dev/sdb)
+    pub disk_device: String,
+    pub meta_disk: String,
     pub port: u16,
+    /// "block" | "lvm"
+    pub disk_type: String,
+    /// LVM VG 이름 (disk_type == "lvm" 일 때)
+    pub lvm_vg: String,
+    /// LVM LV 크기 (disk_type == "lvm" 일 때, e.g. "10G")
+    pub lvm_size: String,
 }
 
 impl Default for DrbdNode {
@@ -18,6 +25,21 @@ impl Default for DrbdNode {
             disk_device: String::new(),
             meta_disk: "internal".to_string(),
             port: 7789,
+            disk_type: "block".to_string(),
+            lvm_vg: String::new(),
+            lvm_size: String::new(),
+        }
+    }
+}
+
+impl DrbdNode {
+    /// .res 파일에 사용할 실제 disk 경로 반환
+    /// LVM: /dev/<vg>/<resource_name>, block: disk_device 그대로
+    pub fn effective_disk(&self, resource_name: &str) -> String {
+        if self.disk_type == "lvm" && !self.lvm_vg.is_empty() {
+            format!("/dev/{}/{}", self.lvm_vg, resource_name)
+        } else {
+            self.disk_device.clone()
         }
     }
 }
@@ -63,7 +85,7 @@ impl Default for DrbdNetOptions {
     fn default() -> Self {
         Self {
             allow_two_primaries: false,
-            after_sb_0pri: "discard-younger-primary".to_string(),
+            after_sb_0pri: "discard-zero-changes".to_string(),
             after_sb_1pri: "discard-secondary".to_string(),
             after_sb_2pri: "disconnect".to_string(),
         }
@@ -89,7 +111,7 @@ impl Default for DrbdDiskOptions {
 pub struct DrbdStartupOptions {
     pub wfc_timeout: u32,
     pub degr_wfc_timeout: u32,
-    pub become_primary_on: String, // "both" for dual-primary or specific node
+    pub become_primary_on: String,
 }
 
 impl Default for DrbdStartupOptions {
@@ -126,4 +148,26 @@ impl Default for AnsibleInventory {
 pub struct AnsibleNode {
     pub hostname: String,
     pub ip: String,
+}
+
+/// /etc/drbd.d 스캔 결과 (프론트엔드 전달용)
+#[derive(Debug, Serialize)]
+pub struct ScannedDrbdResource {
+    pub resource_name: String,
+    pub protocol: String,
+    pub minor: u32,
+    pub nodes: Vec<ScannedDrbdNode>,
+    pub source_file: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ScannedDrbdNode {
+    pub hostname: String,
+    pub ip: String,
+    pub port: u16,
+    pub disk: String,
+    pub meta: String,
+    pub disk_type: String,  // "block" | "lvm" (자동 감지)
+    pub lvm_vg: String,
+    pub lvm_size: String,
 }

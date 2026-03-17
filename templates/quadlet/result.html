@@ -22,15 +22,15 @@
     {% for file in result.files %}
     <div class="card shadow-sm mb-3">
       <div class="card-header d-flex align-items-center
-        {% if file.0 ends_with('.volume') %}bg-secondary text-white
-        {% elif file.0 ends_with('.network') %}bg-info text-white
-        {% elif file.0 ends_with('.pod') %}bg-dark text-white
+        {% if file.0 | ends_with(pat=".volume") %}bg-secondary text-white
+        {% elif file.0 | ends_with(pat=".network") %}bg-info text-white
+        {% elif file.0 | ends_with(pat=".pod") %}bg-dark text-white
         {% else %}bg-success text-white{% endif %}">
         <span class="fw-bold"><i class="bi bi-file-earmark-code-fill"></i> {{ file.0 }}</span>
         <span class="badge bg-light text-dark ms-2">
-          {% if file.0 ends_with('.volume') %}Volume
-          {% elif file.0 ends_with('.network') %}Network
-          {% elif file.0 ends_with('.pod') %}Pod
+          {% if file.0 | ends_with(pat=".volume") %}Volume
+          {% elif file.0 | ends_with(pat=".network") %}Network
+          {% elif file.0 | ends_with(pat=".pod") %}Pod
           {% else %}Container{% endif %}
         </span>
         <button class="btn btn-sm btn-light ms-auto"

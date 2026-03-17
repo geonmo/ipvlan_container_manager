@@ -27,8 +27,8 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
 pub struct PacemakerFormData {
     // 클러스터 기본 설정
     pub cluster_name: String,
-    pub node1_name: String,
-    pub node2_name: String,
+    /// JSON 배열: [{hostname, ip}]
+    pub nodes_json: Option<String>,
     pub stonith_enabled: Option<String>,
     pub no_quorum_policy: String,
     pub migration_threshold: Option<u32>,
@@ -88,13 +88,23 @@ pub async fn generate(
 ) -> Html<String> {
     let mut config = PacemakerConfig::default();
 
+    // nodes_json 파싱: [{hostname, ip}]
+    let parsed_nodes: Vec<ClusterNode> = form.nodes_json.as_deref()
+        .and_then(|j| serde_json::from_str::<Vec<serde_json::Value>>(j).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, v)| {
+            let name = v.get("hostname").and_then(|h| h.as_str())?.to_string();
+            if name.is_empty() { return None; }
+            Some(ClusterNode { name, id: (i + 1) as u32 })
+        })
+        .collect();
+
     // 클러스터 기본 설정
     config.cluster = ClusterConfig {
         cluster_name: form.cluster_name.clone(),
-        nodes: vec![
-            ClusterNode { name: form.node1_name.clone(), id: 1 },
-            ClusterNode { name: form.node2_name.clone(), id: 2 },
-        ],
+        nodes: parsed_nodes,
         stonith_enabled: form.stonith_enabled.as_deref() == Some("on"),
         no_quorum_policy: form.no_quorum_policy.clone(),
         migration_threshold: form.migration_threshold.unwrap_or(3),
@@ -262,6 +272,10 @@ fn generate_pacemaker_ansible_playbook(
         user = user,
         key = key,
         script = script_lines,
-        node1 = form.node1_name,
+        node1 = form.nodes_json.as_deref()
+            .and_then(|j| serde_json::from_str::<Vec<serde_json::Value>>(j).ok())
+            .and_then(|v| v.into_iter().next())
+            .and_then(|n| n.get("hostname").and_then(|h| h.as_str()).map(|s| s.to_string()))
+            .unwrap_or_else(|| "localhost".to_string()),
     )
 }
