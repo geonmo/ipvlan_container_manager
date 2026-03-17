@@ -147,34 +147,57 @@ pub fn scan_quadlet_networks(quadlet_dir: &str) -> Vec<DbNetwork> {
 fn parse_network_file(name: &str, content: &str) -> Option<DbNetwork> {
     let mut driver = String::new();
     let mut interface = String::new();
-    let mut subnet = String::new();
-    let mut gateway = String::new();
+    let mut subnets: Vec<String> = Vec::new();
+    let mut gateways: Vec<String> = Vec::new();
     let mut ipvlan_mode = "l2".to_string();
+    let mut ipv6 = false;
 
     for line in content.lines() {
         let trimmed = line.trim();
         if let Some(v) = trimmed.strip_prefix("Driver=") {
             driver = v.trim().to_string();
         } else if let Some(v) = trimmed.strip_prefix("Subnet=") {
-            subnet = v.trim().to_string();
+            subnets.push(v.trim().to_string());
         } else if let Some(v) = trimmed.strip_prefix("Gateway=") {
-            gateway = v.trim().to_string();
+            gateways.push(v.trim().to_string());
         } else if let Some(v) = trimmed.strip_prefix("Options=parent=") {
             interface = v.trim().to_string();
         } else if let Some(v) = trimmed.strip_prefix("Options=mode=") {
             ipvlan_mode = v.trim().to_string();
+        } else if trimmed.eq_ignore_ascii_case("IPv6=true")
+               || trimmed.eq_ignore_ascii_case("IPv6=yes") {
+            ipv6 = true;
         }
     }
 
     if driver.is_empty() { return None; }
+
+    // IPv4 / IPv6 분류: ':' 포함이면 IPv6
+    let mut subnet4 = String::new();
+    let mut gateway4 = String::new();
+    let mut subnet6 = String::new();
+    let mut gateway6 = String::new();
+
+    for s in &subnets {
+        if s.contains(':') { subnet6 = s.clone(); }
+        else               { subnet4 = s.clone(); }
+    }
+    for g in &gateways {
+        if g.contains(':') { gateway6 = g.clone(); }
+        else               { gateway4 = g.clone(); }
+    }
+    if !subnet6.is_empty() { ipv6 = true; }
 
     Some(DbNetwork {
         id: 0,
         name: name.to_string(),
         driver,
         interface,
-        subnet,
-        gateway,
+        subnet:  subnet4,
+        gateway: gateway4,
+        subnet6,
+        gateway6,
+        ipv6,
         ipvlan_mode,
         source: "scanned".to_string(),
         created_at: String::new(),

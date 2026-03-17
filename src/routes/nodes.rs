@@ -113,6 +113,9 @@ pub struct NetworkInput {
     pub interface: Option<String>,
     pub subnet: Option<String>,
     pub gateway: Option<String>,
+    pub subnet6: Option<String>,
+    pub gateway6: Option<String>,
+    pub ipv6: Option<bool>,
     pub ipvlan_mode: Option<String>,
 }
 
@@ -120,6 +123,9 @@ pub async fn api_upsert_network(
     State(state): State<AppState>,
     Json(input): Json<NetworkInput>,
 ) -> Result<StatusCode, StatusCode> {
+    let subnet6  = input.subnet6.unwrap_or_default();
+    let gateway6 = input.gateway6.unwrap_or_default();
+    let ipv6     = input.ipv6.unwrap_or(!subnet6.is_empty());
     let net = DbNetwork {
         id: 0,
         name: input.name,
@@ -127,6 +133,9 @@ pub async fn api_upsert_network(
         interface: input.interface.unwrap_or_default(),
         subnet: input.subnet.unwrap_or_default(),
         gateway: input.gateway.unwrap_or_default(),
+        subnet6,
+        gateway6,
+        ipv6,
         ipvlan_mode: input.ipvlan_mode.unwrap_or_else(|| "l2".to_string()),
         source: "manual".to_string(),
         created_at: String::new(),

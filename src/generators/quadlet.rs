@@ -41,17 +41,33 @@ pub fn generate_network_unit(net: &QuadletNetwork) -> String {
     out.push_str("[Network]\n");
     out.push_str(&format!("Driver={}\n", net.driver));
 
+    // IPv4
     if !net.subnet.is_empty() {
         out.push_str(&format!("Subnet={}\n", net.subnet));
     }
     if !net.gateway.is_empty() {
         out.push_str(&format!("Gateway={}\n", net.gateway));
     }
-    // ipvlan/macvlan은 IPv6 기본 비활성화
-    if net.driver == "ipvlan" || net.driver == "macvlan" {
-        out.push_str("IPv6=no\n");
+
+    // IPv6 (듀얼스택)
+    if !net.subnet6.is_empty() {
+        out.push_str(&format!("Subnet={}\n", net.subnet6));
     }
-    // 부모 인터페이스: NetworkInterface= 대신 Options=parent= 사용
+    if !net.gateway6.is_empty() {
+        out.push_str(&format!("Gateway={}\n", net.gateway6));
+    }
+
+    // IPv6= 라인: 듀얼스택이면 true, IPv6 없는 ipvlan/macvlan이면 no
+    let is_dual = !net.subnet6.is_empty();
+    if net.driver == "ipvlan" || net.driver == "macvlan" {
+        if is_dual || net.ipv6 {
+            out.push_str("IPv6=true\n");
+        } else {
+            out.push_str("IPv6=no\n");
+        }
+    }
+
+    // 부모 인터페이스
     if !net.interface.is_empty() {
         out.push_str(&format!("Options=parent={}\n", net.interface));
     }

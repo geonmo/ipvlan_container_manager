@@ -37,8 +37,16 @@ pub struct DbNetwork {
     pub name: String,
     pub driver: String,
     pub interface: String,
+    /// IPv4 서브넷 (예: 192.168.1.0/24)
     pub subnet: String,
+    /// IPv4 게이트웨이
     pub gateway: String,
+    /// IPv6 서브넷 (예: 2001:db8::/64), 없으면 빈 문자열
+    pub subnet6: String,
+    /// IPv6 게이트웨이, 없으면 빈 문자열
+    pub gateway6: String,
+    /// IPv6 활성화 여부 (IPv6=true/false)
+    pub ipv6: bool,
     pub ipvlan_mode: String,
     /// "manual" | "scanned"
     pub source: String,
@@ -66,6 +74,15 @@ pub struct DbAnsibleProfile {
 /// DB 초기화 (테이블 생성)
 pub fn init_db(path: &str) -> Result<Connection> {
     let conn = Connection::open(path)?;
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         -- 기존 networks 테이블에 새 컬럼 추가 (이미 있으면 무시)
+         ALTER TABLE networks ADD COLUMN subnet6  TEXT NOT NULL DEFAULT '' ;
+         ALTER TABLE networks ADD COLUMN gateway6 TEXT NOT NULL DEFAULT '' ;
+         ALTER TABLE networks ADD COLUMN ipv6     INTEGER NOT NULL DEFAULT 0 ;
+        "
+    ).ok(); // 이미 존재하는 컬럼 오류는 무시
+
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
 
@@ -99,6 +116,9 @@ pub fn init_db(path: &str) -> Result<Connection> {
              interface   TEXT    NOT NULL DEFAULT '',
              subnet      TEXT    NOT NULL DEFAULT '',
              gateway     TEXT    NOT NULL DEFAULT '',
+             subnet6     TEXT    NOT NULL DEFAULT '',
+             gateway6    TEXT    NOT NULL DEFAULT '',
+             ipv6        INTEGER NOT NULL DEFAULT 0,
              ipvlan_mode TEXT    NOT NULL DEFAULT 'l2',
              source      TEXT    NOT NULL DEFAULT 'manual',
              created_at  TEXT    NOT NULL
@@ -261,23 +281,32 @@ pub fn delete_node(conn: &Connection, id: i64) -> Result<usize> {
 pub fn upsert_network(conn: &Connection, n: &DbNetwork) -> Result<()> {
     let now = chrono::Local::now().to_rfc3339();
     conn.execute(
-        "INSERT INTO networks (name, driver, interface, subnet, gateway, ipvlan_mode, source, created_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+        "INSERT INTO networks
+             (name, driver, interface, subnet, gateway, subnet6, gateway6, ipv6, ipvlan_mode, source, created_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
          ON CONFLICT(name) DO UPDATE SET
              driver      = excluded.driver,
              interface   = excluded.interface,
              subnet      = excluded.subnet,
              gateway     = excluded.gateway,
+             subnet6     = excluded.subnet6,
+             gateway6    = excluded.gateway6,
+             ipv6        = excluded.ipv6,
              ipvlan_mode = excluded.ipvlan_mode,
              source      = excluded.source",
-        params![n.name, n.driver, n.interface, n.subnet, n.gateway, n.ipvlan_mode, n.source, now],
+        params![
+            n.name, n.driver, n.interface,
+            n.subnet, n.gateway,
+            n.subnet6, n.gateway6, n.ipv6 as i64,
+            n.ipvlan_mode, n.source, now
+        ],
     )?;
     Ok(())
 }
 
 pub fn list_networks(conn: &Connection) -> Result<Vec<DbNetwork>> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, driver, interface, subnet, gateway, ipvlan_mode, source, created_at
+        "SELECT id, name, driver, interface, subnet, gateway, subnet6, gateway6, ipv6, ipvlan_mode, source, created_at
          FROM networks ORDER BY name ASC",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -288,9 +317,12 @@ pub fn list_networks(conn: &Connection) -> Result<Vec<DbNetwork>> {
             interface:   row.get(3)?,
             subnet:      row.get(4)?,
             gateway:     row.get(5)?,
-            ipvlan_mode: row.get(6)?,
-            source:      row.get(7)?,
-            created_at:  row.get(8)?,
+            subnet6:     row.get(6)?,
+            gateway6:    row.get(7)?,
+            ipv6:        row.get::<_, i64>(8)? != 0,
+            ipvlan_mode: row.get(9)?,
+            source:      row.get(10)?,
+            created_at:  row.get(11)?,
         })
     })?;
     rows.collect()

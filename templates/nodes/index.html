@@ -59,8 +59,8 @@
               <th>이름</th>
               <th>드라이버</th>
               <th>인터페이스</th>
-              <th>서브넷</th>
-              <th>게이트웨이</th>
+              <th>IPv4 서브넷 / 게이트웨이</th>
+              <th>IPv6 서브넷 / 게이트웨이</th>
               <th>모드</th>
               <th>출처</th>
               <th style="width:80px"></th>
@@ -145,10 +145,15 @@
           </select></div>
         <div class="col-md-4"><label class="form-label">호스트 인터페이스</label>
           <input class="form-control" id="netInterface" placeholder="eth0"></div>
-        <div class="col-md-4"><label class="form-label">서브넷</label>
+        <div class="col-md-4"><label class="form-label">IPv4 서브넷</label>
           <input class="form-control" id="netSubnet" placeholder="192.168.1.0/24"></div>
-        <div class="col-md-4"><label class="form-label">게이트웨이</label>
+        <div class="col-md-4"><label class="form-label">IPv4 게이트웨이</label>
           <input class="form-control" id="netGateway" placeholder="192.168.1.1"></div>
+        <div class="col-12"><small class="text-muted fw-semibold">듀얼스택 (선택)</small></div>
+        <div class="col-md-6"><label class="form-label">IPv6 서브넷</label>
+          <input class="form-control" id="netSubnet6" placeholder="2001:db8::/64"></div>
+        <div class="col-md-6"><label class="form-label">IPv6 게이트웨이</label>
+          <input class="form-control" id="netGateway6" placeholder="2001:db8::1"></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
@@ -241,7 +246,9 @@ async function syncLocalStorage() {
   const nets = await fetch('/api/networks').then(r => r.json());
   saveNetworkPool(nets.map(n => ({
     name: n.name, driver: n.driver, interface: n.interface,
-    subnet: n.subnet, gateway: n.gateway, ipvlan_mode: n.ipvlan_mode
+    subnet: n.subnet, gateway: n.gateway,
+    subnet6: n.subnet6, gateway6: n.gateway6, ipv6: n.ipv6,
+    ipvlan_mode: n.ipvlan_mode
   })));
 }
 
@@ -273,13 +280,19 @@ function renderNetworks(nets) {
     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">네트워크 없음</td></tr>';
     return;
   }
-  tbody.innerHTML = nets.map(n => `
+  tbody.innerHTML = nets.map(n => {
+    const v4 = [n.subnet, n.gateway].filter(Boolean).join(' / ') || '-';
+    const v6 = [n.subnet6, n.gateway6].filter(Boolean).join(' / ');
+    const v6cell = v6
+      ? `<span class="badge bg-success-subtle text-success border border-success-subtle">${esc(v6)}</span>`
+      : '<span class="text-muted">-</span>';
+    return `
     <tr>
       <td><strong>${esc(n.name)}</strong></td>
       <td>${esc(n.driver)}</td>
       <td>${esc(n.interface)}</td>
-      <td>${esc(n.subnet)}</td>
-      <td>${esc(n.gateway)}</td>
+      <td><code class="small">${esc(v4)}</code></td>
+      <td>${v6cell}</td>
       <td>${esc(n.ipvlan_mode)}</td>
       <td><span class="badge ${n.source==='scanned'?'bg-secondary':'bg-info'}">${esc(n.source)}</span></td>
       <td>
@@ -287,7 +300,8 @@ function renderNetworks(nets) {
           <i class="bi bi-trash"></i>
         </button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 function renderProfiles(profiles) {
@@ -354,6 +368,8 @@ function openNetModal() {
   document.getElementById('netInterface').value = '';
   document.getElementById('netSubnet').value = '';
   document.getElementById('netGateway').value = '';
+  document.getElementById('netSubnet6').value = '';
+  document.getElementById('netGateway6').value = '';
   document.getElementById('netIpvlanMode').value = 'l2';
   netModalInst = netModalInst || new bootstrap.Modal(document.getElementById('netModal'));
   netModalInst.show();
@@ -370,6 +386,8 @@ async function saveNetwork() {
       interface:   document.getElementById('netInterface').value.trim(),
       subnet:      document.getElementById('netSubnet').value.trim(),
       gateway:     document.getElementById('netGateway').value.trim(),
+      subnet6:     document.getElementById('netSubnet6').value.trim(),
+      gateway6:    document.getElementById('netGateway6').value.trim(),
       ipvlan_mode: document.getElementById('netIpvlanMode').value,
     })
   });

@@ -68,11 +68,11 @@
                   <input type="text" class="form-control" name="net_interface" id="netInterface" placeholder="eth0">
                 </div>
                 <div class="col-md-2">
-                  <label class="form-label fw-semibold">서브넷</label>
+                  <label class="form-label fw-semibold">IPv4 서브넷</label>
                   <input type="text" class="form-control" name="net_subnet" id="netSubnet" placeholder="192.168.1.0/24">
                 </div>
                 <div class="col-md-2">
-                  <label class="form-label fw-semibold">게이트웨이</label>
+                  <label class="form-label fw-semibold">IPv4 게이트웨이</label>
                   <input type="text" class="form-control" name="net_gateway" id="netGateway" placeholder="192.168.1.1">
                 </div>
                 <div class="col-md-1">
@@ -82,6 +82,14 @@
                     <option value="l3">l3</option>
                     <option value="l3s">l3s</option>
                   </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold text-success">IPv6 서브넷 <small class="fw-normal text-muted">(듀얼스택, 선택)</small></label>
+                  <input type="text" class="form-control" name="net_subnet6" id="netSubnet6" placeholder="2001:db8::/64">
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-semibold text-success">IPv6 게이트웨이</label>
+                  <input type="text" class="form-control" name="net_gateway6" id="netGateway6" placeholder="2001:db8::1">
                 </div>
               </div>
             </div>
@@ -283,6 +291,8 @@ function loadNetFromPool() {
   document.getElementById('netInterface').value   = n.interface   || '';
   document.getElementById('netSubnet').value      = n.subnet      || '';
   document.getElementById('netGateway').value     = n.gateway     || '';
+  document.getElementById('netSubnet6').value     = n.subnet6     || '';
+  document.getElementById('netGateway6').value    = n.gateway6    || '';
   const drv = document.getElementById('netDriver');
   const mod = document.getElementById('netIpvlanMode');
   for (let o of drv.options) if (o.value === n.driver) { drv.value = n.driver; break; }

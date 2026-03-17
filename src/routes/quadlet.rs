@@ -86,6 +86,8 @@ pub struct QuadletFullForm {
     pub net_interface: Option<String>,
     pub net_subnet: Option<String>,
     pub net_gateway: Option<String>,
+    pub net_subnet6: Option<String>,
+    pub net_gateway6: Option<String>,
     pub net_ipvlan_mode: Option<String>,
 
     // Pod
@@ -129,12 +131,18 @@ pub async fn generate(
     // Network 처리
     if let Some(nname) = &form.net_name {
         if !nname.trim().is_empty() {
+            let subnet6  = form.net_subnet6.clone().unwrap_or_default();
+            let gateway6 = form.net_gateway6.clone().unwrap_or_default();
+            let ipv6     = !subnet6.is_empty();
             config.networks.push(QuadletNetwork {
                 name: nname.trim().to_string(),
                 driver: form.net_driver.clone().unwrap_or_else(|| "ipvlan".to_string()),
                 interface: form.net_interface.clone().unwrap_or_default(),
                 subnet: form.net_subnet.clone().unwrap_or_default(),
                 gateway: form.net_gateway.clone().unwrap_or_default(),
+                subnet6,
+                gateway6,
+                ipv6,
                 ipvlan_mode: form.net_ipvlan_mode.clone().unwrap_or_else(|| "l2".to_string()),
                 options: Vec::new(),
             });

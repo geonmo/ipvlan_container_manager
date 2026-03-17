@@ -15,8 +15,11 @@ pub struct QuadletNetwork {
     pub name: String,        // e.g. "ipvlan0"  → ipvlan0.network
     pub driver: String,      // ipvlan or macvlan
     pub interface: String,   // host NIC e.g. eth0
-    pub subnet: String,      // e.g. 192.168.1.0/24
-    pub gateway: String,
+    pub subnet: String,      // IPv4 서브넷 e.g. 192.168.1.0/24
+    pub gateway: String,     // IPv4 게이트웨이
+    pub subnet6: String,     // IPv6 서브넷 (없으면 빈 문자열)
+    pub gateway6: String,    // IPv6 게이트웨이 (없으면 빈 문자열)
+    pub ipv6: bool,          // IPv6= 라인 출력 여부
     pub ipvlan_mode: String, // l2, l3, l3s
     pub options: Vec<String>,
 }
