@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}Volume 설정 - HA Container Manager{% endblock %}
+{% block nav_volume %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <div class="d-flex align-items-center mb-1">
+      <h2 class="fw-bold me-3"><i class="bi bi-hdd-stack-fill text-secondary"></i> Volume 설정</h2>
+      <div class="ms-auto d-flex gap-2">
+        <button class="btn btn-outline-primary btn-sm" onclick="importFromDrbd()">
+          <i class="bi bi-database-fill"></i> DRBD에서 가져오기
+        </button>
+        <button class="btn btn-success btn-sm" onclick="openVolumeModal()">
+          <i class="bi bi-plus-circle"></i> 볼륨 추가
+        </button>
+      </div>
+    </div>
+    <p class="text-muted mb-4">호스트 경로를 Podman Named Volume으로 등록합니다. DRBD 마운트 포인트를 컨테이너에서 사용할 수 있습니다.</p>
+
+    <div id="importAlert" class="alert d-none mb-3" role="alert"></div>
+
+    <!-- 볼륨 목록 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-secondary text-white fw-bold">
+        <i class="bi bi-list-check"></i> 볼륨 목록
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover align-middle mb-0" id="volumeTable">
+          <thead class="table-light">
+            <tr>
+              <th>볼륨 이름</th>
+              <th>호스트 경로</th>
+              <th>DRBD 리소스</th>
+              <th>설명</th>
+              <th>Quadlet</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="volumeTbody">
+            <tr id="emptyRow"><td colspan="6" class="text-center text-muted py-4">볼륨이 없습니다. DRBD에서 가져오거나 추가하세요.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Quadlet 생성 버튼 -->
+    <div class="d-flex gap-2">
+      <button class="btn btn-primary btn-lg" onclick="generateVolumes()">
+        <i class="bi bi-gear-fill"></i> Quadlet Volume 파일 생성
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 볼륨 추가/편집 모달 -->
+<div class="modal fade" id="volumeModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header bg-secondary text-white">
+        <h5 class="modal-title" id="volumeModalTitle">볼륨 추가</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">볼륨 이름 <span class="text-danger">*</span></label>
+          <input type="text" class="form-control" id="volName" placeholder="myapp-data">
+          <div class="form-text">Podman Named Volume 이름. 컨테이너에서 <code>Volume=myapp-data.volume:/path</code>로 사용</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">호스트 경로 <span class="text-danger">*</span></label>
+          <input type="text" class="form-control" id="volHostPath" placeholder="/mnt/drbd/r0">
+          <div class="form-text">호스트에서 바인드 마운트할 경로 (DRBD 마운트 포인트)</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">DRBD 리소스</label>
+          <select class="form-select" id="volDrbdResource">
+            <option value="">-- 연결 안 함 --</option>
+          </select>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">설명</label>
+          <input type="text" class="form-control" id="volDescription" placeholder="DRBD r0 데이터 볼륨">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+        <button type="button" class="btn btn-success" onclick="saveVolume()">저장</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let volumes = [];
+let drbdResources = [];
+
+function esc(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function loadVolumes() {
+  const resp = await fetch('/api/volumes');
+  volumes = await resp.json();
+  renderTable();
+}
+
+async function loadDrbdResources() {
+  try {
+    const resp = await fetch('/api/drbd/resources');
+    drbdResources = await resp.json();
+  } catch (_) { drbdResources = []; }
+}
+
+function renderTable() {
+  const tbody = document.getElementById('volumeTbody');
+  const empty = document.getElementById('emptyRow');
+  if (volumes.length === 0) {
+    empty.style.display = '';
+    tbody.querySelectorAll('tr:not(#emptyRow)').forEach(r => r.remove());
+    return;
+  }
+  empty.style.display = 'none';
+  tbody.querySelectorAll('tr:not(#emptyRow)').forEach(r => r.remove());
+  volumes.forEach(v => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="font-monospace fw-semibold">${esc(v.name)}</td>
+      <td class="font-monospace small">${esc(v.host_path) || '<span class="text-muted">-</span>'}</td>
+      <td>${v.drbd_resource ? '<span class="badge bg-primary">' + esc(v.drbd_resource) + '</span>' : '<span class="text-muted small">-</span>'}</td>
+      <td class="small text-muted">${esc(v.description)}</td>
+      <td class="small">${v.drbd_resource ? '<span class="badge bg-warning text-dark"><i class="bi bi-skip-forward-fill"></i> Quadlet 제외</span>' : '<span class="badge bg-success"><i class="bi bi-file-earmark-code"></i> Quadlet 생성</span>'}</td>
+      <td class="text-end">
+        <button class="btn btn-sm btn-outline-secondary me-1" onclick='editVolume(${JSON.stringify(v)})'>
+          <i class="bi bi-pencil"></i>
+        </button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteVolume(${v.id}, '${esc(v.name)}')">
+          <i class="bi bi-trash"></i>
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function openVolumeModal(vol) {
+  document.getElementById('volumeModalTitle').textContent = vol ? '볼륨 편집' : '볼륨 추가';
+  document.getElementById('volName').value = vol?.name || '';
+  document.getElementById('volName').disabled = !!vol;
+  document.getElementById('volHostPath').value = vol?.host_path || '';
+  document.getElementById('volDescription').value = vol?.description || '';
+
+  // DRBD 리소스 드롭다운 채우기
+  const sel = document.getElementById('volDrbdResource');
+  sel.innerHTML = '<option value="">-- 연결 안 함 --</option>';
+  drbdResources.forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r.name;
+    opt.textContent = r.name + (r.lvm_vg ? ` (VG: ${r.lvm_vg})` : '');
+    if (vol?.drbd_resource === r.name) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  if (vol?.drbd_resource && !drbdResources.find(r => r.name === vol.drbd_resource)) {
+    const opt = document.createElement('option');
+    opt.value = vol.drbd_resource;
+    opt.textContent = vol.drbd_resource;
+    opt.selected = true;
+    sel.appendChild(opt);
+  }
+
+  new bootstrap.Modal(document.getElementById('volumeModal')).show();
+}
+
+function editVolume(vol) { openVolumeModal(vol); }
+
+async function saveVolume() {
+  const name = document.getElementById('volName').value.trim();
+  const host_path = document.getElementById('volHostPath').value.trim();
+  if (!name) { alert('볼륨 이름을 입력하세요.'); return; }
+  if (!host_path) { alert('호스트 경로를 입력하세요.'); return; }
+
+  const body = {
+    id: 0,
+    name,
+    host_path,
+    description: document.getElementById('volDescription').value.trim(),
+    drbd_resource: document.getElementById('volDrbdResource').value,
+    created_at: '',
+  };
+  const resp = await fetch('/api/volumes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) { alert('저장 실패: ' + await resp.text()); return; }
+  bootstrap.Modal.getInstance(document.getElementById('volumeModal')).hide();
+  await loadVolumes();
+}
+
+async function deleteVolume(id, name) {
+  if (!confirm(`"${name}" 볼륨을 삭제하시겠습니까?`)) return;
+  await fetch(`/api/volumes/${id}`, { method: 'DELETE' });
+  await loadVolumes();
+}
+
+async function importFromDrbd() {
+  await loadDrbdResources();
+  if (drbdResources.length === 0) {
+    const al = document.getElementById('importAlert');
+    al.className = 'alert alert-warning';
+    al.textContent = 'DRBD 리소스가 없습니다. DRBD 설정 탭에서 먼저 저장하세요.';
+    al.classList.remove('d-none');
+    return;
+  }
+
+  let added = 0;
+  for (const r of drbdResources) {
+    const exists = volumes.find(v => v.drbd_resource === r.name);
+    if (exists) continue;
+    const body = {
+      id: 0,
+      name: r.name,
+      host_path: `/mnt/drbd/${r.name}`,
+      description: `DRBD 리소스 ${r.name} 마운트 포인트`,
+      drbd_resource: r.name,
+      created_at: '',
+    };
+    const resp = await fetch('/api/volumes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (resp.ok) added++;
+  }
+
+  await loadVolumes();
+  const al = document.getElementById('importAlert');
+  al.className = 'alert alert-success';
+  al.textContent = added > 0
+    ? `${added}개 볼륨을 DRBD 리소스에서 가져왔습니다.`
+    : ' 이미 모든 DRBD 리소스가 등록되어 있습니다.';
+  al.classList.remove('d-none');
+  setTimeout(() => al.classList.add('d-none'), 4000);
+}
+
+async function generateVolumes() {
+  const quadletVolumes = volumes.filter(v => !v.drbd_resource);
+  if (quadletVolumes.length === 0) {
+    alert('Quadlet 파일을 생성할 볼륨이 없습니다.\nDRBD 리소스와 연결되지 않은 볼륨만 Quadlet 파일로 생성됩니다.');
+    return;
+  }
+
+  const resp = await fetch('/volume/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ volume_names: quadletVolumes.map(v => v.name) }),
+  });
+  const html = await resp.text();
+  document.open();
+  document.write(html);
+  document.close();
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await Promise.all([loadVolumes(), loadDrbdResources()]);
+});
+</script>
+{% endblock %}

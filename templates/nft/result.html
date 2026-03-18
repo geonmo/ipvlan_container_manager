@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}nftables 설정 결과 - HA Container Manager{% endblock %}
+{% block nav_nft %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+
+    {% if error %}
+    <div class="alert alert-danger">
+      <i class="bi bi-exclamation-triangle-fill"></i> <strong>오류:</strong> {{ error }}
+    </div>
+    <a href="/nft/" class="btn btn-secondary">← 다시 시도</a>
+
+    {% else %}
+
+    <div class="d-flex align-items-center mb-4">
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> nftables 설정 생성 완료</h2>
+      <div class="ms-auto">
+        <a href="/nft/" class="btn btn-outline-secondary btn-sm">
+          <i class="bi bi-arrow-left"></i> 다시 설정
+        </a>
+      </div>
+    </div>
+
+    <!-- 생성된 .nft 파일 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-danger text-white d-flex align-items-center">
+        <span class="fw-bold font-monospace"><i class="bi bi-file-earmark-code-fill"></i> {{ result.filename }}</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('nftContent')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="nftContent" class="code-editor" data-mode="shell">{{ result.content }}</textarea>
+      </div>
+    </div>
+
+    <!-- 설정 요약 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-secondary text-white fw-bold">
+        <i class="bi bi-list-check"></i> 설정 요약
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <table class="table table-sm mb-0">
+              <tr><th class="text-muted small">테이블</th><td class="font-monospace">{{ result.policy.table_name }}</td></tr>
+              <tr><th class="text-muted small">인터페이스</th><td class="font-monospace">{{ result.policy.device_name }}</td></tr>
+              <tr><th class="text-muted small">체인</th><td class="font-monospace">{{ result.policy.chain_name }}</td></tr>
+              <tr><th class="text-muted small">Traceroute UDP</th>
+                <td class="font-monospace">{{ result.policy.traceroute_start }}–{{ result.policy.traceroute_end }}</td></tr>
+            </table>
+          </div>
+          <div class="col-md-8">
+            <div class="fw-semibold small text-muted mb-2">대상 ({{ result.policy.targets | length }}개)</div>
+            {% for target in result.policy.targets %}
+            <div class="mb-3 border rounded p-2">
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <strong>{{ target.name }}</strong>
+                {% if target.ipv4_addrs %}
+                <span class="badge bg-info text-dark">IPv4 ×{{ target.ipv4_addrs | length }}</span>
+                {% endif %}
+                {% if target.ipv6_addrs %}
+                <span class="badge bg-info text-dark">IPv6 ×{{ target.ipv6_addrs | length }}</span>
+                {% endif %}
+              </div>
+              {% if target.ipv4_addrs %}
+              <div class="font-monospace small text-muted">IPv4: {{ target.ipv4_addrs | join(sep=", ") }}</div>
+              {% endif %}
+              {% if target.ipv6_addrs %}
+              <div class="font-monospace small text-muted">IPv6: {{ target.ipv6_addrs | join(sep=", ") }}</div>
+              {% endif %}
+              {% if target.rules %}
+              <div class="mt-1 d-flex flex-wrap gap-1">
+                {% for rule in target.rules %}
+                <span class="badge bg-light text-dark border">
+                  <i class="bi bi-shield-check text-success"></i>
+                  {{ rule.service_name }}
+                  {% if rule.subnet_group %}
+                  <span class="text-primary">@ {{ rule.subnet_group }}</span>
+                  {% else %}
+                  <span class="text-muted">(전체)</span>
+                  {% endif %}
+                </span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 적용 방법 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-dark text-white fw-bold">
+        <i class="bi bi-terminal-fill"></i> 적용 방법
+      </div>
+      <div class="card-body">
+        <p class="text-muted small mb-3">생성된 파일을 서버에 배포하고 nftables를 재시작합니다.</p>
+        <div class="mb-3">
+          <div class="fw-semibold small mb-1">① 파일 배포</div>
+          <div class="bg-dark text-light rounded p-3 font-monospace small">
+            <div class="text-success"># {{ result.filename }} 파일을 서버에 복사</div>
+            scp {{ result.filename }} root@&lt;server&gt;:/etc/nftables/<br>
+            <br>
+            <div class="text-success"># 또는 직접 작성</div>
+            tee /etc/nftables/{{ result.filename }} &lt;&lt;'EOF'<br>
+            <em class="text-warning">(파일 내용 붙여넣기)</em><br>
+            EOF
+          </div>
+        </div>
+        <div class="mb-3">
+          <div class="fw-semibold small mb-1">② nftables 설정에 include 추가 <code class="small">/etc/nftables.conf</code></div>
+          <div class="bg-dark text-light rounded p-3 font-monospace small">
+            include "/etc/nftables/{{ result.filename }}"
+          </div>
+        </div>
+        <div class="mb-3">
+          <div class="fw-semibold small mb-1">③ 적용 및 검증</div>
+          <div class="bg-dark text-light rounded p-3 font-monospace small">
+            <div class="text-success"># 문법 검사</div>
+            nft -c -f /etc/nftables/{{ result.filename }}<br>
+            <br>
+            <div class="text-success"># 즉시 적용 (테스트)</div>
+            nft -f /etc/nftables/{{ result.filename }}<br>
+            <br>
+            <div class="text-success"># 영구 적용 (재부팅 후에도 유지)</div>
+            systemctl reload nftables<br>
+            <div class="text-success"># 또는</div>
+            systemctl restart nftables
+          </div>
+        </div>
+        <div>
+          <div class="fw-semibold small mb-1">④ 규칙 확인</div>
+          <div class="bg-dark text-light rounded p-3 font-monospace small">
+            nft list table netdev {{ result.policy.table_name }}<br>
+            nft list chain netdev {{ result.policy.table_name }} {{ result.policy.chain_name }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ansible Playbook -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
+        <span><i class="bi bi-file-earmark-play-fill"></i> Ansible로 자동 배포</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansibleSnippet')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="ansibleSnippet" class="code-editor" data-mode="yaml">---
+- name: nftables 방화벽 규칙 배포
+  hosts: all
+  become: true
+  tasks:
+    - name: nftables 설치 확인
+      package:
+        name: nftables
+        state: present
+
+    - name: nftables 설정 디렉토리 생성
+      file:
+        path: /etc/nftables
+        state: directory
+        mode: '0750'
+
+    - name: {{ result.filename }} 배포
+      copy:
+        dest: /etc/nftables/{{ result.filename }}
+        content: |
+{{ result.content | indent(width=10) }}
+        mode: '0640'
+      notify: reload nftables
+
+    - name: /etc/nftables.conf에 include 확인
+      lineinfile:
+        path: /etc/nftables.conf
+        line: 'include "/etc/nftables/{{ result.filename }}"'
+        create: yes
+
+    - name: nftables 서비스 활성화
+      systemd:
+        name: nftables
+        enabled: true
+        state: started
+
+  handlers:
+    - name: reload nftables
+      systemd:
+        name: nftables
+        state: reloaded</textarea>
+      </div>
+      <div class="card-footer small text-muted">
+        실행: <code>ansible-playbook -i inventory.yml deploy_nftables.yml</code>
+      </div>
+    </div>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyText(id) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.value || el.textContent).then(() => {
+    alert('클립보드에 복사되었습니다.');
+  });
+}
+</script>
+{% endblock %}

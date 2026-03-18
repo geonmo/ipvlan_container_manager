@@ -8,6 +8,36 @@
     <h2 class="fw-bold mb-1"><i class="bi bi-heart-pulse-fill text-danger"></i> Pacemaker 설정</h2>
     <p class="text-muted mb-4">DRBD Promotable Clone 및 Quadlet Systemd 리소스를 Pacemaker에 등록하는 <code>pcs</code> 스크립트를 생성합니다.</p>
 
+    <!-- pcsd 동기화 카드 (폼 외부) -->
+    <div class="card shadow-sm mb-4 border-info">
+      <div class="card-header bg-info text-white fw-bold">
+        <i class="bi bi-cloud-download-fill"></i> pcsd 현재 설정 가져오기
+      </div>
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-4">
+            <label class="form-label fw-semibold small mb-1">pcsd URL</label>
+            <input type="text" class="form-control form-control-sm" id="pcsdUrl" value="https://localhost:2224">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small mb-1">사용자명</label>
+            <input type="text" class="form-control form-control-sm" id="pcsdUser" value="hacluster">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small mb-1">비밀번호</label>
+            <input type="password" class="form-control form-control-sm" id="pcsdPass" placeholder="pcsd 비밀번호">
+          </div>
+          <div class="col-md-2">
+            <button type="button" class="btn btn-info btn-sm w-100" onclick="pcsdFetch()">
+              <i class="bi bi-cloud-download"></i> 가져오기
+            </button>
+          </div>
+        </div>
+        <div id="pcsdStatus" class="mt-2 small d-none"></div>
+        <div id="pcsdResult" class="mt-3 d-none"></div>
+      </div>
+    </div>
+
     <form action="/pacemaker/generate" method="post" id="pmForm">
 
       <!-- 클러스터 기본 설정 -->
@@ -185,14 +215,24 @@
               <input type="text" class="form-control" name="ansible_hosts" placeholder="all">
             </div>
             <div class="col-md-4">
+              <label class="form-label">Ansible 프로파일</label>
+              <select class="form-select" id="pmProfileSel" onchange="pmSyncProfile()">
+                <option value="">-- 직접 입력 --</option>
+              </select>
+            </div>
+          </div>
+          <div class="row g-3 mt-1" id="pmProfileManual">
+            <div class="col-md-4">
               <label class="form-label">SSH 사용자</label>
-              <input type="text" class="form-control" name="ansible_user" value="root">
+              <input type="text" class="form-control" name="ansible_user" id="pmAnsibleUser" value="root">
             </div>
             <div class="col-md-4">
               <label class="form-label">SSH 개인키</label>
-              <input type="text" class="form-control" name="ansible_ssh_key" value="~/.ssh/id_rsa">
+              <input type="text" class="form-control" name="ansible_ssh_key" id="pmAnsibleKey" value="~/.ssh/id_rsa">
             </div>
           </div>
+          <input type="hidden" id="pmAnsibleUserHidden">
+          <input type="hidden" id="pmAnsibleKeyHidden">
         </div>
       </div>
 
@@ -255,6 +295,7 @@ function pmSyncJson() {
 
 document.addEventListener('DOMContentLoaded', () => {
   pmRebuildPool();
+  pmInitProfile();
   document.getElementById('pmPoolList_add').addEventListener('click', () => {
     document.querySelectorAll('#pmPoolList li.active').forEach(li => {
       pmNodes.push({ hostname: li.dataset.hostname, ip: li.dataset.ip });
@@ -290,5 +331,270 @@ function loadSvcExample() {
   if (el._cmEditor) el._cmEditor.setValue(example);
   else el.value = example;
 }
+
+// ── Ansible 프로파일 ────────────────────────────────────────────────────
+function pmInitProfile() {
+  const sel = document.getElementById('pmProfileSel');
+  const active = getActiveProfileName();
+  const profiles = getProfilePool();
+  sel.innerHTML = '<option value="">-- 직접 입력 --</option>';
+  profiles.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    if (p.name === active) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  pmSyncProfile();
+}
+
+function pmSyncProfile() {
+  const sel = document.getElementById('pmProfileSel');
+  const manual = document.getElementById('pmProfileManual');
+  const name = sel.value;
+  if (!name) {
+    manual.style.display = '';
+    document.getElementById('pmAnsibleUserHidden').name = '';
+    document.getElementById('pmAnsibleKeyHidden').name = '';
+    document.getElementById('pmAnsibleUser').name = 'ansible_user';
+    document.getElementById('pmAnsibleKey').name = 'ansible_ssh_key';
+    return;
+  }
+  const profile = getProfilePool().find(p => p.name === name);
+  if (profile) {
+    manual.style.display = 'none';
+    document.getElementById('pmAnsibleUser').name = '';
+    document.getElementById('pmAnsibleKey').name = '';
+    document.getElementById('pmAnsibleUserHidden').name = 'ansible_user';
+    document.getElementById('pmAnsibleUserHidden').value = profile.ssh_user || 'root';
+    document.getElementById('pmAnsibleKeyHidden').name = 'ansible_ssh_key';
+    document.getElementById('pmAnsibleKeyHidden').value = profile.ssh_key || '~/.ssh/id_rsa';
+  }
+}
+
+// ── pcsd 동기화 ─────────────────────────────────────────────────────────
+async function pcsdFetch() {
+  const url  = document.getElementById('pcsdUrl').value.trim();
+  const user = document.getElementById('pcsdUser').value.trim();
+  const pass = document.getElementById('pcsdPass').value;
+  const statusEl = document.getElementById('pcsdStatus');
+  const resultEl = document.getElementById('pcsdResult');
+
+  statusEl.className = 'mt-2 small text-warning';
+  statusEl.textContent = '연결 중...';
+  statusEl.classList.remove('d-none');
+  resultEl.classList.add('d-none');
+
+  try {
+    const resp = await fetch('/api/pacemaker/pcsd-fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pcsd_url: url, pcsd_user: user, pcsd_pass: pass }),
+    });
+    const json = await resp.json();
+
+    if (!json.ok) {
+      statusEl.className = 'mt-2 small text-danger';
+      statusEl.textContent = '오류: ' + json.message;
+      return;
+    }
+
+    statusEl.className = 'mt-2 small text-success';
+    statusEl.textContent = '✓ pcsd 연결 성공 — 클러스터 설정을 가져왔습니다.';
+
+    renderPcsdResult(json.data);
+    resultEl.classList.remove('d-none');
+
+    // 클러스터 이름 자동 적용
+    if (json.data.cluster_name) {
+      const f = document.forms['pmForm'];
+      if (f && f.cluster_name) f.cluster_name.value = json.data.cluster_name;
+    }
+  } catch (e) {
+    statusEl.className = 'mt-2 small text-danger';
+    statusEl.textContent = '오류: ' + e.message;
+  }
+}
+
+function renderPcsdResult(data) {
+  const el = document.getElementById('pcsdResult');
+  const nodes = data.nodes || [];
+  const resources = data.resources;
+  const constraints = data.constraints;
+  let html = '';
+
+  // 노드 섹션
+  if (nodes.length > 0) {
+    const nodeBadges = nodes.map(n =>
+      `<span class="badge bg-secondary me-1">${n.name}${n.addr ? ' (' + n.addr + ')' : ''}</span>`
+    ).join('');
+    const nodeArr = JSON.stringify(nodes);
+    html += `<div class="mb-3 p-2 border rounded">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <span class="fw-semibold small"><i class="bi bi-server"></i> 클러스터 노드 (${nodes.length}개)</span>
+        <button type="button" class="btn btn-xs btn-outline-primary btn-sm py-0 px-2"
+                onclick='applyPcsdNodes(${nodeArr})'>
+          <i class="bi bi-arrow-down-circle"></i> 노드 적용
+        </button>
+      </div>
+      <div>${nodeBadges}</div>
+    </div>`;
+  }
+
+  // 리소스 섹션
+  const hasResources = resources && !isNullOrEmpty(resources);
+  if (hasResources) {
+    const parsed = parsePcsdResources(resources);
+    html += renderResourceTable(parsed);
+  }
+
+  // 제약조건 섹션
+  const hasConstraints = constraints && !isNullOrEmpty(constraints);
+  if (hasConstraints) {
+    html += renderConstraintTable(constraints);
+  }
+
+  if (!hasResources && !hasConstraints) {
+    html += '<div class="text-muted small mb-2">리소스/제약조건 데이터를 파싱하지 못했습니다.</div>';
+  }
+
+  // 원시 응답 토글
+  html += `<details class="mt-2">
+    <summary class="small text-muted" style="cursor:pointer">원시 응답 보기</summary>
+    <pre class="bg-dark text-light p-2 rounded small mt-1" style="max-height:300px;overflow:auto;font-size:0.75rem">${escHtml(JSON.stringify(data.raw_status, null, 2))}</pre>
+  </details>`;
+
+  el.innerHTML = html;
+}
+
+function isNullOrEmpty(v) {
+  if (v === null || v === undefined) return true;
+  if (Array.isArray(v) && v.length === 0) return true;
+  if (typeof v === 'object' && Object.keys(v).length === 0) return true;
+  return false;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function parsePcsdResources(resources) {
+  // resources 가 배열인 경우 (crm_mon 스타일)
+  const items = Array.isArray(resources) ? resources : (resources.resources || [resources]);
+  return items.map(r => ({
+    id:         r.id || r.resource_id || '(unknown)',
+    agent:      r.resource_agent || r.class_type || r.type || '',
+    role:       r.role || '',
+    active:     r.active,
+    managed:    r.managed,
+    group:      r.group || '',
+    clone:      !!(r.clone || r.promotable || (r.type||'').toLowerCase().includes('clone')),
+    promotable: !!(r.promotable),
+    nodes_running_on: r.nodes_running_on || [],
+  }));
+}
+
+function renderResourceTable(items) {
+  if (!items.length) return '';
+  const rows = items.map(r => {
+    const badges = [];
+    if (r.clone)      badges.push('<span class="badge bg-secondary">clone</span>');
+    if (r.promotable) badges.push('<span class="badge bg-primary">promotable</span>');
+    if (r.group)      badges.push(`<span class="badge bg-light text-dark border">group: ${escHtml(r.group)}</span>`);
+    const activeIcon = r.active === false ? '<i class="bi bi-x-circle text-danger"></i>'
+                     : r.active === true  ? '<i class="bi bi-check-circle text-success"></i>'
+                     : '';
+    return `<tr>
+      <td class="fw-semibold">${escHtml(r.id)}</td>
+      <td class="small text-muted">${escHtml(r.agent)}</td>
+      <td>${badges.join(' ')}</td>
+      <td>${activeIcon}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="mb-3 p-2 border rounded">
+    <div class="fw-semibold small mb-1"><i class="bi bi-boxes"></i> 리소스 (${items.length}개)</div>
+    <table class="table table-sm table-bordered mb-0 small">
+      <thead class="table-light"><tr><th>ID</th><th>Agent</th><th>속성</th><th>상태</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderConstraintTable(constraints) {
+  const sections = [];
+
+  // order constraints
+  const orders = constraints.order_constraints || constraints.orders || constraints.order || [];
+  if (Array.isArray(orders) && orders.length) {
+    const rows = orders.map(c => `<tr>
+      <td>${escHtml(c.id||'')}</td>
+      <td>${escHtml(c.first||c.resource_first||'')} → ${escHtml(c.then||c.resource_then||'')}</td>
+      <td>${escHtml(c.kind||'')}</td>
+    </tr>`).join('');
+    sections.push(`<div class="mb-2">
+      <div class="small fw-semibold mb-1 text-secondary">Order (${orders.length})</div>
+      <table class="table table-sm table-bordered mb-0 small">
+        <thead class="table-light"><tr><th>ID</th><th>순서</th><th>Kind</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`);
+  }
+
+  // colocation constraints
+  const cols = constraints.colocation_constraints || constraints.colocations || constraints.colocation || [];
+  if (Array.isArray(cols) && cols.length) {
+    const rows = cols.map(c => `<tr>
+      <td>${escHtml(c.id||'')}</td>
+      <td>${escHtml(c.rsc||c.resource||'')} ↔ ${escHtml(c.with_rsc||c.with_resource||'')}</td>
+      <td>${escHtml(String(c.score||''))}</td>
+    </tr>`).join('');
+    sections.push(`<div class="mb-2">
+      <div class="small fw-semibold mb-1 text-secondary">Colocation (${cols.length})</div>
+      <table class="table table-sm table-bordered mb-0 small">
+        <thead class="table-light"><tr><th>ID</th><th>리소스</th><th>Score</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`);
+  }
+
+  // location constraints
+  const locs = constraints.location_constraints || constraints.locations || constraints.location || [];
+  if (Array.isArray(locs) && locs.length) {
+    const rows = locs.map(c => `<tr>
+      <td>${escHtml(c.id||'')}</td>
+      <td>${escHtml(c.rsc||c.resource||'')}</td>
+      <td>${escHtml(c.node||'')} (${escHtml(String(c.score||''))})</td>
+    </tr>`).join('');
+    sections.push(`<div class="mb-2">
+      <div class="small fw-semibold mb-1 text-secondary">Location (${locs.length})</div>
+      <table class="table table-sm table-bordered mb-0 small">
+        <thead class="table-light"><tr><th>ID</th><th>리소스</th><th>노드 (Score)</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`);
+  }
+
+  if (!sections.length) return '';
+
+  return `<div class="mb-3 p-2 border rounded">
+    <div class="fw-semibold small mb-2"><i class="bi bi-link-45deg"></i> 제약조건</div>
+    ${sections.join('')}
+  </div>`;
+}
+
+function applyPcsdNodes(nodes) {
+  const pool = getNodePool();
+  nodes.forEach(n => {
+    const name = n.name || n;
+    const addr = n.addr || '';
+    if (!pmNodes.find(p => p.hostname === name)) {
+      const poolNode = pool.find(p => p.hostname === name);
+      pmNodes.push(poolNode || { hostname: name, ip: addr });
+    }
+  });
+  pmRenderSelected();
+  pmRebuildPool();
+}
+
 </script>
 {% endblock %}

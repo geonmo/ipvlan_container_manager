@@ -82,9 +82,14 @@
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-warning text-dark d-flex align-items-center">
         <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> inventory.yml (Ansible)</span>
-        <button class="btn btn-sm btn-dark ms-auto" onclick="copyText('inventoryContent')">
-          <i class="bi bi-clipboard"></i> 복사
-        </button>
+        <div class="ms-auto d-flex align-items-center gap-2">
+          <select id="drbdProfileSel" class="form-select form-select-sm" style="min-width:160px">
+            <option value="">-- 프로파일 선택 --</option>
+          </select>
+          <button class="btn btn-sm btn-dark" onclick="copyText('inventoryContent')">
+            <i class="bi bi-clipboard"></i> 복사
+          </button>
+        </div>
       </div>
       <div class="card-body p-0">
         <textarea id="inventoryContent" class="code-editor" data-mode="yaml">{{ result.inventory_yaml }}</textarea>
@@ -152,6 +157,12 @@ function copyText(id) {
     alert('클립보드에 복사되었습니다.');
   });
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadProfileSelector('drbdProfileSel', (profile) => {
+    if (profile) applyProfileToInventory('inventoryContent', profile);
+  });
+});
 
 function saveToDb() {
   const form = document.getElementById('saveForm');

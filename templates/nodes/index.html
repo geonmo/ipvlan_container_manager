@@ -48,9 +48,30 @@
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-info text-white fw-bold d-flex align-items-center">
         <span><i class="bi bi-diagram-3-fill"></i> 네트워크 풀</span>
-        <button class="btn btn-sm btn-light ms-auto" onclick="openNetModal()">
-          <i class="bi bi-plus-circle"></i> 추가
-        </button>
+        <div class="ms-auto d-flex gap-2 align-items-center">
+          <button class="btn btn-sm btn-light" onclick="toggleIfaceCollect()">
+            <i class="bi bi-cpu"></i> 인터페이스 자동감지
+          </button>
+          <button class="btn btn-sm btn-light" onclick="openNetModal()">
+            <i class="bi bi-plus-circle"></i> 추가
+          </button>
+        </div>
+      </div>
+      <!-- 인터페이스 자동감지 패널 -->
+      <div id="ifaceCollectPanel" class="d-none border-bottom px-3 py-2 bg-light">
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+          <small class="text-muted">Ansible 프로파일:</small>
+          <select class="form-select form-select-sm w-auto" id="ifaceProfileSel">
+            <option value="">-- 선택 --</option>
+          </select>
+          <button class="btn btn-sm btn-info text-white" onclick="collectInterfaces()">
+            <i class="bi bi-play-fill"></i> 수집 시작
+          </button>
+          <span id="collectMsg" class="ms-1"></span>
+        </div>
+        <div id="collectOutput" class="mt-2 d-none">
+          <pre class="small bg-dark text-success p-2 rounded" style="max-height:200px;overflow-y:auto" id="collectLog"></pre>
+        </div>
       </div>
       <div class="card-body p-0">
         <table class="table table-sm table-hover mb-0">
@@ -58,7 +79,7 @@
             <tr>
               <th>이름</th>
               <th>드라이버</th>
-              <th>인터페이스</th>
+              <th>인터페이스 <small class="text-muted fw-normal">(자동감지)</small></th>
               <th>IPv4 서브넷 / 게이트웨이</th>
               <th>IPv6 서브넷 / 게이트웨이</th>
               <th>모드</th>
@@ -68,6 +89,38 @@
           </thead>
           <tbody id="netsTbody"><tr><td colspan="8" class="text-center text-muted py-3">로딩 중...</td></tr></tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- 노드 인터페이스 정보 -->
+    <div class="card shadow-sm mb-4" id="ifacesCard" style="display:none!important">
+      <div class="card-header bg-secondary text-white fw-bold d-flex align-items-center">
+        <span><i class="bi bi-hdd-network"></i> 수집된 노드 인터페이스 정보</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="loadNodeInterfaces()">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light">
+            <tr><th>호스트명</th><th>인터페이스</th><th>IP 주소</th><th>프리픽스</th><th>패밀리</th></tr>
+          </thead>
+          <tbody id="ifacesTbody"><tr><td colspan="5" class="text-center text-muted py-3">없음</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 활성 Ansible 프로파일 선택 -->
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-warning text-dark fw-bold">
+        <i class="bi bi-person-badge-fill"></i> 기본 Ansible 프로파일
+      </div>
+      <div class="card-body d-flex align-items-center gap-3">
+        <label class="form-label mb-0 fw-semibold text-nowrap">활성 프로파일:</label>
+        <select class="form-select form-select-sm w-auto" id="activeProfileSel" style="min-width:200px">
+          <option value="">-- 선택 안 함 --</option>
+        </select>
+        <small class="text-muted">다른 탭(Pod 설정, 컨테이너, Pacemaker 등)의 Ansible 배포에 이 프로파일이 사용됩니다.</small>
       </div>
     </div>
 
@@ -143,8 +196,7 @@
             <option value="l3">l3</option>
             <option value="l3s">l3s</option>
           </select></div>
-        <div class="col-md-4"><label class="form-label">호스트 인터페이스</label>
-          <input class="form-control" id="netInterface" placeholder="eth0"></div>
+        <div class="col-12"><small class="text-muted"><i class="bi bi-info-circle"></i> 호스트 인터페이스는 Ansible 수집을 통해 자동감지됩니다.</small></div>
         <div class="col-md-4"><label class="form-label">IPv4 서브넷</label>
           <input class="form-control" id="netSubnet" placeholder="192.168.1.0/24"></div>
         <div class="col-md-4"><label class="form-label">IPv4 게이트웨이</label>
@@ -215,7 +267,12 @@
 
 async function loadAll() {
   await Promise.all([loadNodes(), loadNetworks(), loadProfiles()]);
-  syncLocalStorage();
+  await loadNodeInterfaces();
+  await syncLocalStorage();
+  // 초기 로드 시 활성 프로파일 셀렉터 복원
+  rebuildActiveProfileSel(getProfilePool());
+  const sel = document.getElementById('activeProfileSel');
+  if (sel) sel.value = getActiveProfileName();
 }
 
 async function loadNodes() {
@@ -250,7 +307,29 @@ async function syncLocalStorage() {
     subnet6: n.subnet6, gateway6: n.gateway6, ipv6: n.ipv6,
     ipvlan_mode: n.ipvlan_mode
   })));
+  // 프로파일
+  const profs = await fetch('/api/ansible-profiles').then(r => r.json());
+  saveProfilePool(profs);
+  rebuildActiveProfileSel(profs);
 }
+
+function rebuildActiveProfileSel(profiles) {
+  const sel = document.getElementById('activeProfileSel');
+  if (!sel) return;
+  const current = getActiveProfileName();
+  sel.innerHTML = '<option value="">-- 선택 안 함 --</option>';
+  profiles.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    if (p.name === current) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+document.getElementById('activeProfileSel')?.addEventListener('change', function() {
+  setActiveProfileName(this.value);
+});
 
 // ── 렌더링 ────────────────────────────────────────────────────────────────
 
@@ -286,11 +365,14 @@ function renderNetworks(nets) {
     const v6cell = v6
       ? `<span class="badge bg-success-subtle text-success border border-success-subtle">${esc(v6)}</span>`
       : '<span class="text-muted">-</span>';
+    const ifaceCell = n.interface
+      ? `<span class="badge bg-success">${esc(n.interface)}</span>`
+      : '<span class="text-muted small"><i class="bi bi-question-circle"></i> 미감지</span>';
     return `
     <tr>
       <td><strong>${esc(n.name)}</strong></td>
       <td>${esc(n.driver)}</td>
-      <td>${esc(n.interface)}</td>
+      <td>${ifaceCell}</td>
       <td><code class="small">${esc(v4)}</code></td>
       <td>${v6cell}</td>
       <td>${esc(n.ipvlan_mode)}</td>
@@ -365,7 +447,6 @@ let netModalInst;
 function openNetModal() {
   document.getElementById('netName').value = '';
   document.getElementById('netDriver').value = 'ipvlan';
-  document.getElementById('netInterface').value = '';
   document.getElementById('netSubnet').value = '';
   document.getElementById('netGateway').value = '';
   document.getElementById('netSubnet6').value = '';
@@ -383,7 +464,6 @@ async function saveNetwork() {
     body: JSON.stringify({
       name,
       driver:      document.getElementById('netDriver').value,
-      interface:   document.getElementById('netInterface').value.trim(),
       subnet:      document.getElementById('netSubnet').value.trim(),
       gateway:     document.getElementById('netGateway').value.trim(),
       subnet6:     document.getElementById('netSubnet6').value.trim(),
@@ -450,6 +530,89 @@ async function deleteProfile(id) {
   if (!confirm('프로파일을 삭제하시겠습니까?')) return;
   await fetch(`/api/ansible-profiles/${id}`, { method: 'DELETE' });
   await loadProfiles();
+}
+
+// ── 노드 인터페이스 수집 ────────────────────────────────────────────────────
+
+function toggleIfaceCollect() {
+  const panel = document.getElementById('ifaceCollectPanel');
+  panel.classList.toggle('d-none');
+  if (!panel.classList.contains('d-none')) {
+    // 프로파일 목록 채우기
+    const sel = document.getElementById('ifaceProfileSel');
+    const profiles = JSON.parse(localStorage.getItem('icm_ansible_profiles') || '[]');
+    sel.innerHTML = '<option value="">-- 선택 --</option>';
+    profiles.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.name;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
+  }
+}
+
+async function collectInterfaces() {
+  const profileId = document.getElementById('ifaceProfileSel').value;
+  const msg = document.getElementById('collectMsg');
+  const outDiv = document.getElementById('collectOutput');
+  const log = document.getElementById('collectLog');
+  msg.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 수집 중...';
+  outDiv.classList.add('d-none');
+  try {
+    const resp = await fetch('/api/collect-interfaces', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ profile_name: profileId || null })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      msg.innerHTML = `<span class="text-success">인터페이스 ${data.interfaces_imported}개 수집, 네트워크 ${data.networks_matched}개 매칭 완료</span>`;
+      if (data.ansible_output) {
+        log.textContent = data.ansible_output;
+        outDiv.classList.remove('d-none');
+      }
+      await loadNetworks();
+      await loadNodeInterfaces();
+      syncLocalStorage();
+    } else {
+      const errText = await resp.text();
+      msg.innerHTML = `<span class="text-danger">오류: ${esc(errText || resp.statusText)}</span>`;
+    }
+  } catch(e) {
+    msg.innerHTML = `<span class="text-danger">수집 실패: ${e}</span>`;
+  }
+  setTimeout(() => { msg.innerHTML = ''; }, 6000);
+}
+
+async function loadNodeInterfaces() {
+  try {
+    const resp = await fetch('/api/node-interfaces');
+    const ifaces = await resp.json();
+    renderNodeInterfaces(ifaces);
+    // 수집된 데이터가 있으면 카드 표시
+    const card = document.getElementById('ifacesCard');
+    if (ifaces.length > 0) card.style.removeProperty('display');
+    // localStorage에도 저장 (프로파일 목록용)
+    const profiles = await fetch('/api/ansible-profiles').then(r=>r.json());
+    localStorage.setItem('icm_ansible_profiles', JSON.stringify(profiles));
+  } catch(e) {
+    // 무시
+  }
+}
+
+function renderNodeInterfaces(ifaces) {
+  const tbody = document.getElementById('ifacesTbody');
+  if (!ifaces.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">없음</td></tr>';
+    return;
+  }
+  tbody.innerHTML = ifaces.map(i => `
+    <tr>
+      <td><strong>${esc(i.hostname)}</strong></td>
+      <td><code>${esc(i.interface)}</code></td>
+      <td>${esc(i.ip)}</td>
+      <td>/${i.prefix_len}</td>
+      <td><span class="badge ${i.family==='inet6'?'bg-success':'bg-primary'}">${esc(i.family)}</span></td>
+    </tr>`).join('');
 }
 
 // ── 재스캔 ────────────────────────────────────────────────────────────────

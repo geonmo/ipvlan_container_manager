@@ -70,11 +70,26 @@ function copyToClipboard(text) {
 // ── 노드 풀 (localStorage) ────────────────────────────────────
 const ICM_NODES_KEY    = 'icm_nodes';
 const ICM_NETS_KEY     = 'icm_networks';
+const ICM_PROFILES_KEY = 'icm_ansible_profiles';
+const ICM_PROFILE_KEY  = 'icm_active_profile'; // 활성 프로파일 이름
 
-function getNodePool()    { try { return JSON.parse(localStorage.getItem(ICM_NODES_KEY) || '[]'); } catch(_){ return []; } }
-function getNetworkPool() { try { return JSON.parse(localStorage.getItem(ICM_NETS_KEY)  || '[]'); } catch(_){ return []; } }
-function saveNodePool(arr)    { localStorage.setItem(ICM_NODES_KEY, JSON.stringify(arr)); }
-function saveNetworkPool(arr) { localStorage.setItem(ICM_NETS_KEY,  JSON.stringify(arr)); }
+function getNodePool()    { try { return JSON.parse(localStorage.getItem(ICM_NODES_KEY)    || '[]'); } catch(_){ return []; } }
+function getNetworkPool() { try { return JSON.parse(localStorage.getItem(ICM_NETS_KEY)    || '[]'); } catch(_){ return []; } }
+function getProfilePool() { try { return JSON.parse(localStorage.getItem(ICM_PROFILES_KEY)|| '[]'); } catch(_){ return []; } }
+function saveNodePool(arr)    { localStorage.setItem(ICM_NODES_KEY,    JSON.stringify(arr)); }
+function saveNetworkPool(arr) { localStorage.setItem(ICM_NETS_KEY,     JSON.stringify(arr)); }
+function saveProfilePool(arr) { localStorage.setItem(ICM_PROFILES_KEY, JSON.stringify(arr)); }
+
+/** 활성 Ansible 프로파일 이름 반환 */
+function getActiveProfileName() { return localStorage.getItem(ICM_PROFILE_KEY) || ''; }
+/** 활성 Ansible 프로파일 이름 저장 */
+function setActiveProfileName(name) { localStorage.setItem(ICM_PROFILE_KEY, name); }
+/** 활성 프로파일 객체 반환 (프로파일 풀에서 이름으로 조회) */
+function getActiveProfile() {
+  const name = getActiveProfileName();
+  if (!name) return null;
+  return getProfilePool().find(p => p.name === name) || null;
+}
 
 /**
  * 셔틀 위젯 초기화
@@ -161,4 +176,111 @@ function createToastContainer() {
   div.style.cssText = 'position:fixed;top:70px;right:20px;z-index:9999;';
   document.body.appendChild(div);
   return div;
+}
+
+// ── Ansible 프로파일 유틸리티 ─────────────────────────────────────────────────
+
+/**
+ * Ansible 프로파일 목록을 로드하여 <select> 요소를 채웁니다.
+ * @param {string} selectId - <select> 요소 id
+ * @param {Function} [onChange] - 선택 변경 시 콜백(profile 객체 또는 null)
+ */
+async function loadProfileSelector(selectId, onChange) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  try {
+    const profiles = await fetch('/api/ansible-profiles').then(r => r.json());
+    sel.innerHTML = '<option value="">-- 프로파일 선택 --</option>';
+    profiles.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.name;
+      opt.textContent = p.name;
+      opt.dataset.profile = JSON.stringify(p);
+      sel.appendChild(opt);
+    });
+    if (onChange) {
+      sel.addEventListener('change', () => {
+        const opt = sel.selectedOptions[0];
+        const profile = opt && opt.dataset.profile ? JSON.parse(opt.dataset.profile) : null;
+        onChange(profile);
+      });
+    }
+  } catch (e) {
+    console.warn('프로파일 로드 실패:', e);
+  }
+}
+
+/**
+ * Ansible 프로파일로 인벤토리 YAML vars 블록을 반환합니다.
+ * @param {Object} profile - DbAnsibleProfile 객체
+ * @returns {string} vars 블록 YAML
+ */
+function buildProfileVarsYaml(profile) {
+  if (!profile) return '';
+  const lines = [];
+  lines.push(`    ansible_user: ${profile.ssh_user || 'root'}`);
+  if (profile.auth_method === 'key' && profile.ssh_key) {
+    lines.push(`    ansible_ssh_private_key_file: ${profile.ssh_key}`);
+  } else if (profile.ssh_password) {
+    lines.push(`    ansible_ssh_pass: ${profile.ssh_password}`);
+  }
+  if (profile.become) {
+    lines.push(`    ansible_become: true`);
+    if (profile.become_method) lines.push(`    ansible_become_method: ${profile.become_method}`);
+    if (profile.become_password) lines.push(`    ansible_become_password: ${profile.become_password}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * CodeMirror 에디터(또는 textarea)의 YAML 인벤토리 vars 블록을 프로파일로 업데이트합니다.
+ * @param {string} textareaId - textarea id
+ * @param {Object} profile - DbAnsibleProfile 객체
+ */
+function applyProfileToInventory(textareaId, profile) {
+  const ta = document.getElementById(textareaId);
+  if (!ta) return;
+  const editor = ta._cmEditor;
+  const current = editor ? editor.getValue() : ta.value;
+
+  const varsVars = buildProfileVarsYaml(profile);
+  if (!varsVars) return;
+
+  // vars: 블록 교체 또는 추가
+  let updated;
+  if (current.includes('  vars:')) {
+    // vars 블록을 새 값으로 교체 (다음 최상위 키 또는 파일 끝까지)
+    updated = current.replace(
+      /(  vars:\n)([\s\S]*?)(?=\n\S|\n?$)/,
+      `  vars:\n${varsVars}\n`
+    );
+  } else {
+    updated = current.trimEnd() + '\n  vars:\n' + varsVars + '\n';
+  }
+
+  if (editor) {
+    editor.setValue(updated);
+  } else {
+    ta.value = updated;
+  }
+}
+
+/**
+ * 노드 목록 + 프로파일로 인벤토리 YAML 전체를 생성합니다.
+ * @param {Array} nodes - DbNode 배열
+ * @param {Object|null} profile - DbAnsibleProfile 또는 null
+ * @returns {string}
+ */
+function buildInventoryYaml(nodes, profile) {
+  const lines = ['all:', '  hosts:'];
+  nodes.forEach(n => {
+    lines.push(`    ${n.hostname}:`);
+    lines.push(`      ansible_host: ${n.ip}`);
+  });
+  if (profile) {
+    lines.push('  vars:');
+    const vars = buildProfileVarsYaml(profile);
+    if (vars) lines.push(vars);
+  }
+  return lines.join('\n') + '\n';
 }

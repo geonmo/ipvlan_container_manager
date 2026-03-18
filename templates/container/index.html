@@ -1,0 +1,502 @@
+{% extends "base.html" %}
+{% block title %}컨테이너 설정 - HA Container Manager{% endblock %}
+{% block nav_container %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <h2 class="fw-bold mb-1"><i class="bi bi-boxes text-success"></i> 컨테이너 설정</h2>
+    <p class="text-muted mb-4">Podman 컨테이너를 systemd Quadlet 유닛으로 설정합니다. Pod 설정은 <a href="/quadlet/">Pod 설정</a> 페이지에서 합니다.</p>
+
+    <!-- 탭 -->
+    <ul class="nav nav-tabs mb-4" id="containerTab">
+      <li class="nav-item">
+        <a class="nav-link active" data-bs-toggle="tab" href="#manualTab">
+          <i class="bi bi-pencil-fill"></i> 컨테이너 설정
+        </a>
+      </li>
+      <li class="nav-item">
+        <a class="nav-link" data-bs-toggle="tab" href="#inspectTab">
+          <i class="bi bi-search"></i> podman inspect 변환
+        </a>
+      </li>
+    </ul>
+
+    <div class="tab-content">
+
+      <!-- 수동 입력 탭 -->
+      <div class="tab-pane fade show active" id="manualTab">
+        <form action="/container/generate" method="post" id="containerForm">
+          <input type="hidden" name="containers_json" id="containersJson" value="[]">
+          <input type="hidden" name="ansible_user" id="cAnsibleUser" value="root">
+          <input type="hidden" name="ansible_ssh_key" id="cAnsibleKey" value="~/.ssh/id_rsa">
+          <input type="hidden" name="pod_name" id="podNameHidden" value="">
+
+          <!-- 기본 정보 -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-success text-white fw-bold">
+              <i class="bi bi-boxes"></i> 컨테이너 기본 정보
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">컨테이너 이름 <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="cName" placeholder="myapp">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">Pod 선택</label>
+                  <select class="form-select" id="cPodSel">
+                    <option value="">-- Pod 없음 (독립 컨테이너) --</option>
+                  </select>
+                  <div class="form-text"><a href="/quadlet/" target="_blank"><i class="bi bi-box-seam-fill"></i> Pod 설정</a>에서 Pod를 먼저 생성하세요.</div>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">컨테이너 이미지 <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="cImage" placeholder="registry.example.com/myapp:latest">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 볼륨 마운트 -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-secondary text-white fw-bold d-flex align-items-center">
+              <span><i class="bi bi-hdd-stack-fill"></i> 볼륨 마운트</span>
+              <button type="button" class="btn btn-sm btn-light ms-auto" onclick="addVolumeRow()">
+                <i class="bi bi-plus-circle"></i> 볼륨 추가
+              </button>
+            </div>
+            <div class="card-body">
+              <div id="volumeRows">
+                <div class="text-muted small py-2">볼륨이 없습니다. 추가 버튼을 눌러 볼륨을 마운트하세요.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 환경 변수 -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-info text-white fw-bold d-flex align-items-center">
+              <span><i class="bi bi-table"></i> 환경 변수 (Env)</span>
+              <button type="button" class="btn btn-sm btn-light ms-auto" onclick="addEnvRow()">
+                <i class="bi bi-plus-circle"></i> 추가
+              </button>
+            </div>
+            <div class="card-body">
+              <div id="envRows">
+                <div class="text-muted small py-2">환경 변수가 없습니다.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Arguments -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-dark text-white fw-bold d-flex align-items-center">
+              <span><i class="bi bi-terminal-fill"></i> 실행 인수 (Exec / Args)</span>
+              <button type="button" class="btn btn-sm btn-light ms-auto" onclick="addArgRow()">
+                <i class="bi bi-plus-circle"></i> 추가
+              </button>
+            </div>
+            <div class="card-body">
+              <div id="argRows">
+                <div class="text-muted small py-2">인수가 없습니다. (기본: 이미지의 CMD/ENTRYPOINT)</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Ansible 배포 -->
+          <input type="hidden" name="ansible_hosts" id="containerHosts" value="">
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-warning text-dark fw-bold">
+              <i class="bi bi-send-fill"></i> Ansible 배포 설정
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">대상 노드 선택</label>
+                  <div class="row g-2">
+                    <div class="col-6">
+                      <div class="small text-muted mb-1">노드 풀 <a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i></a></div>
+                      <ul class="list-group" id="cPoolList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
+                    </div>
+                    <div class="col-auto d-flex flex-column justify-content-center gap-2">
+                      <button type="button" class="btn btn-outline-warning btn-sm" id="cPoolList_add"><i class="bi bi-arrow-right"></i></button>
+                    </div>
+                    <div class="col">
+                      <div class="small text-muted mb-1">선택됨</div>
+                      <ul class="list-group" id="cSelectedList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label fw-semibold">Ansible 프로파일</label>
+                  <select class="form-select" id="cProfileSel">
+                    <option value="">-- 선택 안 함 --</option>
+                  </select>
+                  <div class="form-text"><a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i> 프로파일 관리</a></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-success btn-lg"
+                  onclick="serializeContainerForm(); syncProfileToContainerForm()">
+            <i class="bi bi-gear-fill"></i> 컨테이너 유닛 파일 생성
+          </button>
+        </form>
+      </div>
+
+      <!-- podman inspect 탭 -->
+      <div class="tab-pane fade" id="inspectTab">
+        <form action="/container/from-inspect" method="post">
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-dark text-white fw-bold">
+              <i class="bi bi-terminal-fill"></i> podman inspect 출력 붙여넣기
+            </div>
+            <div class="card-body">
+              <p class="text-muted small">
+                아래 명령으로 컨테이너 정보를 가져와 붙여넣으세요:
+                <code>podman inspect &lt;container_name&gt;</code>
+              </p>
+              <textarea name="inspect_json" class="code-editor" data-mode="javascript"
+                        style="min-height:300px" placeholder="[ { &quot;Id&quot;: ... } ]"></textarea>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-dark btn-lg">
+            <i class="bi bi-arrow-right-circle"></i> Quadlet 파일 생성
+          </button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── 상태 ─────────────────────────────────────────────────────
+let cVolumes      = [];  // [{source, source_type, container_path, options}]
+let cEnvVars      = [];  // [{key, value}]
+let cArgs         = [];  // [string]
+let registeredVols = []; // /api/volumes 에서 로드
+let scannedPods    = []; // /api/quadlet-pods 에서 로드
+let cNodes         = []; // 선택된 노드
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── 볼륨 마운트 ──────────────────────────────────────────────
+function renderVolumeRows() {
+  const container = document.getElementById('volumeRows');
+  if (!cVolumes.length) {
+    container.innerHTML = '<div class="text-muted small py-2">볼륨이 없습니다. 추가 버튼을 눌러 볼륨을 마운트하세요.</div>';
+    return;
+  }
+  container.innerHTML = '';
+  cVolumes.forEach((v, i) => {
+    const volOptions = buildVolSourceOptions(v.source, v.source_type);
+    const row = document.createElement('div');
+    row.className = 'row g-2 mb-2 align-items-start border rounded p-2 bg-light';
+    row.innerHTML = `
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">볼륨 유형</label>
+        <select class="form-select form-select-sm" onchange="cVolumes[${i}].source_type=this.value; cVolumes[${i}].source=''; renderVolumeRows()">
+          <option value="registered" ${v.source_type==='registered'?'selected':''}>등록된 볼륨</option>
+          <option value="named" ${v.source_type==='named'?'selected':''}>Named Volume</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">${v.source_type==='named'?'볼륨 이름':'볼륨 선택'}</label>
+        ${v.source_type === 'named' ?
+          `<input type="text" class="form-control form-control-sm" placeholder="myapp-data"
+                 value="${esc(v.source)}"
+                 oninput="cVolumes[${i}].source=this.value">` :
+          `<select class="form-select form-select-sm" onchange="cVolumes[${i}].source=this.value">
+            ${volOptions}
+          </select>`
+        }
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small fw-semibold">컨테이너 경로</label>
+        <input type="text" class="form-control form-control-sm" placeholder="/data"
+               value="${esc(v.container_path)}"
+               oninput="cVolumes[${i}].container_path=this.value">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label small fw-semibold">마운트 옵션</label>
+        <select class="form-select form-select-sm" onchange="cVolumes[${i}].options=this.value">
+          <option value="z" ${v.options==='z'?'selected':''}>:z (SELinux shared)</option>
+          <option value="Z" ${v.options==='Z'?'selected':''}>:Z (SELinux private)</option>
+          <option value="ro,z" ${v.options==='ro,z'?'selected':''}>:ro,z (읽기전용)</option>
+          <option value="ro" ${v.options==='ro'?'selected':''}>:ro (읽기전용)</option>
+          <option value="" ${v.options===''?'selected':''}>옵션 없음</option>
+        </select>
+      </div>
+      <div class="col-auto d-flex align-items-end">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeVolumeRow(${i})">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function buildVolSourceOptions(selected, sourceType) {
+  if (sourceType === 'named') return '';
+  const opts = ['<option value="">-- 볼륨 선택 --</option>'];
+  registeredVols.forEach(v => {
+    const label = v.drbd_resource
+      ? `${v.name} (DRBD: ${v.drbd_resource})`
+      : `${v.name} (${v.host_path || 'named'})`;
+    opts.push(`<option value="${esc(v.name)}" ${v.name===selected?'selected':''}>${esc(label)}</option>`);
+  });
+  return opts.join('');
+}
+
+function addVolumeRow() {
+  cVolumes.push({ source: '', source_type: 'registered', container_path: '', options: 'z' });
+  renderVolumeRows();
+}
+
+function removeVolumeRow(i) {
+  cVolumes.splice(i, 1);
+  renderVolumeRows();
+}
+
+// ── 환경 변수 ──────────────────────────────────────────────────
+function renderEnvRows() {
+  const container = document.getElementById('envRows');
+  if (!cEnvVars.length) {
+    container.innerHTML = '<div class="text-muted small py-2">환경 변수가 없습니다.</div>';
+    return;
+  }
+  container.innerHTML = '';
+  cEnvVars.forEach((e, i) => {
+    const row = document.createElement('div');
+    row.className = 'row g-2 mb-2 align-items-center';
+    row.innerHTML = `
+      <div class="col-md-4">
+        <input type="text" class="form-control form-control-sm" placeholder="변수명 (예: APP_ENV)"
+               value="${esc(e.key)}" oninput="cEnvVars[${i}].key=this.value">
+      </div>
+      <div class="col-md-6">
+        <input type="text" class="form-control form-control-sm" placeholder="값 (예: production)"
+               value="${esc(e.value)}" oninput="cEnvVars[${i}].value=this.value">
+      </div>
+      <div class="col-auto">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEnvRow(${i})">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function addEnvRow() {
+  cEnvVars.push({ key: '', value: '' });
+  renderEnvRows();
+}
+
+function removeEnvRow(i) {
+  cEnvVars.splice(i, 1);
+  renderEnvRows();
+}
+
+// ── 실행 인수 ──────────────────────────────────────────────────
+function renderArgRows() {
+  const container = document.getElementById('argRows');
+  if (!cArgs.length) {
+    container.innerHTML = '<div class="text-muted small py-2">인수가 없습니다. (기본: 이미지의 CMD/ENTRYPOINT)</div>';
+    return;
+  }
+  container.innerHTML = '';
+  cArgs.forEach((a, i) => {
+    const row = document.createElement('div');
+    row.className = 'row g-2 mb-2 align-items-center';
+    row.innerHTML = `
+      <div class="col-md-8">
+        <input type="text" class="form-control form-control-sm font-monospace" placeholder="--arg=value"
+               value="${esc(a)}" oninput="cArgs[${i}]=this.value">
+      </div>
+      <div class="col-auto">
+        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeArgRow(${i})">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function addArgRow() {
+  cArgs.push('');
+  renderArgRows();
+}
+
+function removeArgRow(i) {
+  cArgs.splice(i, 1);
+  renderArgRows();
+}
+
+// ── 폼 직렬화 ─────────────────────────────────────────────────
+function serializeContainerForm() {
+  const name  = document.getElementById('cName').value.trim();
+  const image = document.getElementById('cImage').value.trim();
+  const pod   = document.getElementById('cPodSel').value.trim();
+
+  if (!name || !image) {
+    alert('컨테이너 이름과 이미지는 필수입니다.');
+    return false;
+  }
+
+  // volumes → "source:/container_path:options" 형식
+  const volumes = cVolumes
+    .filter(v => v.source && v.container_path)
+    .map(v => v.options ? `${v.source}:${v.container_path}:${v.options}` : `${v.source}:${v.container_path}`);
+
+  // environment → [[key, value], ...]
+  const environment = cEnvVars
+    .filter(e => e.key.trim())
+    .map(e => [e.key.trim(), e.value]);
+
+  // extra_args
+  const extra_args = cArgs.filter(a => a.trim());
+
+  const container = {
+    name,
+    image,
+    pod: pod || null,
+    network: null,
+    ip: null,
+    environment,
+    volumes,
+    publish_ports: [],
+    exec: null,
+    user: null,
+    labels: [],
+    extra_args,
+    depends_on: pod ? [pod] : [],
+    drbd_resource: null,
+  };
+
+  document.getElementById('containersJson').value = JSON.stringify([container]);
+  document.getElementById('podNameHidden').value = pod || '';
+  return true;
+}
+
+// ── 프로파일 셀렉터 ───────────────────────────────────────────
+function initCProfileSel() {
+  const sel = document.getElementById('cProfileSel');
+  if (!sel) return;
+  const profiles = getProfilePool();
+  const active   = getActiveProfileName();
+  sel.innerHTML  = '<option value="">-- 선택 안 함 --</option>';
+  profiles.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    opt.dataset.profile = JSON.stringify(p);
+    if (p.name === active) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function syncProfileToContainerForm() {
+  const sel = document.getElementById('cProfileSel');
+  if (!sel) return;
+  const opt = sel.selectedOptions[0];
+  if (opt && opt.dataset.profile) {
+    const p = JSON.parse(opt.dataset.profile);
+    document.getElementById('cAnsibleUser').value = p.ssh_user || 'root';
+    document.getElementById('cAnsibleKey').value  = p.ssh_key  || '~/.ssh/id_rsa';
+    setActiveProfileName(p.name);
+  }
+}
+
+// ── 노드 셔틀 ──────────────────────────────────────────────────
+function cRebuildPool() {
+  const used = new Set(cNodes.map(n => n.hostname));
+  const ul = document.getElementById('cPoolList');
+  ul.innerHTML = '';
+  getNodePool().filter(p => !used.has(p.hostname)).forEach(p => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item list-group-item-action py-1';
+    li.dataset.hostname = p.hostname;
+    li.innerHTML = `<span class="fw-semibold">${esc(p.hostname)}</span> <small class="text-muted">${esc(p.ip||'')}</small>`;
+    li.onclick = () => li.classList.toggle('active');
+    ul.appendChild(li);
+  });
+}
+
+function cRenderSelected() {
+  const ul = document.getElementById('cSelectedList');
+  ul.innerHTML = '';
+  cNodes.forEach((n, i) => {
+    const li = document.createElement('li');
+    li.className = 'list-group-item d-flex align-items-center py-1 gap-2';
+    li.innerHTML = `<span class="flex-grow-1">${esc(n.hostname)}</span>
+      <button type="button" class="btn btn-sm btn-outline-danger"><i class="bi bi-arrow-left"></i></button>`;
+    li.querySelector('button').addEventListener('click', () => {
+      cNodes.splice(i, 1); cRenderSelected(); cRebuildPool(); cSyncHosts();
+    });
+    ul.appendChild(li);
+  });
+  cSyncHosts();
+}
+
+function cSyncHosts() {
+  document.getElementById('containerHosts').value = cNodes.map(n => n.hostname).join('\n');
+}
+
+// ── 초기화 ────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  // 볼륨 목록 로드
+  try {
+    registeredVols = await fetch('/api/volumes').then(r => r.json());
+  } catch (_) { registeredVols = []; }
+
+  // Pod 목록 로드
+  try {
+    scannedPods = await fetch('/api/quadlet-pods').then(r => r.json());
+  } catch (_) { scannedPods = []; }
+
+  // Pod 드롭다운 채우기
+  const podSel = document.getElementById('cPodSel');
+  if (podSel) {
+    // localStorage 에서 저장된 pod 이름
+    const savedPod = localStorage.getItem('quadlet_pod_name') || '';
+    scannedPods.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.name;
+      opt.textContent = p.name + ' (스캔됨)';
+      if (p.name === savedPod) opt.selected = true;
+      podSel.appendChild(opt);
+    });
+    // localStorage pod 이름이 scannedPods에 없으면 직접 추가
+    if (savedPod && !scannedPods.find(p => p.name === savedPod)) {
+      const opt = document.createElement('option');
+      opt.value = savedPod;
+      opt.textContent = savedPod + ' (저장됨)';
+      opt.selected = true;
+      podSel.appendChild(opt);
+    }
+  }
+
+  renderVolumeRows();
+  renderEnvRows();
+  renderArgRows();
+  initCProfileSel();
+  cRebuildPool();
+
+  document.getElementById('cPoolList_add').addEventListener('click', () => {
+    document.querySelectorAll('#cPoolList li.active').forEach(li => {
+      cNodes.push({ hostname: li.dataset.hostname });
+    });
+    cRenderSelected(); cRebuildPool();
+  });
+});
+</script>
+{% endblock %}

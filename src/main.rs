@@ -3,6 +3,7 @@ mod generators;
 mod routes;
 mod db;
 mod scan;
+mod nft_scanner;
 
 use axum::{
     routing::{get, post, delete},
@@ -170,6 +171,7 @@ async fn main() {
         pcsd_url:    config.pcsd_url.clone(),
         pcsd_user:   config.pcsd_user.clone(),
         pcsd_pass:   config.pcsd_pass.clone(),
+        temp_dir:    config.temp_dir.clone(),
     };
     let db_for_scan = db.clone();
     tokio::spawn(async move {
@@ -183,17 +185,46 @@ async fn main() {
         // DRBD
         .route("/drbd/", get(routes::drbd::index))
         .route("/drbd/scan", get(routes::drbd::scan))
+        .route("/api/lvscan", get(routes::drbd::api_lvscan))
         .route("/drbd/generate", post(routes::drbd::generate))
         .route("/drbd/download", post(routes::drbd::download_res))
         .route("/drbd/save", post(routes::drbd::save))
         .route("/drbd/delete/:name", delete(routes::drbd::delete_saved))
-        // Quadlet
+        // Quadlet (Pod 설정)
         .route("/quadlet/", get(routes::quadlet::index))
         .route("/quadlet/generate", post(routes::quadlet::generate))
-        .route("/quadlet/from-inspect", post(routes::quadlet::from_inspect))
+        // Container (컨테이너 설정)
+        .route("/container/", get(routes::container::index))
+        .route("/container/generate", post(routes::container::generate))
+        .route("/container/from-inspect", post(routes::container::from_inspect))
         // Pacemaker
         .route("/pacemaker/", get(routes::pacemaker::index))
         .route("/pacemaker/generate", post(routes::pacemaker::generate))
+        .route("/api/pacemaker/pcsd-fetch", post(routes::pacemaker::api_pcsd_fetch))
+        // nftables 방화벽
+        .route("/nft/", get(routes::nft::index))
+        .route("/nft/generate", post(routes::nft::generate))
+        // nft API
+        .route("/api/nft/subnet-groups", get(routes::nft::api_list_subnet_groups))
+        .route("/api/nft/subnet-groups", post(routes::nft::api_upsert_subnet_group))
+        .route("/api/nft/subnet-groups/:id", delete(routes::nft::api_delete_subnet_group))
+        .route("/api/nft/services", get(routes::nft::api_list_services))
+        .route("/api/nft/services", post(routes::nft::api_upsert_service))
+        .route("/api/nft/services/:id", delete(routes::nft::api_delete_service))
+        // nft targets, global config, scan
+        .route("/api/nft/targets", get(routes::nft::api_list_targets))
+        .route("/api/nft/targets", post(routes::nft::api_upsert_target))
+        .route("/api/nft/targets/:id", delete(routes::nft::api_delete_target))
+        .route("/api/nft/config", get(routes::nft::api_get_global_config))
+        .route("/api/nft/config", post(routes::nft::api_update_global_config))
+        .route("/api/nft/scan", post(routes::nft::api_scan))
+        // Volume
+        .route("/volume/", get(routes::volume::index))
+        .route("/volume/generate", post(routes::volume::generate))
+        .route("/api/volumes", get(routes::volume::api_list))
+        .route("/api/volumes", post(routes::volume::api_upsert))
+        .route("/api/volumes/:id", delete(routes::volume::api_delete))
+        .route("/api/drbd/resources", get(routes::volume::api_list_drbd_resources))
         // 노드 풀 페이지
         .route("/nodes/", get(routes::nodes::index))
         .route("/nodes/scan", post(routes::nodes::rescan))
@@ -209,6 +240,11 @@ async fn main() {
         .route("/api/ansible-profiles", get(routes::nodes::api_list_profiles))
         .route("/api/ansible-profiles", post(routes::nodes::api_upsert_profile))
         .route("/api/ansible-profiles/:id", delete(routes::nodes::api_delete_profile))
+        // 노드 인터페이스 API
+        .route("/api/node-interfaces", get(routes::nodes::api_list_node_interfaces))
+        .route("/api/collect-interfaces", post(routes::nodes::api_collect_interfaces))
+        // Quadlet Pod 스캔 API
+        .route("/api/quadlet-pods", get(routes::nodes::api_list_quadlet_pods))
         // 정적 파일
         .nest_service("/static", ServeDir::new("static"))
         .with_state(state);

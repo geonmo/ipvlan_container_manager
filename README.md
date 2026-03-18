@@ -23,13 +23,19 @@ HA Container Manager is a Rust web application that generates all the configurat
 [Node 2] DRBD Secondary ← Standby
 ```
 
-The tool guides you through three sequential steps:
+The tool guides you through sequential configuration steps, all accessible from the navigation bar:
 
-| Step | Tool | Output |
-|------|------|--------|
-| 1 | **DRBD** | `.res` resource file + Ansible inventory |
-| 2 | **Quadlet** | `.container` / `.pod` / `.volume` / `.network` systemd unit files |
-| 3 | **Pacemaker** | `pcs` bash script + Ansible playbooks |
+| Tab | Path | Output |
+|-----|------|--------|
+| **노드 풀** | `/nodes/` | Cluster nodes, network pool, Ansible profiles |
+| **DRBD 설정** | `/drbd/` | `.res` resource file + Ansible playbook |
+| **Volume 설정** | `/volume/` | Named volume registry (DRBD-backed or host path) |
+| **Pod 설정** | `/quadlet/` | `.container` / `.pod` / `.volume` / `.network` systemd unit files |
+| **컨테이너 설정** | `/container/` | Container unit files (form-based; image, volumes, env, args) |
+| **방화벽** | `/nft/` | nftables `netdev ingress` filter config |
+| **Pacemaker 설정** | `/pacemaker/` | `pcs` bash script + Ansible playbook |
+
+On startup the server automatically scans `/etc/drbd.d/`, `/etc/containers/systemd/`, and the local pcsd REST API to pre-populate the node pool, network pool, and cluster state from the running system.
 
 ### Prerequisites
 
@@ -89,6 +95,24 @@ port = 5000
 [logging]
 # Log level: error | warn | info | debug | trace
 level = info
+
+[database]
+path = ./icm.db
+
+[paths]
+# Where to scan for DRBD resource files
+drbd_dir = /etc/drbd.d
+# Where to scan for Quadlet network/pod files
+quadlet_dir = /etc/containers/systemd
+# Temporary directory for Ansible inventory/playbook generation
+temp_dir = /tmp/icm
+# "test" uses temp_dir; future "deploy" will write directly to the system
+deploy_mode = test
+
+[pacemaker]
+pcsd_url = https://localhost:2224
+pcsd_user = hacluster
+pcsd_password =
 ```
 
 `RUST_LOG` environment variable takes precedence over the `[logging]` section when set.
@@ -113,121 +137,185 @@ RUST_LOG=debug cargo run
 
 Open `http://<host>:<port>` in your browser (default: `http://localhost:5000`).
 
+---
+
+### Node Pool
+
+Navigate to **노드 풀** (Node Pool) in the top menu to manage cluster nodes, network definitions, and Ansible deployment profiles. Data entered here is shared across all tabs via browser localStorage.
+
+#### Ansible Profiles
+
+Profiles store SSH connection parameters used by server-side Ansible runs.
+
+| Field | Description |
+|-------|-------------|
+| Profile name | Identifier used to select this profile |
+| Auth method | `key` (SSH private key path) or `password` |
+| SSH user | Remote user (default: `root`) |
+| SSH key / password | Path to private key, or the password itself |
+| become | Enable `ansible_become`; method and optional become password |
+
+**Active profile**: Select a profile as the "기본 Ansible 프로파일" — all other tabs will automatically pre-select this profile for Ansible deployment.
+
+> **Note**: Passwords are stored in plaintext in the local SQLite database. Use only in test/lab environments.
+
+#### Cluster Nodes
+
+Add or remove cluster nodes manually, or use the **시스템 재스캔** (Rescan) button to re-read `/etc/drbd.d/` and the pcsd API. Nodes discovered by scan are tagged `scanned`; manually added nodes are tagged `manual`.
+
+#### Network Pool
+
+Defines the IPVLAN/macvlan networks that containers will attach to. The **host interface** field is left empty on entry — it is filled in automatically by the **인터페이스 자동감지** (Interface Auto-Detection) feature.
+
+**Interface Auto-Detection** (requires at least one Ansible profile and at least one node):
+
+1. Click **인터페이스 자동감지** in the Network Pool card header.
+2. Select an Ansible profile from the dropdown.
+3. Click **수집 시작** — the server runs an Ansible playbook that executes `ip -j addr show` on every node, saves the result, and then matches each network's subnet to the correct interface.
+
+If no match is found at Quadlet generation time, a `__PARENT_IFACE__` placeholder is emitted and the generated Ansible playbook includes a `ip route show` task to resolve it at deploy time.
+
+---
+
 ### Step 1 — DRBD Configuration
 
 Navigate to **DRBD** in the top menu.
-
-**Fill in the form:**
 
 | Field | Description | Example |
 |-------|-------------|---------|
 | Resource Name | Name of the DRBD resource (becomes `<name>.res`) | `r0` |
 | Protocol | Sync mode — Protocol C recommended for HA | `C` |
 | Minor Number | Determines device path `/dev/drbd<minor>` | `0` |
-| Node 1/2 Hostname | FQDN or hostname of each node | `node1.ha.local` |
-| Node 1/2 IP | IP address used for DRBD replication | `192.168.10.11` |
-| Node 1/2 Disk | Block device to replicate | `/dev/sdb` |
+| Node Hostname | FQDN or hostname of each node | `node1.ha.local` |
+| Node IP | IP address used for DRBD replication | `192.168.10.11` |
+| Disk type | `block` (raw device) or `lvm` (logical volume) | `block` |
 | Port | DRBD listen port (default 7789) | `7789` |
 
-Advanced options (Net / Disk / Startup) are available under the collapsible panel.
+Supports 2 to 7 nodes. Advanced options (Net / Disk / Startup) are available under the collapsible panel.
 
 **Output:**
-- DRBD `.res` file content (copy to `/etc/drbd.d/` on both nodes)
-- Ansible inventory YAML
-- DRBD initialization commands (`drbdadm create-md`, `drbdadm up`, etc.)
+- DRBD `.res` file (copy to `/etc/drbd.d/` on both nodes)
+- DRBD initialization commands
 - Ready-to-run Ansible playbook
 
-Click **Download .res** to save the file directly.
+---
 
-### Step 2 — Quadlet Unit Generation
+### Step 2 — Volume Settings
 
-Navigate to **Quadlet** in the top menu.
+Navigate to **Volume** in the top menu. Register named volumes that will be referenced by the Pod and Container configuration steps.
+
+Each volume has:
+- **Name**: used as the Quadlet `.volume` filename stem
+- **Host path**: the bind-mount path on the host (e.g., `/mnt/drbd/data`)
+- **Description** (optional): for documentation
+- **DRBD resource** (optional): links this volume to a DRBD resource for labeling in the Container settings UI
+
+Volumes registered here appear in the Container settings tab's volume mount dropdown.
+
+---
+
+### Step 3 — Pod Settings (Quadlet)
+
+Navigate to **Pod** in the top menu.
 
 #### Option A: Manual Entry
 
-Fill in the network, volume, pod, and container sections. The container section accepts a JSON array — click **예시 (Example)** to see the format.
+Fill in the network, volume, pod, and container sections. Pod network entries require an **IPv4 address** (mandatory) and optionally an **IPv6 address**.
 
 #### Option B: From `podman inspect`
 
-Switch to the **podman inspect JSON** tab and paste the output of:
-
-```bash
-podman inspect <container_name>
-```
-
-The application parses the running container metadata and generates the corresponding Quadlet unit files automatically.
+Switch to the **podman inspect JSON** tab and paste the output of `podman inspect <container_name>`. The application parses the running container metadata and generates corresponding Quadlet unit files.
 
 **Output files:**
-- `<name>.network` — IPVLAN/macvlan network definition
+- `<name>.network` — IPVLAN/macvlan network definition (dual-stack IPv4+IPv6 supported)
 - `<name>.volume` — Named volume
-- `<name>.pod` — Pod grouping
+- `<name>.pod` — Pod grouping unit
 - `<name>.container` — Container service unit
 
 Deploy to `/etc/containers/systemd/` on both nodes, then `systemctl daemon-reload`.
 
 #### CLI Alternative
 
-A bash helper script is also provided:
-
 ```bash
-# Convert all running containers
-./scripts/podman_to_quadlet.sh
-
-# Convert specific containers with IPVLAN network
 ./scripts/podman_to_quadlet.sh --network ipvlan0 myapp mydb
-
-# Convert and install directly to /etc/containers/systemd/
 ./scripts/podman_to_quadlet.sh --install --network ipvlan0 myapp
-
-# Options:
-#   -o, --output-dir DIR   Output directory (default: ./quadlet-units)
-#   -i, --install          Install to /etc/containers/systemd/
-#   -n, --network NAME     IPVLAN network name
-#   -d, --drbd RESOURCE    DRBD resource name (added as a comment)
 ```
 
 Requirements: `podman`, `jq`
 
-### Step 3 — Pacemaker Configuration
+---
+
+### Step 4 — Container Settings
+
+Navigate to **컨테이너** in the top menu.
+
+Form-based container definition (no JSON editing required):
+
+- **Container name** and **Pod** (selected from scanned pods or Node Pool data)
+- **Image**: container image URL
+- **Volume mounts**: pick from registered volumes or enter a named volume; choose mount options (`:z`, `:Z`, `:ro,z`, `:ro`)
+- **Environment variables**: key-value pairs
+- **Arguments**: extra command-line arguments
+
+Generates `.container` unit files and an Ansible deployment playbook.
+
+---
+
+### Step 5 — Firewall (nftables)
+
+Navigate to **방화벽** in the top menu.
+
+Generates an nftables `netdev ingress` filter for IPVLAN container interfaces.
+
+**Global settings:**
+- **Device**: select the host network interface from collected interfaces
+- **Global rules**: define multiple protocol (tcp/udp) + port range rules that apply to all pods (e.g., allow traceroute UDP 33434–65535)
+
+**Per-pod rules:**
+- Select a pod from the dropdown (IPs are populated automatically from pod scan data)
+- Assign services (with TCP/UDP ports) and optionally restrict source by subnet group
+
+**Output**: a `.nft` configuration file loaded by nftables, with:
+- Target IP sets per pod (`target_<name>_v4`, `target_<name>_v6`)
+- Subnet group sets (`sg_<name>_v4`, `sg_<name>_v6`)
+- Service port sets
+- Per-target allow rules + drop-with-log rules
+
+---
+
+### Step 6 — Pacemaker Configuration
 
 Navigate to **Pacemaker** in the top menu.
 
-**Fill in the form:**
+#### pcsd Sync
 
-| Field | Description | Example |
-|-------|-------------|---------|
-| Cluster Name | Name of the Pacemaker cluster | `ha-cluster` |
-| Node 1/2 Name | Node hostnames (must match DRBD nodes) | `node1.ha.local` |
-| DRBD Resource Name | Pacemaker resource ID for DRBD | `drbd-r0` |
-| DRBD .res Name | Resource name from the `.res` file | `r0` |
-| Clone Name | Promotable clone ID | `drbd-r0-clone` |
-| Systemd Resources | JSON array of Quadlet services to register | see below |
-| Auto Constraints | Auto-generate Order + Colocation constraints | checked |
+Use the **pcsd 현재 설정 가져오기** card at the top of the page to fetch the current cluster configuration directly from pcsd (port 2224):
 
-**Systemd resources JSON format:**
+1. Enter pcsd URL, username, and password
+2. Click **가져오기**
+3. The current nodes, resources, and constraints are displayed
+4. Click **노드 적용** to populate the node selection from pcsd data
 
-```json
-[
-  {
-    "resource_name": "svc-myapp",
-    "systemd_unit": "myapp.service",
-    "resource_type": "container",
-    "monitor_interval": "30s",
-    "start_timeout": "60s",
-    "stop_timeout": "60s",
-    "clone": false
-  }
-]
-```
+#### Form Fields
+
+| Field | Description |
+|-------|-------------|
+| Cluster Name | Pacemaker cluster name |
+| Nodes | Select from Node Pool |
+| DRBD Resource | Pacemaker resource ID for DRBD promotable clone |
+| Systemd Resources | Quadlet services to register (JSON array) |
+| Auto Constraints | Auto-generate Order + Colocation constraints |
 
 **Auto constraints** (generated when checked):
-- **Order**: DRBD clone must be `promote`d before services `start`
-- **Colocation**: Services run only on the DRBD Promoted (Primary) node
+- **Order**: DRBD clone must be promoted before services start
+- **Colocation**: services run only on the DRBD Primary node
 
 **Output:**
-- `pcs` bash script to configure the cluster
+- `pcs` bash script
 - CIB XML reference snippet
 - Ansible playbook for automated deployment
+
+---
 
 ### Deployment
 
@@ -258,13 +346,19 @@ HA Container Manager는 **RHEL9 / AlmaLinux9** 환경에서 **DRBD + Quadlet + P
 [노드 2] DRBD Secondary ← 대기
 ```
 
-세 단계로 구성됩니다:
+내비게이션 바의 탭으로 단계별 설정을 진행합니다:
 
-| 단계 | 도구 | 출력물 |
-|------|------|--------|
-| 1 | **DRBD** | `.res` 리소스 파일 + Ansible 인벤토리 |
-| 2 | **Quadlet** | `.container` / `.pod` / `.volume` / `.network` systemd 유닛 파일 |
-| 3 | **Pacemaker** | `pcs` 배시 스크립트 + Ansible 플레이북 |
+| 탭 | 경로 | 출력물 |
+|----|------|--------|
+| **노드 풀** | `/nodes/` | 클러스터 노드, 네트워크 풀, Ansible 프로파일 |
+| **DRBD 설정** | `/drbd/` | `.res` 리소스 파일 + Ansible 플레이북 |
+| **Volume 설정** | `/volume/` | Named 볼륨 레지스트리 (DRBD 연동 또는 호스트 경로) |
+| **Pod 설정** | `/quadlet/` | `.container` / `.pod` / `.volume` / `.network` systemd 유닛 파일 |
+| **컨테이너 설정** | `/container/` | 컨테이너 유닛 파일 (폼 기반; 이미지, 볼륨, env, args) |
+| **방화벽** | `/nft/` | nftables `netdev ingress` 필터 설정 |
+| **Pacemaker 설정** | `/pacemaker/` | `pcs` 배시 스크립트 + Ansible 플레이북 |
+
+서버 시작 시 `/etc/drbd.d/`, `/etc/containers/systemd/`, 로컬 pcsd REST API를 자동으로 스캔하여 노드 풀, 네트워크 풀, 클러스터 상태를 사전에 채웁니다.
 
 ### 사전 요구사항
 
@@ -273,17 +367,10 @@ HA Container Manager는 **RHEL9 / AlmaLinux9** 환경에서 **DRBD + Quadlet + P
 **각 클러스터 노드에 설치할 패키지:**
 
 ```bash
-# ELRepo 저장소 활성화
 dnf install -y elrepo-release
 dnf config-manager --enable elrepo
-
-# DRBD
 dnf install -y drbd9x-utils kmod-drbd9x
-
-# Pacemaker / Corosync
 dnf install -y pacemaker pcs corosync
-
-# Podman
 dnf install -y podman
 ```
 
@@ -296,183 +383,128 @@ pip install ansible
 **클러스터 노드 방화벽 설정:**
 
 ```bash
-# DRBD 복제 포트 (기본 7789)
 firewall-cmd --permanent --add-port=7789/tcp
-
-# Corosync
 firewall-cmd --permanent --add-port=5404/udp
 firewall-cmd --permanent --add-port=5405/udp
-
 firewall-cmd --reload
 ```
 
-**네트워크:**
-- DRBD 복제용 전용 NIC 구성 권장
-- IPVLAN 컨테이너 네트워크를 위한 호스트 NIC 설정 필요
-
 ### 설정 파일
-
-애플리케이션 시작 시 실행 디렉토리의 `icm.conf` 파일을 읽습니다. 파일이 없으면 기본값을 사용합니다.
 
 ```ini
 [server]
-# 바인딩 주소 (0.0.0.0 = 모든 인터페이스, 127.0.0.1 = 로컬호스트만)
 host = 0.0.0.0
-# 수신 포트
 port = 5000
 
 [logging]
-# 로그 레벨: error | warn | info | debug | trace
 level = info
-```
 
-`RUST_LOG` 환경변수가 설정되어 있으면 `[logging]` 섹션보다 우선 적용됩니다.
+[database]
+path = ./icm.db
+
+[paths]
+drbd_dir = /etc/drbd.d
+quadlet_dir = /etc/containers/systemd
+temp_dir = /tmp/icm
+deploy_mode = test
+
+[pacemaker]
+pcsd_url = https://localhost:2224
+pcsd_user = hacluster
+pcsd_password =
+```
 
 ### 애플리케이션 실행
 
 ```bash
-# 클론 및 빌드
 git clone <repo-url>
 cd ipvlan_container_manager
 cargo build --release
-
-# 필요시 설정 파일 수정
 vi icm.conf
-
-# 실행
 cargo run --release
-
-# 로그 레벨 런타임 오버라이드
-RUST_LOG=debug cargo run
 ```
 
 브라우저에서 `http://<host>:<port>` 접속 (기본값: `http://localhost:5000`).
 
+---
+
+### 노드 풀 관리
+
+상단 메뉴에서 **노드 풀**을 클릭합니다. 여기서 정의한 정보는 모든 탭에서 공유됩니다.
+
+#### Ansible 프로파일
+
+서버 측 Ansible 실행(인터페이스 수집, 배포)에 사용할 SSH 접속 정보를 저장합니다.
+
+**기본 Ansible 프로파일**: 노드 풀에서 프로파일을 선택해두면 다른 모든 탭에서 해당 프로파일이 자동으로 선택됩니다.
+
+> **주의**: 비밀번호는 로컬 SQLite DB에 평문으로 저장됩니다. 테스트/랩 환경에서만 사용하세요.
+
+#### 클러스터 노드
+
+수동 추가/삭제 또는 **시스템 재스캔** 버튼으로 갱신할 수 있습니다.
+
+#### 네트워크 풀
+
+컨테이너가 연결할 IPVLAN/macvlan 네트워크를 정의합니다. 호스트 인터페이스는 **인터페이스 자동감지** 기능으로 자동 매핑됩니다.
+
+---
+
 ### 1단계 — DRBD 설정
 
-상단 메뉴에서 **DRBD**를 클릭합니다.
+`.res` 파일, DRBD 초기화 명령어, 전체 Ansible 플레이북을 생성합니다.
 
-**폼 입력 항목:**
+---
 
-| 항목 | 설명 | 예시 |
-|------|------|------|
-| 리소스 이름 | DRBD 리소스 이름 (`<name>.res` 파일 생성) | `r0` |
-| 프로토콜 | 동기 방식 — HA 환경에서는 Protocol C 권장 | `C` |
-| Minor 번호 | 장치 경로 `/dev/drbd<minor>` 결정 | `0` |
-| 노드 1/2 호스트명 | 각 노드의 FQDN 또는 호스트명 | `node1.ha.local` |
-| 노드 1/2 IP | DRBD 복제에 사용할 IP 주소 | `192.168.10.11` |
-| 노드 1/2 디스크 | 복제할 블록 디바이스 | `/dev/sdb` |
-| 포트 | DRBD 수신 포트 (기본 7789) | `7789` |
+### 2단계 — Volume 설정
 
-고급 옵션(Net / Disk / Startup)은 접이식 패널에서 설정할 수 있습니다.
+Pod/컨테이너에서 사용할 볼륨을 등록합니다. DRBD 리소스 연동 정보도 입력할 수 있으며, 컨테이너 설정 탭에서 드롭다운으로 선택할 수 있습니다.
 
-**출력물:**
-- DRBD `.res` 파일 내용 (양쪽 노드의 `/etc/drbd.d/`에 복사)
-- Ansible 인벤토리 YAML
-- DRBD 초기화 명령어 (`drbdadm create-md`, `drbdadm up` 등)
-- 바로 실행 가능한 Ansible 플레이북
+---
 
-**`.res 다운로드`** 버튼으로 파일을 직접 저장할 수 있습니다.
+### 3단계 — Pod 설정 (Quadlet)
 
-### 2단계 — Quadlet 유닛 파일 생성
+Pod 네트워크 항목에는 **IPv4 주소 (필수)** 와 **IPv6 주소 (선택)** 를 입력합니다.
 
-상단 메뉴에서 **Quadlet**을 클릭합니다.
-
-#### 방법 A: 수동 입력
-
-네트워크, 볼륨, Pod, 컨테이너 섹션을 직접 입력합니다. 컨테이너 섹션은 JSON 배열 형식이며, **예시** 버튼을 클릭하면 형식을 확인할 수 있습니다.
-
-#### 방법 B: `podman inspect` JSON 사용
-
-**podman inspect JSON** 탭으로 전환 후 아래 명령 출력을 붙여넣습니다:
-
-```bash
-podman inspect <컨테이너_이름>
-```
-
-실행 중인 컨테이너의 메타데이터를 자동으로 분석하여 Quadlet 유닛 파일을 생성합니다.
-
-**생성되는 파일:**
-- `<name>.network` — IPVLAN/macvlan 네트워크 정의
-- `<name>.volume` — Named 볼륨
-- `<name>.pod` — Pod 그룹
-- `<name>.container` — 컨테이너 서비스 유닛
+생성 파일: `*.network`, `*.volume`, `*.pod`, `*.container`
 
 양쪽 노드의 `/etc/containers/systemd/`에 배포 후 `systemctl daemon-reload` 실행.
 
-#### CLI 대안 (bash 스크립트)
+---
 
-```bash
-# 실행 중인 모든 컨테이너 변환
-./scripts/podman_to_quadlet.sh
+### 4단계 — 컨테이너 설정
 
-# IPVLAN 네트워크를 지정하여 특정 컨테이너 변환
-./scripts/podman_to_quadlet.sh --network ipvlan0 myapp mydb
+폼 기반 UI로 컨테이너를 구성합니다:
 
-# 변환 후 /etc/containers/systemd/ 에 직접 설치
-./scripts/podman_to_quadlet.sh --install --network ipvlan0 myapp
+- 컨테이너 이름 + Pod 선택 (스캔된 pod 드롭다운)
+- 컨테이너 이미지 주소
+- 볼륨 마운트: 등록된 볼륨 또는 named 볼륨 선택, 마운트 옵션 (`:z`, `:Z`, `:ro,z`, `:ro`)
+- 환경변수 (키-값)
+- 추가 인자
 
-# 옵션:
-#   -o, --output-dir DIR   출력 디렉토리 (기본: ./quadlet-units)
-#   -i, --install          /etc/containers/systemd/ 에 직접 설치
-#   -n, --network NAME     IPVLAN 네트워크 이름 지정
-#   -d, --drbd RESOURCE    DRBD 리소스 이름 (주석으로 추가)
-```
+---
 
-요구사항: `podman`, `jq`
+### 5단계 — 방화벽 (nftables)
 
-### 3단계 — Pacemaker 설정
+IPVLAN 컨테이너 인터페이스용 nftables `netdev ingress` 필터를 생성합니다.
 
-상단 메뉴에서 **Pacemaker**를 클릭합니다.
+- **전역 설정**: 인터페이스 선택 (수집된 인터페이스 드롭다운) + 여러 개의 전역 허용 규칙 (프로토콜 + 포트 범위)
+- **Pod별 규칙**: Pod를 드롭다운으로 선택하면 IP 주소가 자동 입력됨. 서비스(포트)와 소스 서브넷 그룹을 설정
 
-**폼 입력 항목:**
+---
 
-| 항목 | 설명 | 예시 |
-|------|------|------|
-| 클러스터 이름 | Pacemaker 클러스터 이름 | `ha-cluster` |
-| 노드 1/2 이름 | 노드 호스트명 (DRBD 노드와 일치해야 함) | `node1.ha.local` |
-| DRBD 리소스 이름 | DRBD용 Pacemaker 리소스 ID | `drbd-r0` |
-| DRBD .res 이름 | `.res` 파일의 리소스 이름 | `r0` |
-| Clone 이름 | Promotable 클론 ID | `drbd-r0-clone` |
-| Systemd 리소스 | 등록할 Quadlet 서비스 JSON 배열 | 아래 참조 |
-| 자동 제약조건 | Order + Colocation 제약조건 자동 생성 | 체크됨 |
+### 6단계 — Pacemaker 설정
 
-**Systemd 리소스 JSON 형식:**
+**pcsd 현재 설정 가져오기** 카드에서 pcsd URL, 사용자명, 비밀번호를 입력하고 **가져오기** 버튼을 클릭하면 현재 클러스터 노드, 리소스, 제약조건 정보가 표시되고 폼에 자동 반영됩니다.
 
-```json
-[
-  {
-    "resource_name": "svc-myapp",
-    "systemd_unit": "myapp.service",
-    "resource_type": "container",
-    "monitor_interval": "30s",
-    "start_timeout": "60s",
-    "stop_timeout": "60s",
-    "clone": false
-  }
-]
-```
+**출력물**: `pcs` 배시 스크립트, CIB XML 스니펫, Ansible 플레이북
 
-**자동 제약조건** (체크 시 자동 생성):
-- **Order**: DRBD 클론이 `promote` 된 후에만 서비스 `start`
-- **Colocation**: DRBD Promoted(Primary) 노드에서만 서비스 실행 (INFINITY)
-
-**출력물:**
-- 클러스터 구성용 `pcs` 배시 스크립트
-- CIB XML 참조 스니펫
-- 자동 배포용 Ansible 플레이북
+---
 
 ### 배포
 
-각 단계에서 Ansible 플레이북과 인벤토리가 생성됩니다. 관리 서버에서 실행:
-
 ```bash
-# 1단계: DRBD 배포
 ansible-playbook -i inventory.yml ansible/playbooks/deploy_drbd.yml
-
-# 2단계: Quadlet 유닛 배포
 ansible-playbook -i inventory.yml ansible/playbooks/deploy_quadlet.yml
-
-# 3단계: Pacemaker 설정
 ansible-playbook -i inventory.yml ansible/playbooks/deploy_pacemaker.yml
 ```

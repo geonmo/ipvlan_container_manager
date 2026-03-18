@@ -1,4 +1,4 @@
-use crate::models::quadlet::{QuadletContainer, QuadletNetwork, QuadletPod, QuadletVolume, QuadletConfig};
+use crate::models::quadlet::{QuadletContainer, QuadletNetwork, QuadletPod, QuadletVolume, QuadletConfig, PodNetworkEntry};
 
 /// .volume 유닛 파일 생성
 pub fn generate_volume_unit(vol: &QuadletVolume) -> String {
@@ -70,6 +70,9 @@ pub fn generate_network_unit(net: &QuadletNetwork) -> String {
     // 부모 인터페이스
     if !net.interface.is_empty() {
         out.push_str(&format!("Options=parent={}\n", net.interface));
+    } else if net.driver == "ipvlan" || net.driver == "macvlan" {
+        // 인터페이스 미지정 시 Ansible 배포 시 자동감지 placeholder
+        out.push_str("Options=parent=__PARENT_IFACE__\n");
     }
     if (net.driver == "ipvlan" || net.driver == "macvlan") && !net.ipvlan_mode.is_empty() {
         out.push_str(&format!("Options=mode={}\n", net.ipvlan_mode));
@@ -84,31 +87,62 @@ pub fn generate_network_unit(net: &QuadletNetwork) -> String {
 pub fn generate_pod_unit(pod: &QuadletPod) -> String {
     let mut out = String::new();
 
-    // [Unit] 섹션: 네트워크 의존성
-    if let Some(net) = &pod.network {
-        if !net.is_empty() {
-            let svc = format!("{}.network", net);
-            out.push_str("[Unit]\n");
-            out.push_str(&format!("After={}\n", svc));
-            out.push_str(&format!("Requires={}\n", svc));
-            out.push('\n');
+    // [Unit] 섹션: 네트워크 의존성 (복수 네트워크)
+    let valid_nets: Vec<&PodNetworkEntry> = pod.networks.iter()
+        .filter(|e| !e.network.is_empty())
+        .collect();
+
+    if !valid_nets.is_empty() {
+        out.push_str("[Unit]\n");
+        for entry in &valid_nets {
+            out.push_str(&format!("After={}.network\n", entry.network));
+            out.push_str(&format!("Requires={}.network\n", entry.network));
         }
+        out.push('\n');
     }
 
     out.push_str("[Pod]\n");
     out.push_str(&format!("PodName={}\n", pod.name));
-    if let Some(net) = &pod.network {
-        if !net.is_empty() {
-            // Quadlet에서 네트워크 파일은 systemd-<name> 으로 참조
-            out.push_str(&format!("Network=systemd-{}\n", net));
+    for entry in &valid_nets {
+        let has_ip  = entry.ip.as_deref().map_or(false, |s| !s.is_empty());
+        let has_ip6 = entry.ip6.as_deref().map_or(false, |s| !s.is_empty());
+        if has_ip && has_ip6 {
+            out.push_str(&format!(
+                "Network={}.network:ip={}:ip6={}\n",
+                entry.network,
+                entry.ip.as_deref().unwrap(),
+                entry.ip6.as_deref().unwrap(),
+            ));
+        } else if has_ip {
+            out.push_str(&format!("Network={}.network:ip={}\n", entry.network, entry.ip.as_deref().unwrap()));
+        } else if has_ip6 {
+            out.push_str(&format!("Network={}.network:ip6={}\n", entry.network, entry.ip6.as_deref().unwrap()));
+        } else {
+            out.push_str(&format!("Network={}.network\n", entry.network));
         }
-    }
-    for port in &pod.publish_ports {
-        out.push_str(&format!("PublishPort={}\n", port));
     }
     for label in &pod.labels {
         out.push_str(&format!("Label={}\n", label));
     }
+    out
+}
+
+/// DRBD/호스트 바인드 마운트용 .volume 유닛 파일 생성
+pub fn generate_bind_volume_unit(name: &str, host_path: &str, description: &str) -> String {
+    let mut out = String::new();
+    let desc = if description.is_empty() { name } else { description };
+    out.push_str("[Unit]\n");
+    out.push_str(&format!("Description={}\n\n", desc));
+    out.push_str("[Volume]\n");
+    out.push_str(&format!("VolumeName={}\n", name));
+    out.push_str("Driver=local\n");
+    if !host_path.is_empty() {
+        out.push_str(&format!("Device={}\n", host_path));
+        out.push_str("Options=bind\n");
+    }
+    out.push('\n');
+    out.push_str("[Install]\n");
+    out.push_str("WantedBy=multi-user.target\n");
     out
 }
 

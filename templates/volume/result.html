@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Volume Quadlet 생성 결과 - HA Container Manager{% endblock %}
+{% block nav_volume %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+
+    {% if error %}
+    <div class="alert alert-danger">
+      <i class="bi bi-exclamation-triangle-fill"></i> <strong>오류:</strong> {{ error }}
+    </div>
+    <a href="/volume/" class="btn btn-secondary">← 다시 시도</a>
+
+    {% else %}
+
+    <div class="d-flex align-items-center mb-4">
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> Volume Quadlet 생성 완료</h2>
+      <a href="/volume/" class="btn btn-outline-secondary btn-sm ms-auto">
+        <i class="bi bi-arrow-left"></i> 볼륨 목록
+      </a>
+    </div>
+
+    {% for file in result.files %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-secondary text-white d-flex align-items-center">
+        <span class="fw-bold font-monospace"><i class="bi bi-file-earmark-code-fill"></i> {{ file.0 }}</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('file_{{ loop.index }}')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="file_{{ loop.index }}" class="code-editor" data-mode="shell">{{ file.1 }}</textarea>
+      </div>
+    </div>
+    {% endfor %}
+
+    <!-- Ansible Playbook -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-success text-white d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-play-fill"></i> deploy_volumes.yml</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansiblePlaybook')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="ansiblePlaybook" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
+      </div>
+      <div class="card-footer small text-muted">
+        실행: <code>ansible-playbook -i inventory.yml deploy_volumes.yml</code>
+      </div>
+    </div>
+
+    <!-- 사용 방법 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-dark text-white fw-bold">
+        <i class="bi bi-info-circle-fill"></i> 컨테이너에서 사용
+      </div>
+      <div class="card-body">
+        <p class="small text-muted mb-2">생성된 Named Volume을 컨테이너에서 다음과 같이 참조합니다:</p>
+        <div class="bg-dark text-light rounded p-3 font-monospace small">
+          {% for file in result.files %}
+          <div># {{ file.0 }} 사용 예시</div>
+          <div class="text-success">Volume={{ file.0 | replace(from=".volume", to="") }}.volume:/컨테이너/경로:Z</div>
+          {% if not loop.last %}<br>{% endif %}
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- 다음 단계 -->
+    <div class="alert alert-info d-flex align-items-center">
+      <i class="bi bi-arrow-right-circle-fill fs-4 me-3"></i>
+      <div>
+        <strong>다음 단계:</strong> Pod 설정 탭에서 컨테이너와 Volume을 연결하세요.
+        <a href="/quadlet/" class="btn btn-info btn-sm ms-2">Pod 설정 →</a>
+      </div>
+    </div>
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copyText(id) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.value || el.textContent).then(() => {
+    alert('클립보드에 복사되었습니다.');
+  });
+}
+</script>
+{% endblock %}

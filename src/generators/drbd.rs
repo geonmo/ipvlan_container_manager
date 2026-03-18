@@ -528,7 +528,7 @@ fn build_scanned_node(hostname: &str, lines: &[String]) -> ScannedDrbdNode {
         hostname: hostname.to_string(),
         ip,
         port,
-        disk: if disk_type == "block" { disk_str.clone() } else { String::new() },
+        disk: disk_str.clone(), // LVM도 원본 경로 보존 (JS lvscan 매칭용; 생성 시 effective_disk()가 재계산)
         meta,
         disk_type,
         lvm_vg,

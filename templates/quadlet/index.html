@@ -1,239 +1,279 @@
 {% extends "base.html" %}
-{% block title %}Quadlet 변환 - HA Container Manager{% endblock %}
+{% block title %}Pod 설정 - HA Container Manager{% endblock %}
 {% block nav_quadlet %}active{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-10">
-    <h2 class="fw-bold mb-1"><i class="bi bi-box-seam-fill text-success"></i> Quadlet 유닛 파일 생성</h2>
-    <p class="text-muted mb-4">Podman 컨테이너를 systemd Quadlet 유닛으로 변환합니다.</p>
+    <h2 class="fw-bold mb-1"><i class="bi bi-box-seam-fill text-success"></i> Pod 설정</h2>
+    <p class="text-muted mb-4">Podman Pod와 연결할 네트워크를 설정합니다. 컨테이너 설정은 <a href="/container/">컨테이너 설정</a> 페이지에서 합니다.</p>
 
-    <!-- 탭 -->
-    <ul class="nav nav-tabs mb-4" id="quadletTab">
-      <li class="nav-item">
-        <a class="nav-link active" data-bs-toggle="tab" href="#manualTab">
-          <i class="bi bi-pencil-fill"></i> 수동 입력
-        </a>
-      </li>
-      <li class="nav-item">
-        <a class="nav-link" data-bs-toggle="tab" href="#inspectTab">
-          <i class="bi bi-search"></i> podman inspect JSON
-        </a>
-      </li>
-    </ul>
+    <form action="/quadlet/generate" method="post" id="quadletForm">
+      <!-- 숨겨진 pod_networks_json 필드 -->
+      <input type="hidden" name="pod_networks_json" id="podNetworksJson" value="[]">
 
-    <div class="tab-content">
-
-      <!-- 수동 입력 탭 -->
-      <div class="tab-pane fade show active" id="manualTab">
-        <form action="/quadlet/generate" method="post" id="quadletForm">
-
-          <!-- IPVLAN 네트워크 - 풀에서 선택 또는 직접 입력 -->
-          <div class="card shadow-sm mb-4">
-            <div class="card-header bg-info text-white fw-bold d-flex align-items-center">
-              <span><i class="bi bi-diagram-3-fill"></i> IPVLAN 네트워크 설정</span>
-              <a href="/nodes/" target="_blank" class="btn btn-sm btn-light ms-auto">
-                <i class="bi bi-pencil-fill"></i> 네트워크 풀 편집
-              </a>
-            </div>
-            <div class="card-body">
-              <!-- 풀에서 불러오기 -->
-              <div class="mb-3" id="netPickerRow">
-                <label class="form-label fw-semibold small">네트워크 풀에서 선택</label>
-                <div class="d-flex gap-2 align-items-center">
-                  <select class="form-select form-select-sm w-auto" id="netPoolSelect">
-                    <option value="">-- 풀에서 선택 --</option>
-                  </select>
-                  <button type="button" class="btn btn-sm btn-outline-info" onclick="loadNetFromPool()">
-                    <i class="bi bi-arrow-down-circle"></i> 불러오기
-                  </button>
-                </div>
-              </div>
-              <div class="row g-3">
-                <div class="col-md-3">
-                  <label class="form-label fw-semibold">네트워크 이름</label>
-                  <input type="text" class="form-control" name="net_name" id="netName" placeholder="ipvlan0">
-                  <div class="form-text">생성: <code>&lt;name&gt;.network</code></div>
-                </div>
-                <div class="col-md-2">
-                  <label class="form-label fw-semibold">드라이버</label>
-                  <select class="form-select" name="net_driver" id="netDriver">
-                    <option value="ipvlan" selected>ipvlan</option>
-                    <option value="macvlan">macvlan</option>
-                    <option value="bridge">bridge</option>
-                  </select>
-                </div>
-                <div class="col-md-2">
-                  <label class="form-label fw-semibold">호스트 인터페이스</label>
-                  <input type="text" class="form-control" name="net_interface" id="netInterface" placeholder="eth0">
-                </div>
-                <div class="col-md-2">
-                  <label class="form-label fw-semibold">IPv4 서브넷</label>
-                  <input type="text" class="form-control" name="net_subnet" id="netSubnet" placeholder="192.168.1.0/24">
-                </div>
-                <div class="col-md-2">
-                  <label class="form-label fw-semibold">IPv4 게이트웨이</label>
-                  <input type="text" class="form-control" name="net_gateway" id="netGateway" placeholder="192.168.1.1">
-                </div>
-                <div class="col-md-1">
-                  <label class="form-label fw-semibold">IPVLAN 모드</label>
-                  <select class="form-select" name="net_ipvlan_mode" id="netIpvlanMode">
-                    <option value="l2" selected>l2</option>
-                    <option value="l3">l3</option>
-                    <option value="l3s">l3s</option>
-                  </select>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label fw-semibold text-success">IPv6 서브넷 <small class="fw-normal text-muted">(듀얼스택, 선택)</small></label>
-                  <input type="text" class="form-control" name="net_subnet6" id="netSubnet6" placeholder="2001:db8::/64">
-                </div>
-                <div class="col-md-2">
-                  <label class="form-label fw-semibold text-success">IPv6 게이트웨이</label>
-                  <input type="text" class="form-control" name="net_gateway6" id="netGateway6" placeholder="2001:db8::1">
-                </div>
-              </div>
+      <!-- Pod 이름 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-dark text-white fw-bold">
+          <i class="bi bi-collection-fill"></i> Pod 기본 설정
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Pod 이름</label>
+              <input type="text" class="form-control" name="pod_name" id="podName" placeholder="mypod">
+              <div class="form-text">생성: <code>&lt;name&gt;.pod</code></div>
             </div>
           </div>
-
-          <!-- Volume 설정 -->
-          <div class="card shadow-sm mb-4">
-            <div class="card-header bg-secondary text-white fw-bold">
-              <i class="bi bi-hdd-fill"></i> Volume 설정 (선택)
-            </div>
-            <div class="card-body">
-              <div class="row g-3">
-                <div class="col-md-4">
-                  <label class="form-label fw-semibold">볼륨 이름</label>
-                  <input type="text" class="form-control" name="vol_name" placeholder="data">
-                  <div class="form-text">생성: <code>&lt;name&gt;.volume</code></div>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label fw-semibold">드라이버</label>
-                  <input type="text" class="form-control" name="vol_driver" value="local">
-                </div>
-                <div class="col-md-5">
-                  <label class="form-label fw-semibold">옵션 (줄당 하나)</label>
-                  <textarea class="form-control" name="vol_options" rows="2"
-                            placeholder="type=nfs&#10;o=addr=192.168.1.100,rw"></textarea>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Pod 설정 -->
-          <div class="card shadow-sm mb-4">
-            <div class="card-header bg-dark text-white fw-bold">
-              <i class="bi bi-collection-fill"></i> Pod 설정 (선택)
-            </div>
-            <div class="card-body">
-              <div class="row g-3">
-                <div class="col-md-4">
-                  <label class="form-label fw-semibold">Pod 이름</label>
-                  <input type="text" class="form-control" name="pod_name" placeholder="mypod">
-                  <div class="form-text">생성: <code>&lt;name&gt;.pod</code></div>
-                </div>
-                <div class="col-md-4">
-                  <label class="form-label fw-semibold">네트워크 (위 네트워크 이름 참조)</label>
-                  <input type="text" class="form-control" name="pod_network" placeholder="ipvlan0">
-                </div>
-                <div class="col-md-4">
-                  <label class="form-label fw-semibold">포트 매핑 (줄당 하나)</label>
-                  <textarea class="form-control" name="pod_ports" rows="2"
-                            placeholder="8080:80&#10;8443:443"></textarea>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Container 설정 (JSON 에디터) -->
-          <div class="card shadow-sm mb-4">
-            <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
-              <span><i class="bi bi-boxes"></i> 컨테이너 설정 (JSON 배열)</span>
-              <button type="button" class="btn btn-sm btn-light ms-auto" onclick="loadContainerExample()">
-                <i class="bi bi-lightning-fill"></i> 예시
-              </button>
-            </div>
-            <div class="card-body p-0">
-              <textarea id="containersJson" name="containers_json" class="code-editor" data-mode="javascript"
-                        style="min-height:250px">[]</textarea>
-            </div>
-            <div class="card-footer small text-muted">
-              <code>podman inspect &lt;container&gt; | podman inspect</code> 출력을 붙여넣거나 직접 JSON 작성
-            </div>
-          </div>
-
-          <!-- Ansible 배포 - 노드 셔틀 -->
-          <div class="card shadow-sm mb-4">
-            <div class="card-header bg-warning text-dark fw-bold">
-              <i class="bi bi-send-fill"></i> Ansible 배포 설정
-            </div>
-            <div class="card-body">
-              <div class="row g-3 mb-3">
-                <div class="col-md-6">
-                  <label class="form-label fw-semibold">대상 노드 선택</label>
-                  <textarea name="ansible_hosts" id="quadletHosts" class="d-none"></textarea>
-                  <div class="row g-2">
-                    <div class="col-6">
-                      <div class="small text-muted mb-1">노드 풀 <a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i></a></div>
-                      <ul class="list-group" id="qPoolList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
-                    </div>
-                    <div class="col-auto d-flex flex-column justify-content-center gap-2">
-                      <button type="button" class="btn btn-outline-warning btn-sm" id="qPoolList_add"><i class="bi bi-arrow-right"></i></button>
-                    </div>
-                    <div class="col">
-                      <div class="small text-muted mb-1">선택됨</div>
-                      <ul class="list-group" id="qSelectedList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
-                    </div>
-                  </div>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label">SSH 사용자</label>
-                  <input type="text" class="form-control" name="ansible_user" value="root">
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label">SSH 개인키 경로</label>
-                  <input type="text" class="form-control" name="ansible_ssh_key" value="~/.ssh/id_rsa">
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <button type="submit" class="btn btn-success btn-lg">
-            <i class="bi bi-gear-fill"></i> Quadlet 유닛 파일 생성
-          </button>
-        </form>
+        </div>
       </div>
 
-      <!-- podman inspect 탭 -->
-      <div class="tab-pane fade" id="inspectTab">
-        <form action="/quadlet/from-inspect" method="post">
-          <div class="card shadow-sm mb-4">
-            <div class="card-header bg-dark text-white fw-bold">
-              <i class="bi bi-terminal-fill"></i> podman inspect 출력 붙여넣기
-            </div>
-            <div class="card-body">
-              <p class="text-muted small">
-                아래 명령으로 컨테이너 정보를 가져와 붙여넣으세요:
-                <code>podman inspect &lt;container_name&gt;</code>
-              </p>
-              <textarea name="inspect_json" class="code-editor" data-mode="javascript"
-                        style="min-height:300px" placeholder="[ { &quot;Id&quot;: ... } ]"></textarea>
-            </div>
+      <!-- 네트워크 목록 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-info text-white fw-bold d-flex align-items-center">
+          <span><i class="bi bi-diagram-3-fill"></i> Pod 네트워크 설정</span>
+          <a href="/nodes/" target="_blank" class="btn btn-sm btn-light ms-auto">
+            <i class="bi bi-pencil-fill"></i> 네트워크 풀 편집
+          </a>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">
+            네트워크 풀에서 선택하거나 직접 이름을 입력하세요. 각 네트워크에 고정 IP를 지정할 수 있습니다.
+          </p>
+
+          <!-- 네트워크 행 목록 -->
+          <div id="networkRows"></div>
+
+          <!-- 네트워크 추가 -->
+          <div class="d-flex gap-2 align-items-center mt-3">
+            <select class="form-select form-select-sm w-auto" id="netPoolSelect" style="min-width:200px">
+              <option value="">-- 풀에서 선택 --</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-outline-info" onclick="addNetworkFromPool()">
+              <i class="bi bi-arrow-down-circle"></i> 풀에서 추가
+            </button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addNetworkRow('', '')">
+              <i class="bi bi-plus-circle"></i> 직접 입력
+            </button>
           </div>
-          <button type="submit" class="btn btn-dark btn-lg">
-            <i class="bi bi-arrow-right-circle"></i> Quadlet 파일 생성
-          </button>
-        </form>
+        </div>
       </div>
 
-    </div>
+      <!-- nft 서비스 참조 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-danger text-white fw-bold d-flex align-items-center"
+             style="cursor:pointer" onclick="toggleNftRef()">
+          <span><i class="bi bi-shield-fill-check"></i> 방화벽 서비스 참조 (nftables)</span>
+          <small class="ms-2 fw-normal opacity-75">Pod에 적용할 nft 서비스를 확인합니다</small>
+          <i class="bi bi-chevron-down ms-auto" id="nftRefChevron"></i>
+        </div>
+        <div id="nftRefBody" class="d-none">
+          <div class="card-body">
+            <p class="text-muted small mb-3">
+              아래에서 이 Pod의 IP에 적용할 방화벽 서비스를 확인하고,
+              <a href="/nft/" target="_blank">nftables 규칙 생성</a>에서 설정하세요.
+            </p>
+            <div id="nftServiceList"><span class="text-muted small">로딩 중...</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 숨겨진 Ansible 인증 필드 (프로파일에서 자동 채워짐) -->
+      <input type="hidden" name="ansible_user" id="quadletAnsibleUser" value="root">
+      <input type="hidden" name="ansible_ssh_key" id="quadletAnsibleKey" value="~/.ssh/id_rsa">
+
+      <!-- Ansible 배포 - 노드 셔틀 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-warning text-dark fw-bold">
+          <i class="bi bi-send-fill"></i> Ansible 배포 설정
+        </div>
+        <div class="card-body">
+          <div class="row g-3 mb-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">대상 노드 선택</label>
+              <textarea name="ansible_hosts" id="quadletHosts" class="d-none"></textarea>
+              <div class="row g-2">
+                <div class="col-6">
+                  <div class="small text-muted mb-1">노드 풀 <a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i></a></div>
+                  <ul class="list-group" id="qPoolList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
+                </div>
+                <div class="col-auto d-flex flex-column justify-content-center gap-2">
+                  <button type="button" class="btn btn-outline-warning btn-sm" id="qPoolList_add"><i class="bi bi-arrow-right"></i></button>
+                </div>
+                <div class="col">
+                  <div class="small text-muted mb-1">선택됨</div>
+                  <ul class="list-group" id="qSelectedList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
+                </div>
+              </div>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">Ansible 프로파일</label>
+              <select class="form-select" id="quadletProfileSel">
+                <option value="">-- 선택 안 함 --</option>
+              </select>
+              <div class="form-text">
+                <a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i> 프로파일 관리</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-success btn-lg" onclick="serializePodNetworks(); syncProfileToForm()">
+        <i class="bi bi-gear-fill"></i> Pod 유닛 파일 생성
+      </button>
+    </form>
   </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-// ── Quadlet 노드 셔틀 ─────────────────────────────────────────
+// ── Pod 네트워크 관리 ──────────────────────────────────────────
+let podNetworks = []; // [{network, ip, ip6}]
+
+function renderNetworkRows() {
+  const container = document.getElementById('networkRows');
+  container.innerHTML = '';
+  podNetworks.forEach((entry, i) => {
+    const hasIp6 = !!(entry.ip6 && entry.ip6.trim());
+    const row = document.createElement('div');
+    row.className = 'border rounded p-2 mb-2 bg-light';
+    row.innerHTML = `
+      <div class="row g-2 align-items-center mb-1">
+        <div class="col-md-4">
+          <input type="text" class="form-control form-control-sm" placeholder="네트워크 이름 (예: ipvlan0)"
+                 value="${escHtmlQ(entry.network)}"
+                 oninput="podNetworks[${i}].network = this.value; syncNetworksJson()">
+        </div>
+        <div class="col-md-4">
+          <div class="input-group input-group-sm">
+            <span class="input-group-text text-muted small">IPv4</span>
+            <input type="text" class="form-control form-control-sm" placeholder="IPv4 주소 (필수)"
+                   value="${escHtmlQ(entry.ip || '')}"
+                   oninput="podNetworks[${i}].ip = this.value; syncNetworksJson(); autoDetectNetworkForEntry(${i}, this.value.trim())">
+          </div>
+          <div id="ipHint${i}" class="form-text"></div>
+        </div>
+        <div class="col-auto d-flex gap-1">
+          <button type="button" class="btn btn-sm ${hasIp6 ? 'btn-info' : 'btn-outline-secondary'}"
+                  title="IPv6 주소" onclick="toggleIp6Row(${i})">
+            <i class="bi bi-${hasIp6 ? 'dash' : 'plus'}-circle"></i> IPv6
+          </button>
+          <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeNetworkRow(${i})">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </div>
+      <div id="ip6Row${i}" class="${hasIp6 ? '' : 'd-none'} row g-2 align-items-center">
+        <div class="col-md-4 offset-md-4">
+          <div class="input-group input-group-sm">
+            <span class="input-group-text text-primary small">IPv6</span>
+            <input type="text" class="form-control form-control-sm" placeholder="IPv6 주소 (선택)"
+                   value="${escHtmlQ(entry.ip6 || '')}"
+                   oninput="podNetworks[${i}].ip6 = this.value; syncNetworksJson()">
+          </div>
+        </div>
+      </div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function toggleIp6Row(i) {
+  const hasIp6 = !!(podNetworks[i].ip6 && podNetworks[i].ip6.trim());
+  if (hasIp6) {
+    podNetworks[i].ip6 = '';
+    syncNetworksJson();
+    renderNetworkRows();
+  } else {
+    podNetworks[i].ip6 = podNetworks[i].ip6 || '';
+    renderNetworkRows();
+    const row = document.getElementById('ip6Row' + i);
+    if (row) {
+      row.classList.remove('d-none');
+      row.querySelector('input')?.focus();
+    }
+  }
+}
+
+function addNetworkRow(network, ip) {
+  podNetworks.push({ network: network || '', ip: ip || '', ip6: '' });
+  renderNetworkRows();
+  syncNetworksJson();
+}
+
+function removeNetworkRow(i) {
+  podNetworks.splice(i, 1);
+  renderNetworkRows();
+  syncNetworksJson();
+}
+
+function syncNetworksJson() {
+  document.getElementById('podNetworksJson').value = JSON.stringify(podNetworks);
+}
+
+function serializePodNetworks() {
+  syncNetworksJson();
+}
+
+// ── 네트워크 풀 ───────────────────────────────────────────────
+function initNetPool() {
+  const sel = document.getElementById('netPoolSelect');
+  sel.innerHTML = '<option value="">-- 풀에서 선택 --</option>';
+  getNetworkPool().forEach((n, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = `${n.name} (${n.driver}${n.subnet ? ', ' + n.subnet : ''})`;
+    sel.appendChild(opt);
+  });
+}
+
+function addNetworkFromPool() {
+  const idx = parseInt(document.getElementById('netPoolSelect').value);
+  if (isNaN(idx)) return;
+  const n = getNetworkPool()[idx];
+  if (!n) return;
+  addNetworkRow(n.name, '');
+}
+
+// ── IP → 네트워크 자동 감지 ───────────────────────────────────
+function ipInCidr(ip, cidr) {
+  try {
+    const [net, bits] = cidr.split('/');
+    const mask = bits ? ~((1 << (32 - parseInt(bits))) - 1) >>> 0 : 0xffffffff;
+    const ipInt  = ip.split('.').reduce((a, o) => (a << 8) | parseInt(o), 0) >>> 0;
+    const netInt = net.split('.').reduce((a, o) => (a << 8) | parseInt(o), 0) >>> 0;
+    return (ipInt & mask) === (netInt & mask);
+  } catch { return false; }
+}
+
+async function autoDetectNetworkForEntry(i, ip) {
+  const hint = document.getElementById('ipHint' + i);
+  if (!hint) return;
+  if (!ip || !ip.match(/^\d+\.\d+\.\d+\.\d+$/)) { hint.textContent = ''; return; }
+  try {
+    const networks = await fetch('/api/networks').then(r => r.json());
+    const match = networks.find(n => n.subnet && ipInCidr(ip, n.subnet));
+    if (match) {
+      hint.textContent = `네트워크 자동 감지: ${match.name} (${match.subnet})`;
+      hint.className = 'form-text text-success';
+      // 네트워크 이름이 비어있으면 자동 채우기
+      if (!podNetworks[i].network) {
+        podNetworks[i].network = match.name;
+        renderNetworkRows();
+        syncNetworksJson();
+      }
+    } else {
+      hint.textContent = '일치하는 네트워크를 찾을 수 없습니다.';
+      hint.className = 'form-text text-warning';
+    }
+  } catch(e) {
+    hint.textContent = '';
+  }
+}
+
+// ── 노드 셔틀 ─────────────────────────────────────────────────
 let qNodes = [];
 
 function qRebuildPool() {
@@ -270,38 +310,127 @@ function qSyncHosts() {
   document.getElementById('quadletHosts').value = qNodes.map(n => n.hostname).join('\n');
 }
 
-// ── 네트워크 풀 ───────────────────────────────────────────────
-function initNetPool() {
-  const sel = document.getElementById('netPoolSelect');
-  sel.innerHTML = '<option value="">-- 풀에서 선택 --</option>';
-  getNetworkPool().forEach((n, i) => {
+// ── nft 서비스 참조 패널 ──────────────────────────────────────
+let nftRefLoaded = false;
+
+function toggleNftRef() {
+  const body    = document.getElementById('nftRefBody');
+  const chevron = document.getElementById('nftRefChevron');
+  const hidden  = body.classList.toggle('d-none');
+  chevron.className = hidden ? 'bi bi-chevron-down ms-auto' : 'bi bi-chevron-up ms-auto';
+  if (!hidden && !nftRefLoaded) {
+    nftRefLoaded = true;
+    loadNftServices();
+  }
+}
+
+async function loadNftServices() {
+  const container = document.getElementById('nftServiceList');
+  try {
+    const resp = await fetch('/api/nft/services');
+    const services = await resp.json();
+    if (!services.length) {
+      container.innerHTML = '<span class="text-muted small">등록된 서비스가 없습니다. <a href="/nft/" target="_blank">nftables 방화벽</a>에서 추가하세요.</span>';
+      return;
+    }
+    container.innerHTML = `
+      <table class="table table-sm table-hover mb-0">
+        <thead class="table-light"><tr><th>이름</th><th>설명</th><th>TCP 포트</th><th>UDP 포트</th></tr></thead>
+        <tbody>${services.map(s => `
+          <tr>
+            <td><strong>${escHtmlQ(s.name)}</strong></td>
+            <td class="text-muted small">${escHtmlQ(s.description)}</td>
+            <td class="font-monospace small">${s.tcp_ports.map(p => `<span class="badge bg-primary">${escHtmlQ(p)}</span>`).join(' ') || '-'}</td>
+            <td class="font-monospace small">${s.udp_ports.map(p => `<span class="badge bg-secondary">${escHtmlQ(p)}</span>`).join(' ') || '-'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="mt-2"><a href="/nft/" target="_blank" class="btn btn-sm btn-outline-danger"><i class="bi bi-shield-fill-check"></i> nftables 방화벽 관리</a></div>
+    `;
+  } catch(e) {
+    container.innerHTML = '<span class="text-danger small">서비스 로딩 실패: ' + e.message + '</span>';
+  }
+}
+
+function escHtmlQ(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── 프로파일 셀렉터 ───────────────────────────────────────────
+function initProfileSel() {
+  const sel = document.getElementById('quadletProfileSel');
+  if (!sel) return;
+  const profiles = getProfilePool();
+  const active   = getActiveProfileName();
+  sel.innerHTML  = '<option value="">-- 선택 안 함 --</option>';
+  profiles.forEach(p => {
     const opt = document.createElement('option');
-    opt.value = i;
-    opt.textContent = `${n.name} (${n.driver}, ${n.interface})`;
+    opt.value = p.name;
+    opt.textContent = p.name;
+    opt.dataset.profile = JSON.stringify(p);
+    if (p.name === active) opt.selected = true;
     sel.appendChild(opt);
   });
 }
 
-function loadNetFromPool() {
-  const idx = parseInt(document.getElementById('netPoolSelect').value);
-  if (isNaN(idx)) return;
-  const n = getNetworkPool()[idx];
-  if (!n) return;
-  document.getElementById('netName').value        = n.name        || '';
-  document.getElementById('netInterface').value   = n.interface   || '';
-  document.getElementById('netSubnet').value      = n.subnet      || '';
-  document.getElementById('netGateway').value     = n.gateway     || '';
-  document.getElementById('netSubnet6').value     = n.subnet6     || '';
-  document.getElementById('netGateway6').value    = n.gateway6    || '';
-  const drv = document.getElementById('netDriver');
-  const mod = document.getElementById('netIpvlanMode');
-  for (let o of drv.options) if (o.value === n.driver) { drv.value = n.driver; break; }
-  for (let o of mod.options) if (o.value === n.ipvlan_mode) { mod.value = n.ipvlan_mode; break; }
+function syncProfileToForm() {
+  const sel = document.getElementById('quadletProfileSel');
+  if (!sel) return;
+  const opt = sel.selectedOptions[0];
+  if (opt && opt.dataset.profile) {
+    const p = JSON.parse(opt.dataset.profile);
+    document.getElementById('quadletAnsibleUser').value = p.ssh_user || 'root';
+    document.getElementById('quadletAnsibleKey').value  = p.ssh_key  || '~/.ssh/id_rsa';
+    setActiveProfileName(p.name);
+  }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  qRebuildPool();
+// ── 초기화 ────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  // localStorage 복원
+  try {
+    const saved = localStorage.getItem('quadlet_pod_networks');
+    if (saved) podNetworks = JSON.parse(saved);
+  } catch {}
+  try {
+    const savedName = localStorage.getItem('quadlet_pod_name');
+    if (savedName) document.getElementById('podName').value = savedName;
+  } catch {}
+
+  // localStorage에 pod 데이터가 없으면 서버 스캔 결과로 복원
+  if (podNetworks.length === 0 && !document.getElementById('podName').value) {
+    try {
+      const pods = await fetch('/api/quadlet-pods').then(r => r.json());
+      if (pods.length > 0) {
+        const pod = pods[0]; // 첫 번째 pod 자동 선택
+        document.getElementById('podName').value = pod.name;
+        podNetworks = pod.networks.map(n => ({
+          network: n.network || '',
+          ip: n.ip || '',
+          ip6: n.ip6 || '',
+        }));
+      }
+    } catch (_) {}
+  }
+
+  renderNetworkRows();
+  syncNetworksJson();
   initNetPool();
+  initProfileSel();
+  qRebuildPool();
+
+  // localStorage 저장
+  document.getElementById('quadletForm').addEventListener('submit', () => {
+    try {
+      localStorage.setItem('quadlet_pod_networks', JSON.stringify(podNetworks));
+      localStorage.setItem('quadlet_pod_name', document.getElementById('podName').value);
+    } catch {}
+  });
+
+  document.getElementById('podName').addEventListener('input', e => {
+    try { localStorage.setItem('quadlet_pod_name', e.target.value); } catch {}
+  });
+
   document.getElementById('qPoolList_add').addEventListener('click', () => {
     document.querySelectorAll('#qPoolList li.active').forEach(li => {
       qNodes.push({ hostname: li.dataset.hostname });
@@ -309,34 +438,5 @@ document.addEventListener('DOMContentLoaded', () => {
     qRenderSelected(); qRebuildPool();
   });
 });
-
-function loadContainerExample() {
-  const example = JSON.stringify([
-    {
-      "Name": "myapp",
-      "ImageName": "registry.example.com/myapp:latest",
-      "Config": {
-        "Image": "registry.example.com/myapp:latest",
-        "Env": ["APP_ENV=production", "DB_HOST=db.ha.local"]
-      },
-      "Mounts": [
-        {"Source": "data", "Destination": "/var/data", "Mode": "rw"}
-      ],
-      "NetworkSettings": {
-        "Ports": {"8080/tcp": [{"HostPort": "8080"}]},
-        "Networks": {
-          "ipvlan0": {"IPAddress": "192.168.1.100"}
-        }
-      }
-    }
-  ], null, 2);
-
-  const editor = document.getElementById('containersJson');
-  if (editor._cmEditor) {
-    editor._cmEditor.setValue(example);
-  } else {
-    editor.value = example;
-  }
-}
 </script>
 {% endblock %}

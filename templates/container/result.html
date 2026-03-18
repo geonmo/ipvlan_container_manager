@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Quadlet 생성 결과 - HA Container Manager{% endblock %}
-{% block nav_quadlet %}active{% endblock %}
+{% block title %}컨테이너 생성 결과 - HA Container Manager{% endblock %}
+{% block nav_container %}active{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
@@ -9,11 +9,11 @@
     <div class="alert alert-danger">
       <i class="bi bi-exclamation-triangle-fill"></i> <strong>오류:</strong> {{ error }}
     </div>
-    <a href="/quadlet/" class="btn btn-secondary">← 다시 시도</a>
+    <a href="/container/" class="btn btn-secondary">← 다시 시도</a>
     {% else %}
     <div class="d-flex align-items-center mb-4">
-      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> Quadlet 유닛 파일 생성 완료</h2>
-      <a href="/quadlet/" class="btn btn-outline-secondary btn-sm ms-auto">
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> 컨테이너 유닛 파일 생성 완료</h2>
+      <a href="/container/" class="btn btn-outline-secondary btn-sm ms-auto">
         <i class="bi bi-arrow-left"></i> 다시 설정
       </a>
     </div>
@@ -50,23 +50,23 @@
       <div class="card-header bg-warning text-dark d-flex align-items-center">
         <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> inventory.yml (Ansible)</span>
         <div class="ms-auto d-flex align-items-center gap-2">
-          <select id="quadletProfileSel" class="form-select form-select-sm" style="min-width:160px">
+          <select id="containerProfileSel" class="form-select form-select-sm" style="min-width:160px">
             <option value="">-- 프로파일 선택 --</option>
           </select>
-          <button class="btn btn-sm btn-dark" onclick="copyText('quadletInventory')">
+          <button class="btn btn-sm btn-dark" onclick="copyText('containerInventory')">
             <i class="bi bi-clipboard"></i> 복사
           </button>
         </div>
       </div>
       <div class="card-body p-0">
-        <textarea id="quadletInventory" class="code-editor" data-mode="yaml"># 프로파일을 선택하면 노드 풀의 노드 목록으로 인벤토리가 생성됩니다.</textarea>
+        <textarea id="containerInventory" class="code-editor" data-mode="yaml"># 프로파일을 선택하면 노드 풀의 노드 목록으로 인벤토리가 생성됩니다.</textarea>
       </div>
     </div>
 
     <!-- Ansible Playbook -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-success text-white d-flex align-items-center">
-        <span class="fw-bold"><i class="bi bi-file-earmark-play-fill"></i> deploy_quadlet.yml (Ansible Playbook)</span>
+        <span class="fw-bold"><i class="bi bi-file-earmark-play-fill"></i> deploy_containers.yml (Ansible Playbook)</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansiblePlaybook')">
           <i class="bi bi-clipboard"></i> 복사
         </button>
@@ -75,7 +75,7 @@
         <textarea id="ansiblePlaybook" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
       </div>
       <div class="card-footer small text-muted">
-        실행: <code>ansible-playbook -i inventory.yml deploy_quadlet.yml</code>
+        실행: <code>ansible-playbook -i inventory.yml deploy_containers.yml</code>
       </div>
     </div>
 
@@ -125,11 +125,11 @@ function copyContent(btn) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  loadProfileSelector('quadletProfileSel', async (profile) => {
+  loadProfileSelector('containerProfileSel', async (profile) => {
     if (!profile) return;
     const nodes = await fetch('/api/nodes').then(r => r.json()).catch(() => []);
     const yaml = buildInventoryYaml(nodes, profile);
-    const ta = document.getElementById('quadletInventory');
+    const ta = document.getElementById('containerInventory');
     if (ta._cmEditor) ta._cmEditor.setValue(yaml);
     else ta.value = yaml;
   });

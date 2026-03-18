@@ -9,7 +9,11 @@ use std::sync::{Arc, Mutex};
 use rusqlite::Connection;
 use tracing::{info, warn, debug};
 
-use crate::db::{DbNode, DbNetwork, upsert_node, upsert_network};
+use crate::db::{
+    DbNode, DbNetwork, DbNodeInterface, DbVolume,
+    upsert_node, upsert_network, update_network_interface,
+    list_node_interfaces, list_networks, insert_volume_if_not_exists,
+};
 
 // ─── DRBD .res 파일 파서 ──────────────────────────────────────────────────
 
@@ -103,6 +107,68 @@ fn parse_res_for_nodes(content: &str, nodes: &mut std::collections::HashMap<Stri
             }
         }
     }
+}
+
+// ─── DRBD .res 리소스 + 디스크 정보 파서 ─────────────────────────────────
+
+/// .res 파일 하나의 요약 정보
+pub struct DrbdResInfo {
+    pub name:      String, // resource <name>
+    pub disk_path: String, // disk 라인에서 추출 (예: /dev/vg_data/lv_data)
+}
+
+/// /etc/drbd.d/ 의 .res 파일을 스캔하여 리소스 이름 + 디스크 경로를 반환합니다.
+/// 각 노드의 LVM 볼륨 이름/크기는 동일하다고 가정하므로 첫 번째 `disk` 라인만 사용합니다.
+pub fn scan_drbd_resources(drbd_dir: &str) -> Vec<DrbdResInfo> {
+    let dir = Path::new(drbd_dir);
+    if !dir.exists() {
+        return vec![];
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e)  => e,
+        Err(e) => { warn!("DRBD 디렉토리 읽기 실패: {}", e); return vec![]; }
+    };
+    let mut resources = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("res") { continue; }
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c)  => c,
+            Err(e) => { warn!("파일 읽기 실패 {:?}: {}", path, e); continue; }
+        };
+        if let Some(info) = parse_res_for_resource(&stem, &content) {
+            resources.push(info);
+        }
+    }
+    info!("DRBD 리소스 스캔 완료: {}개 (디스크 정보 있음)", resources.len());
+    resources
+}
+
+fn parse_res_for_resource(stem: &str, content: &str) -> Option<DrbdResInfo> {
+    let mut res_name  = stem.to_string();
+    let mut disk_path = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // resource <name> {
+        if let Some(rest) = trimmed.strip_prefix("resource ") {
+            let name = rest.trim_end_matches('{').trim().to_string();
+            if !name.is_empty() { res_name = name; }
+        }
+        // disk /dev/vg/lv;  — 첫 번째 등장만 사용 (모든 노드에서 동일하다고 가정)
+        if disk_path.is_empty() {
+            if let Some(rest) = trimmed.strip_prefix("disk ") {
+                let p = rest.trim_end_matches(';').trim().to_string();
+                if !p.is_empty() && p != "none" {
+                    disk_path = p;
+                }
+            }
+        }
+    }
+
+    if disk_path.is_empty() { return None; }
+    Some(DrbdResInfo { name: res_name, disk_path })
 }
 
 // ─── Quadlet .network 파일 파서 ───────────────────────────────────────────
@@ -202,6 +268,80 @@ fn parse_network_file(name: &str, content: &str) -> Option<DbNetwork> {
         source: "scanned".to_string(),
         created_at: String::new(),
     })
+}
+
+// ─── Quadlet .pod 파일 파서 ───────────────────────────────────────────────
+
+use crate::models::quadlet::PodNetworkEntry;
+
+/// 스캔된 Pod 정보
+#[derive(Debug, serde::Serialize)]
+pub struct ScannedPodInfo {
+    pub name:     String,
+    pub networks: Vec<PodNetworkEntry>,
+}
+
+/// /etc/containers/systemd/*.pod 파일을 스캔해서 Pod + 네트워크 설정을 반환합니다.
+pub fn scan_quadlet_pods(quadlet_dir: &str) -> Vec<ScannedPodInfo> {
+    let dir = Path::new(quadlet_dir);
+    if !dir.exists() {
+        return vec![];
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e)  => e,
+        Err(e) => { warn!("Quadlet 디렉토리 읽기 실패: {}", e); return vec![]; }
+    };
+    let mut pods = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("pod") { continue; }
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c)  => c,
+            Err(e) => { warn!("파일 읽기 실패 {:?}: {}", path, e); continue; }
+        };
+        pods.push(parse_pod_file(&stem, &content));
+    }
+    info!("Quadlet Pod 스캔 완료: {}개", pods.len());
+    pods
+}
+
+fn parse_pod_file(stem: &str, content: &str) -> ScannedPodInfo {
+    let mut name = stem.to_string();
+    let mut networks: Vec<PodNetworkEntry> = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(v) = trimmed.strip_prefix("PodName=") {
+            name = v.trim().to_string();
+        } else if let Some(v) = trimmed.strip_prefix("Network=") {
+            // e.g. "ipvlan0.network:ip=192.168.1.10:ip6=2001::1"
+            let entry = parse_network_param(v.trim());
+            networks.push(entry);
+        }
+    }
+
+    ScannedPodInfo { name, networks }
+}
+
+/// "netname.network:ip=X:ip6=Y" → PodNetworkEntry
+fn parse_network_param(param: &str) -> PodNetworkEntry {
+    let mut parts = param.splitn(2, ':');
+    let net_part = parts.next().unwrap_or("").trim_end_matches(".network").to_string();
+    let rest = parts.next().unwrap_or("");
+
+    let mut ip: Option<String>  = None;
+    let mut ip6: Option<String> = None;
+
+    for kv in rest.split(':') {
+        if let Some(v) = kv.strip_prefix("ip=") {
+            ip = Some(v.to_string());
+        } else if let Some(v) = kv.strip_prefix("ip6=") {
+            ip6 = Some(v.to_string());
+        }
+    }
+
+    PodNetworkEntry { network: net_part, ip, ip6 }
 }
 
 // ─── Pacemaker 노드 스캔 ──────────────────────────────────────────────────
@@ -345,6 +485,7 @@ pub struct ScanConfig {
     pub pcsd_url:    String,
     pub pcsd_user:   String,
     pub pcsd_pass:   String,
+    pub temp_dir:    String,
 }
 
 /// 서버 시작 시 모든 스캔을 수행하고 DB에 저장합니다.
@@ -360,6 +501,25 @@ pub async fn startup_scan(config: ScanConfig, db: Arc<Mutex<Connection>>) {
             if upsert_node(&conn, node).is_ok() { count += 1; }
         }
         info!("DRBD 노드 {}개 DB 저장 완료", count);
+    }
+
+    // 1b. DRBD 리소스 → Volume 자동 등록 (이미 등록된 경우 건너뜀)
+    let drbd_resources = scan_drbd_resources(&config.drbd_dir);
+    {
+        let conn = db.lock().unwrap();
+        let mut count = 0;
+        for res in &drbd_resources {
+            let vol = DbVolume {
+                id:            0,
+                name:          res.name.clone(),
+                host_path:     format!("/mnt/drbd/{}", res.name),
+                description:   res.disk_path.clone(),
+                drbd_resource: res.name.clone(),
+                created_at:    String::new(),
+            };
+            if insert_volume_if_not_exists(&conn, &vol).is_ok() { count += 1; }
+        }
+        info!("DRBD 볼륨 {}개 DB 등록 완료 (신규)", count);
     }
 
     // 2. Quadlet 네트워크 스캔
@@ -390,4 +550,126 @@ pub async fn startup_scan(config: ScanConfig, db: Arc<Mutex<Connection>>) {
     }
 
     info!("시스템 스캔 완료");
+
+    // 4. node_interfaces → networks 인터페이스 자동매칭
+    auto_match_network_interfaces(&db.lock().unwrap());
+
+    // 5. nft 파일 스캔
+    let nft_file = {
+        let conn = db.lock().unwrap();
+        match crate::db::get_nft_global_config(&conn) {
+            Ok(cfg) => cfg.nft_file,
+            Err(_)  => "/etc/nftables/ipvlan_l2.nft".to_string(),
+        }
+    };
+    match crate::nft_scanner::ensure_and_scan(&config.temp_dir, &nft_file, &db, None).await {
+        Ok(result) => info!("nft 스캔: {}", result.message),
+        Err(e)     => warn!("nft 스캔 실패: {}", e),
+    }
+}
+
+// ─── IP 서브넷 매칭 ────────────────────────────────────────────────────────
+
+fn ip4_in_subnet(ip: &str, subnet: &str) -> bool {
+    let (net_s, prefix_s) = match subnet.split_once('/') {
+        Some(v) => v,
+        None    => return false,
+    };
+    let prefix: u32 = match prefix_s.parse() {
+        Ok(v)  => v,
+        Err(_) => return false,
+    };
+    let a: u32 = match net_s.parse::<std::net::Ipv4Addr>() {
+        Ok(ip) => ip.into(),
+        Err(_) => return false,
+    };
+    let b: u32 = match ip.parse::<std::net::Ipv4Addr>() {
+        Ok(ip) => ip.into(),
+        Err(_) => return false,
+    };
+    if prefix == 0 { return true; }
+    let mask = u32::MAX.checked_shl(32 - prefix).unwrap_or(0);
+    (a & mask) == (b & mask)
+}
+
+fn ip6_in_subnet(ip: &str, subnet: &str) -> bool {
+    let (net_s, prefix_s) = match subnet.split_once('/') {
+        Some(v) => v,
+        None    => return false,
+    };
+    let prefix: u32 = match prefix_s.parse() {
+        Ok(v)  => v,
+        Err(_) => return false,
+    };
+    let a: u128 = match net_s.parse::<std::net::Ipv6Addr>() {
+        Ok(ip) => ip.into(),
+        Err(_) => return false,
+    };
+    let b: u128 = match ip.parse::<std::net::Ipv6Addr>() {
+        Ok(ip) => ip.into(),
+        Err(_) => return false,
+    };
+    if prefix == 0 { return true; }
+    let mask = u128::MAX.checked_shl(128 - prefix).unwrap_or(0);
+    (a & mask) == (b & mask)
+}
+
+/// node_interfaces 테이블에서 IP를 읽어 networks 테이블의 interface 필드를 자동 갱신.
+/// 반환값: 갱신된 네트워크 수
+pub fn auto_match_network_interfaces(conn: &Connection) -> usize {
+    let interfaces = match list_node_interfaces(conn) {
+        Ok(v) => v,
+        Err(e) => { warn!("node_interfaces 로드 실패: {}", e); return 0; }
+    };
+    if interfaces.is_empty() { return 0; }
+
+    let networks = match list_networks(conn) {
+        Ok(v) => v,
+        Err(e) => { warn!("networks 로드 실패: {}", e); return 0; }
+    };
+
+    let mut matched = 0usize;
+    for net in &networks {
+        let found = find_interface_for_network(&interfaces, net);
+        if let Some(iface) = found {
+            if iface != net.interface {
+                if update_network_interface(conn, &net.name, &iface).is_ok() {
+                    info!("네트워크 '{}' 인터페이스 자동매칭: {}", net.name, iface);
+                    matched += 1;
+                }
+            }
+        }
+    }
+    matched
+}
+
+/// interfaces 목록에서 net의 서브넷에 속하는 IP를 가진 인터페이스를 반환.
+/// 여러 노드에서 다른 인터페이스 이름이 나오면 경고 후 첫 번째 반환.
+fn find_interface_for_network(interfaces: &[DbNodeInterface], net: &DbNetwork) -> Option<String> {
+    let mut candidates: Vec<&str> = Vec::new();
+
+    for iface in interfaces {
+        let matched = if iface.family == "inet" && !net.subnet.is_empty() {
+            ip4_in_subnet(&iface.ip, &net.subnet)
+        } else if iface.family == "inet6" && !net.subnet6.is_empty() {
+            ip6_in_subnet(&iface.ip, &net.subnet6)
+        } else {
+            false
+        };
+        if matched {
+            candidates.push(&iface.interface);
+        }
+    }
+
+    if candidates.is_empty() { return None; }
+
+    // 모든 후보가 같은 이름인지 확인
+    let first = candidates[0];
+    if candidates.iter().any(|&c| c != first) {
+        warn!(
+            "네트워크 '{}': 노드마다 인터페이스 이름이 다릅니다 ({:?}) — 첫 번째 사용",
+            net.name, candidates
+        );
+    }
+    Some(first.to_string())
 }

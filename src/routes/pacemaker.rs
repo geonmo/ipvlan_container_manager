@@ -1,7 +1,8 @@
 use axum::{
     extract::State,
-    response::Html,
-    Form,
+    http::StatusCode,
+    response::{Html, IntoResponse},
+    Form, Json,
 };
 use serde::{Deserialize, Serialize};
 use tera::Context;
@@ -278,4 +279,141 @@ fn generate_pacemaker_ansible_playbook(
             .and_then(|n| n.get("hostname").and_then(|h| h.as_str()).map(|s| s.to_string()))
             .unwrap_or_else(|| "localhost".to_string()),
     )
+}
+
+// ── pcsd REST API 동기화 ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct PcsdFetchRequest {
+    pub pcsd_url:  String,
+    pub pcsd_user: String,
+    pub pcsd_pass: String,
+}
+
+pub async fn api_pcsd_fetch(
+    Json(req): Json<PcsdFetchRequest>,
+) -> impl IntoResponse {
+    if req.pcsd_pass.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "ok": false, "message": "비밀번호가 필요합니다" })),
+        ).into_response();
+    }
+    match pcsd_fetch_cluster_info(&req.pcsd_url, &req.pcsd_user, &req.pcsd_pass).await {
+        Ok(data) => Json(serde_json::json!({ "ok": true, "data": data })).into_response(),
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "ok": false, "message": e.to_string() })),
+        ).into_response(),
+    }
+}
+
+async fn pcsd_fetch_cluster_info(
+    url: &str,
+    user: &str,
+    pass: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
+    let base = url.trim_end_matches('/');
+
+    // 1. 로그인 → 토큰 획득
+    let login_resp = client
+        .post(&format!("{}/api/v1/auth/login", base))
+        .json(&serde_json::json!({"username": user, "password": pass}))
+        .send()
+        .await?;
+
+    if !login_resp.status().is_success() {
+        return Err(anyhow::anyhow!("pcsd 로그인 실패: HTTP {}", login_resp.status()));
+    }
+
+    let login_data: serde_json::Value = login_resp.json().await?;
+    let token = login_data["token"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("pcsd 응답에서 토큰을 찾을 수 없습니다"))?
+        .to_string();
+
+    // 2. 클러스터 상태 조회
+    let status_resp = client
+        .get(&format!("{}/api/v1/cluster/status", base))
+        .bearer_auth(&token)
+        .send()
+        .await?;
+
+    if !status_resp.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "클러스터 상태 조회 실패: HTTP {}",
+            status_resp.status()
+        ));
+    }
+
+    let status: serde_json::Value = status_resp.json().await?;
+
+    // 클러스터 이름 및 노드 추출
+    let cluster_name = status["cluster_settings"]["cluster_name"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    let nodes: Vec<serde_json::Value> = status["cluster_settings"]["nodes"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|n| {
+                    let name = n["name"].as_str()?;
+                    let addr = n["addr"].as_str().unwrap_or("");
+                    Some(serde_json::json!({ "name": name, "addr": addr }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // 리소스 정보 추출 (pcsd 버전에 따라 경로가 다를 수 있음)
+    let resources = pcsd_find_resources(&status);
+
+    // 제약조건 추출
+    let constraints = pcsd_find_constraints(&status);
+
+    Ok(serde_json::json!({
+        "cluster_name": cluster_name,
+        "nodes": nodes,
+        "resources": resources,
+        "constraints": constraints,
+        "raw_status": status,
+    }))
+}
+
+/// 클러스터 상태 JSON 에서 리소스 배열을 찾아 반환 (경로 여러 곳 시도)
+fn pcsd_find_resources(v: &serde_json::Value) -> serde_json::Value {
+    // pcs 0.11+ / pcsd v2 — pacemaker.resources
+    if let Some(r) = v.pointer("/pacemaker/resources") {
+        if !r.is_null() { return r.clone(); }
+    }
+    // 일부 버전 — resources 최상위
+    if let Some(r) = v.get("resources") {
+        if !r.is_null() { return r.clone(); }
+    }
+    // cluster_info.resources
+    if let Some(r) = v.pointer("/cluster_info/resources") {
+        if !r.is_null() { return r.clone(); }
+    }
+    serde_json::Value::Null
+}
+
+/// 클러스터 상태 JSON 에서 제약조건 오브젝트를 찾아 반환
+fn pcsd_find_constraints(v: &serde_json::Value) -> serde_json::Value {
+    if let Some(c) = v.pointer("/pacemaker/constraints") {
+        if !c.is_null() { return c.clone(); }
+    }
+    if let Some(c) = v.get("constraints") {
+        if !c.is_null() { return c.clone(); }
+    }
+    if let Some(c) = v.pointer("/cluster_info/constraints") {
+        if !c.is_null() { return c.clone(); }
+    }
+    serde_json::Value::Null
 }

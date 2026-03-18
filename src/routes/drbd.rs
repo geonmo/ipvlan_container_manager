@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, State},
-    response::{Html, Json},
+    response::{Html, IntoResponse, Json},
+    http::StatusCode,
     Form,
 };
 use serde::{Deserialize, Serialize};
@@ -498,6 +499,102 @@ fn build_resource(form: &DrbdFormData, nodes: Vec<DrbdNode>) -> DrbdResource {
             degr_wfc_timeout:  form.degr_wfc_timeout,
             become_primary_on: form.become_primary_on.clone().unwrap_or_default(),
         },
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/lvscan  — 로컬 서버 LV 목록 반환
+// ─────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct LvEntry {
+    pub path:   String,
+    pub vg:     String,
+    pub lv:     String,
+    pub size:   String,
+    pub active: bool,
+}
+
+/// lvscan 출력 예시:
+///   ACTIVE            '/dev/vg_data/lv_drbd' [10.00 GiB] inherit
+///   inactive          '/dev/rhel/root' [50.00 GiB] inherit
+fn parse_lvscan(output: &str) -> Vec<LvEntry> {
+    let mut entries = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() { continue; }
+
+        // 첫 번째 단어가 상태
+        let mut parts = trimmed.splitn(2, ' ');
+        let state_word = parts.next().unwrap_or("").to_ascii_uppercase();
+        let active = state_word == "ACTIVE";
+        let rest = parts.next().unwrap_or("").trim();
+
+        // 경로: ' /dev/VG/LV '
+        let path = if let Some(start) = rest.find('\'') {
+            let after = &rest[start + 1..];
+            if let Some(end) = after.find('\'') {
+                after[..end].to_string()
+            } else { continue; }
+        } else { continue; };
+
+        // /dev/<VG>/<LV>
+        let segs: Vec<&str> = path.trim_start_matches('/').splitn(3, '/').collect();
+        if segs.len() < 3 || segs[0] != "dev" { continue; }
+        let vg = segs[1].to_string();
+        let lv = segs[2].to_string();
+
+        // 크기: [ X.XX GiB ]
+        let size = if let Some(lb) = rest.find('[') {
+            let after = &rest[lb + 1..];
+            if let Some(rb) = after.find(']') {
+                after[..rb].trim().to_string()
+            } else { String::new() }
+        } else { String::new() };
+
+        entries.push(LvEntry { path, vg, lv, size, active });
+    }
+    entries
+}
+
+pub async fn api_lvscan() -> impl IntoResponse {
+    // lvscan 실행 (없으면 lvs --noheadings -o lv_path,vg_name,lv_name,lv_size 로 폴백)
+    let output = std::process::Command::new("lvscan")
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let entries = parse_lvscan(&stdout);
+            Json(serde_json::json!({ "ok": true, "entries": entries })).into_response()
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+            // lvscan 실패 시 lvs 로 폴백
+            let lvs = std::process::Command::new("lvs")
+                .args(["--noheadings", "--units", "g", "-o", "lv_path,vg_name,lv_name,lv_size"])
+                .output();
+            match lvs {
+                Ok(lo) if lo.status.success() => {
+                    // lvs 출력: "  /dev/vg/lv  vg  lv  10.00g"
+                    let mut entries = Vec::new();
+                    for line in String::from_utf8_lossy(&lo.stdout).lines() {
+                        let cols: Vec<&str> = line.split_whitespace().collect();
+                        if cols.len() < 4 { continue; }
+                        let path = cols[0].to_string();
+                        let vg   = cols[1].to_string();
+                        let lv   = cols[2].to_string();
+                        let size = cols[3].to_uppercase().replace('G', " GiB");
+                        entries.push(LvEntry { path, vg, lv, size, active: true });
+                    }
+                    Json(serde_json::json!({ "ok": true, "entries": entries })).into_response()
+                }
+                _ => (StatusCode::INTERNAL_SERVER_ERROR,
+                      Json(serde_json::json!({ "ok": false, "error": stderr }))).into_response(),
+            }
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR,
+                   Json(serde_json::json!({ "ok": false, "error": e.to_string() }))).into_response(),
     }
 }
 

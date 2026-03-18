@@ -24,12 +24,19 @@ pub struct QuadletNetwork {
     pub options: Vec<String>,
 }
 
+/// Pod에 연결할 네트워크 엔트리 (복수 네트워크 지원)
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PodNetworkEntry {
+    pub network: String,
+    pub ip: Option<String>,    // IPv4 주소 (필수)
+    pub ip6: Option<String>,   // IPv6 주소 (선택)
+}
+
 /// Quadlet Pod 유닛
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QuadletPod {
     pub name: String,        // e.g. "mypod"  → mypod.pod
-    pub publish_ports: Vec<String>,
-    pub network: Option<String>,
+    pub networks: Vec<PodNetworkEntry>,  // 복수 네트워크 지원
     pub labels: Vec<String>,
 }
 

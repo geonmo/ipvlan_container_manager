@@ -225,6 +225,7 @@
     </form>
   </div>
 </div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -239,6 +240,7 @@ let nodes = [];
 
 // ── 스캔 상태 ─────────────────────────────────────────────────
 let scanData = { resources: [], next_minor: 0, next_port: 7789 };
+let lvEntries = []; // /api/lvscan 결과 캐시
 
 // ── 셔틀: 풀 → 선택 ──────────────────────────────────────────
 function rebuildPoolList() {
@@ -270,8 +272,7 @@ function renderSelectedNodes() {
     li.innerHTML = `
       <div class="d-flex align-items-center mb-1">
         <span class="fw-semibold me-2">${esc(node.hostname)}</span>
-        <small class="text-muted me-2">${esc(node.ip)}</small>
-        ${i===0?'<span class="badge bg-warning text-dark me-auto">Primary 후보</span>':'<span class="me-auto"></span>'}
+        <small class="text-muted me-auto">${esc(node.ip)}</small>
         <button type="button" class="btn btn-sm btn-outline-danger shuttle-remove ms-1" title="제거">
           <i class="bi bi-arrow-left"></i>
         </button>
@@ -294,10 +295,12 @@ function renderSelectedNodes() {
         ${isLvm ? `
         <div class="col-4">
           <input class="form-control form-control-sm" placeholder="VG 이름"
+            id="lvm_vg_${i}"
             value="${esc(node.lvm_vg)}" oninput="setNodeField(${i},'lvm_vg',this.value)">
         </div>
         <div class="col-4">
           <input class="form-control form-control-sm" placeholder="LV 크기 (10G)"
+            id="lvm_size_${i}"
             value="${esc(node.lvm_size)}" oninput="setNodeField(${i},'lvm_size',this.value)">
         </div>
         <div class="col-4">
@@ -422,14 +425,46 @@ function loadFormFromStorage() {
 
 window.addEventListener('beforeunload', saveFormToStorage);
 
+// ── lvscan 자동 채우기 ────────────────────────────────────────
+// 각 노드의 lvm_size가 비어있을 때 lvEntries에서 매칭해서 채운다.
+// 매칭 순서: 1) 원본 disk 경로 일치, 2) VG 이름 일치
+function autoFillLvmSizes(nodeArr) {
+  if (!lvEntries.length) return;
+  nodeArr.forEach(node => {
+    if (node.disk_type !== 'lvm') return;
+    if (node.lvm_size) return; // 이미 값 있으면 건드리지 않음
+    // 1) 정확한 경로 매칭
+    let match = lvEntries.find(e => e.path === node.disk);
+    // 2) VG 이름 매칭 (첫 번째 해당 VG의 LV)
+    if (!match && node.lvm_vg) {
+      match = lvEntries.find(e => e.vg === node.lvm_vg);
+    }
+    if (match) {
+      node.lvm_size = match.size;
+      if (!node.lvm_vg && match.vg) node.lvm_vg = match.vg;
+    }
+  });
+}
+
 // ── /drbd/scan 호출 ───────────────────────────────────────────
 async function scanDrbd() {
   const btn = document.getElementById('btnScan');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 스캔 중...';
   try {
-    const res = await fetch('/drbd/scan');
-    scanData = await res.json();
+    // DRBD 스캔과 lvscan 병렬 실행
+    const [scanRes, lvRes] = await Promise.all([
+      fetch('/drbd/scan'),
+      fetch('/api/lvscan').catch(() => null),
+    ]);
+    scanData = await scanRes.json();
+
+    if (lvRes && lvRes.ok) {
+      const lvData = await lvRes.json().catch(() => null);
+      if (lvData && lvData.ok && Array.isArray(lvData.entries)) {
+        lvEntries = lvData.entries;
+      }
+    }
 
     const sel = document.getElementById('scannedSelect');
     sel.innerHTML = '<option value="">-- 리소스 선택 (로드) --</option>';
@@ -541,6 +576,7 @@ function loadScanned(name) {
     }));
   } catch(_) {}
 
+  autoFillLvmSizes(nodes);
   renderSelectedNodes();
   rebuildPoolList();
 
@@ -582,6 +618,7 @@ function loadExample() {
 function esc(str) {
   return (str||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+
 
 // 초기화
 loadFormFromStorage();

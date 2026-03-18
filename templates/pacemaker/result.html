@@ -38,16 +38,37 @@
       </div>
     </div>
 
-    <!-- Ansible Playbook -->
+    <!-- Ansible 인벤토리 -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-warning text-dark d-flex align-items-center">
-        <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> deploy_pacemaker.yml (Ansible Playbook)</span>
-        <button class="btn btn-sm btn-dark ms-auto" onclick="copyText('ansiblePm')">
+        <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> inventory.yml (Ansible)</span>
+        <div class="ms-auto d-flex align-items-center gap-2">
+          <select id="pmProfileSel" class="form-select form-select-sm" style="min-width:160px">
+            <option value="">-- 프로파일 선택 --</option>
+          </select>
+          <button class="btn btn-sm btn-dark" onclick="copyText('pmInventory')">
+            <i class="bi bi-clipboard"></i> 복사
+          </button>
+        </div>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="pmInventory" class="code-editor" data-mode="yaml"># 프로파일을 선택하면 노드 풀의 노드 목록으로 인벤토리가 생성됩니다.</textarea>
+      </div>
+    </div>
+
+    <!-- Ansible Playbook -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-success text-white d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-play-fill"></i> deploy_pacemaker.yml (Ansible Playbook)</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansiblePm')">
           <i class="bi bi-clipboard"></i> 복사
         </button>
       </div>
       <div class="card-body p-0">
         <textarea id="ansiblePm" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
+      </div>
+      <div class="card-footer small text-muted">
+        실행: <code>ansible-playbook -i inventory.yml deploy_pacemaker.yml</code>
       </div>
     </div>
 
@@ -94,5 +115,16 @@ function copyText(id) {
     alert('클립보드에 복사되었습니다.');
   });
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadProfileSelector('pmProfileSel', async (profile) => {
+    if (!profile) return;
+    const nodes = await fetch('/api/nodes').then(r => r.json()).catch(() => []);
+    const yaml = buildInventoryYaml(nodes, profile);
+    const ta = document.getElementById('pmInventory');
+    if (ta._cmEditor) ta._cmEditor.setValue(yaml);
+    else ta.value = yaml;
+  });
+});
 </script>
 {% endblock %}
