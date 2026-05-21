@@ -24,6 +24,21 @@
               <input type="text" class="form-control" name="pod_name" id="podName" placeholder="mypod">
               <div class="form-text">생성: <code>&lt;name&gt;.pod</code></div>
             </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold">호스트명 (HostName)</label>
+              <input type="text" class="form-control" name="pod_hostname" id="podHostname" placeholder="myapp.example.com">
+              <div class="form-text">Pod 내부 컨테이너의 hostname</div>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label fw-semibold">ShmSize</label>
+              <input type="text" class="form-control" name="pod_shm_size" id="podShmSize" placeholder="128G">
+              <div class="form-text">공유 메모리 크기 (선택)</div>
+            </div>
+            <div class="col-md-8">
+              <label class="form-label fw-semibold">설명 (Description)</label>
+              <input type="text" class="form-control" name="pod_description" id="podDescription" placeholder="My Application Pod">
+              <div class="form-text">[Unit] Description= 에 표시될 설명 (선택)</div>
+            </div>
           </div>
         </div>
       </div>
@@ -395,6 +410,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const savedName = localStorage.getItem('quadlet_pod_name');
     if (savedName) document.getElementById('podName').value = savedName;
+    const savedHostname = localStorage.getItem('quadlet_pod_hostname');
+    if (savedHostname) document.getElementById('podHostname').value = savedHostname;
+    const savedShmSize = localStorage.getItem('quadlet_pod_shm_size');
+    if (savedShmSize) document.getElementById('podShmSize').value = savedShmSize;
+    const savedDesc = localStorage.getItem('quadlet_pod_description');
+    if (savedDesc) document.getElementById('podDescription').value = savedDesc;
   } catch {}
 
   // localStorage에 pod 데이터가 없으면 서버 스캔 결과로 복원
@@ -424,6 +445,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       localStorage.setItem('quadlet_pod_networks', JSON.stringify(podNetworks));
       localStorage.setItem('quadlet_pod_name', document.getElementById('podName').value);
+      localStorage.setItem('quadlet_pod_hostname', document.getElementById('podHostname').value);
+      localStorage.setItem('quadlet_pod_shm_size', document.getElementById('podShmSize').value);
+      localStorage.setItem('quadlet_pod_description', document.getElementById('podDescription').value);
     } catch {}
   });
 

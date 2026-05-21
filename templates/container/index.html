@@ -88,17 +88,88 @@
             </div>
           </div>
 
-          <!-- Arguments -->
+          <!-- 실행 설정 -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-dark text-white fw-bold">
+              <i class="bi bi-terminal-fill"></i> 실행 설정 (Exec / Entrypoint / User)
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-5">
+                  <label class="form-label fw-semibold">Exec (CMD 오버라이드)</label>
+                  <input type="text" class="form-control" id="cExec" placeholder="python app.py">
+                  <div class="form-text">이미지 기본 CMD를 덮어씁니다</div>
+                </div>
+                <div class="col-md-5">
+                  <label class="form-label fw-semibold">Entrypoint</label>
+                  <input type="text" class="form-control" id="cEntrypoint" placeholder="/usr/bin/my-entrypoint.sh">
+                  <div class="form-text">이미지 기본 ENTRYPOINT를 덮어씁니다</div>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label fw-semibold">User</label>
+                  <input type="text" class="form-control" id="cUser" placeholder="1001">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- PodmanArgs -->
           <div class="card shadow-sm mb-4">
             <div class="card-header bg-dark text-white fw-bold d-flex align-items-center">
-              <span><i class="bi bi-terminal-fill"></i> 실행 인수 (Exec / Args)</span>
+              <span><i class="bi bi-sliders"></i> PodmanArgs / Tmpfs</span>
               <button type="button" class="btn btn-sm btn-light ms-auto" onclick="addArgRow()">
-                <i class="bi bi-plus-circle"></i> 추가
+                <i class="bi bi-plus-circle"></i> PodmanArgs 추가
               </button>
             </div>
             <div class="card-body">
+              <div class="mb-3">
+                <label class="form-label fw-semibold">Tmpfs 마운트 <small class="text-muted">(한 줄에 하나)</small></label>
+                <textarea class="form-control font-monospace" id="cTmpfs" rows="2"
+                          placeholder="/run:size=64M,rw&#10;/tmp:size=32M"></textarea>
+              </div>
               <div id="argRows">
-                <div class="text-muted small py-2">인수가 없습니다. (기본: 이미지의 CMD/ENTRYPOINT)</div>
+                <div class="text-muted small py-2">PodmanArgs 없음</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- AutoUpdate -->
+          <div class="card shadow-sm mb-4">
+            <div class="card-header bg-secondary text-white fw-bold">
+              <i class="bi bi-arrow-repeat"></i> AutoUpdate / 서비스 설정
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">AutoUpdate</label>
+                  <select class="form-select" id="cAutoUpdate">
+                    <option value="">사용 안 함</option>
+                    <option value="registry">registry</option>
+                    <option value="local">local</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">Service Type</label>
+                  <select class="form-select" id="cServiceType">
+                    <option value="">기본 (notify)</option>
+                    <option value="oneshot">oneshot</option>
+                    <option value="simple">simple</option>
+                    <option value="forking">forking</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">TimeoutStopSec</label>
+                  <input type="text" class="form-control" id="cTimeoutStop" placeholder="90s">
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="cRemainAfterExit">
+                    <label class="form-check-label" for="cRemainAfterExit">
+                      RemainAfterExit
+                    </label>
+                    <div class="form-text">oneshot 서비스에 유용</div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -362,24 +433,43 @@ function serializeContainerForm() {
     .filter(e => e.key.trim())
     .map(e => [e.key.trim(), e.value]);
 
-  // extra_args
+  // extra_args (PodmanArgs)
   const extra_args = cArgs.filter(a => a.trim());
+
+  // tmpfs: 줄바꿈으로 구분된 텍스트
+  const tmpfsText = document.getElementById('cTmpfs').value;
+  const tmpfs = tmpfsText.split('\n').map(s => s.trim()).filter(s => s);
+
+  const exec         = document.getElementById('cExec').value.trim() || null;
+  const entrypoint   = document.getElementById('cEntrypoint').value.trim() || null;
+  const user         = document.getElementById('cUser').value.trim() || null;
+  const auto_update  = document.getElementById('cAutoUpdate').value || null;
+  const service_type = document.getElementById('cServiceType').value || null;
+  const timeout_stop = document.getElementById('cTimeoutStop').value.trim() || null;
+  const remain       = document.getElementById('cRemainAfterExit').checked;
 
   const container = {
     name,
     image,
+    description: null,
     pod: pod || null,
     network: null,
     ip: null,
     environment,
     volumes,
+    tmpfs,
     publish_ports: [],
-    exec: null,
-    user: null,
+    exec,
+    entrypoint,
+    user,
+    auto_update,
     labels: [],
     extra_args,
     depends_on: pod ? [pod] : [],
     drbd_resource: null,
+    service_type,
+    remain_after_exit: remain ? true : null,
+    timeout_stop_sec: timeout_stop,
   };
 
   document.getElementById('containersJson').value = JSON.stringify([container]);

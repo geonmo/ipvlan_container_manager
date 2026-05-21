@@ -23,7 +23,7 @@ RUST_LOG=debug cargo run # Run with debug logging
 
 ## Architecture
 
-### UI Workflow (7 tabs)
+### UI Workflow (8 tabs)
 
 1. **노드 풀** (`/nodes/`) — cluster nodes, network pool, Ansible profiles (shared across all tabs)
 2. **DRBD 설정** (`/drbd/`) → `.res` resource file + Ansible playbook
@@ -31,7 +31,8 @@ RUST_LOG=debug cargo run # Run with debug logging
 4. **Pod 설정** (`/quadlet/`) → systemd `.container`/`.network`/`.pod`/`.volume` unit files
 5. **컨테이너 설정** (`/container/`) → form-based container definition (image, volumes, env, args)
 6. **방화벽** (`/nft/`) → nftables `netdev ingress` filter config
-7. **Pacemaker 설정** (`/pacemaker/`) → `pcs` bash script + Ansible playbook
+7. **Pacemaker 설정** (`/pacemaker/`) → `pcs` bash script + Ansible playbook (Bootstrap accordion UI)
+8. **클러스터 현황** (`/cluster/`) → read-only pcsd topology viewer (Union-Find service grouping)
 
 ### Code Layout
 
@@ -41,8 +42,8 @@ Each subsystem has a parallel structure:
 |-------|---------|
 | `src/models/{drbd,quadlet,pacemaker,nft}.rs` | Data structures deserialized from HTML form POST bodies |
 | `src/generators/{drbd,quadlet,pacemaker,nft}.rs` | Pure functions: model → file content strings |
-| `src/routes/{drbd,quadlet,pacemaker,nft,volume,container,nodes,main}.rs` | Axum handlers |
-| `templates/{drbd,quadlet,pacemaker,nft,volume,container,nodes}/` | Tera templates (Jinja2 syntax) |
+| `src/routes/{drbd,quadlet,pacemaker,nft,volume,container,nodes,cluster,main}.rs` | Axum handlers |
+| `templates/{drbd,quadlet,pacemaker,nft,volume,container,nodes,cluster}/` | Tera templates (Jinja2 syntax) |
 
 Supporting modules:
 
@@ -66,7 +67,11 @@ Supporting modules:
 - **Pod IP addressing**: `PodNetworkEntry` has `ip: Option<String>` (IPv4, required) and `ip6: Option<String>` (IPv6, optional). Generated `.pod` file emits `ip=`, `ip6=`, or both.
 - **Default Pacemaker constraints**: `generate_default_constraints()` auto-creates order and colocation constraints so Quadlet services only start after DRBD is promoted on the same node.
 - **IPv4/IPv6 dual-stack**: `.network` file scanner collects all `Subnet=`/`Gateway=` lines and classifies by `:` presence into separate `subnet`/`subnet6`/`gateway`/`gateway6` fields.
-- **pcsd resource sync**: `POST /api/pacemaker/pcsd-fetch` accepts credentials, logs in to the pcsd REST API, fetches cluster status (nodes, resources, constraints) and returns structured JSON. The Pacemaker page has a "pcsd 현재 설정 가져오기" card for this.
+- **pcsd auth**: `POST /api/pacemaker/pcsd-fetch` reads `/var/lib/pcsd/known-hosts` (JSON file on the server), extracts the node token, and calls `/remote/status?version=2&operations=1` with `Cookie: token=<value>`. No username/password needed from the UI.
+- **pcsd resource sync**: returns `cluster_name`, `nodes` (from `corosync_online`), `resources` (= `resource_list`), `constraints` (`rsc_order` / `rsc_colocation`), `raw_status`.
+- **Pacemaker accordion UI**: `/pacemaker/` uses Bootstrap 5 accordion — six collapsible sections (cluster basics, DRBD+FS, groups, systemd resources, constraints, Ansible). Only the first section is expanded by default. Adding a DRBD volume or clicking "폼에 적용" auto-expands the relevant section.
+- **DRBD+FS coupling**: each DRBD Promotable Clone has its Filesystem resource inline. Multiple DRBD volumes per service are supported. `drbd_resources_json` hidden field serializes the array.
+- **Cluster topology viewer** (`/cluster/`): fetches pcsd data, runs Union-Find on order/colocation constraints to separate independent services, topologically sorts each service's resources with Kahn's BFS, and renders a pipeline display. DRBD clones are identified by matching clone IDs against DB-registered DRBD resource names (via `GET /api/drbd/resources`).
 - **nftables ingress filter**: generates `table netdev` with target IP sets (from scanned pod IPs), subnet group sets, service port sets, and per-target allow/drop rules. Multiple global port rules (tcp/udp with port ranges) supported via `NftGlobalRule`.
 - **Container form UI**: `/container/` uses a form-based UI (not JSON editor). Volume mounts support both registered volumes (from DB) and podman named volumes, with mount options (z, Z, ro).
 - Templates are loaded at startup from `templates/**/*.html` (not hot-reloaded in release builds).
@@ -113,15 +118,16 @@ POST /volume/generate           → Generate volume unit files
 GET  /api/volumes               → List volumes (JSON)
 POST /api/volumes               → Add/update volume
 DELETE /api/volumes/:id         → Delete volume
-GET  /api/drbd/resources        → List scanned DRBD resources (for volume labels)
+GET  /api/drbd/resources        → List scanned DRBD resources (for volume labels, cluster topology)
 
 GET  /container/                → Container settings page (form-based)
 POST /container/generate        → Generate container unit files
 POST /container/from-inspect    → Parse podman inspect JSON → container config
 
-GET  /pacemaker/                → Pacemaker form (includes pcsd sync card)
+GET  /pacemaker/                → Pacemaker form (Bootstrap accordion, pcsd sync card)
 POST /pacemaker/generate        → Generate pcs script + Ansible
 POST /api/pacemaker/pcsd-fetch  → Fetch cluster resources/constraints from pcsd REST API
+                                   (reads node token from /var/lib/pcsd/known-hosts)
 
 GET  /nft/                      → Firewall (nftables) form
 POST /nft/generate              → Generate nftables netdev ingress config
@@ -138,6 +144,8 @@ DELETE /api/nft/targets/:id
 GET  /api/nft/config            → Get global nft config
 POST /api/nft/config            → Update global nft config
 POST /api/nft/scan              → Scan existing nftables file and sync to DB
+
+GET  /cluster/                  → Cluster topology viewer (read-only, fetches pcsd via JS)
 ```
 
 ### SQLite Schema

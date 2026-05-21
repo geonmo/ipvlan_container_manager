@@ -15,21 +15,16 @@
       </div>
       <div class="card-body">
         <div class="row g-2 align-items-end">
-          <div class="col-md-4">
+          <div class="col-md-8">
             <label class="form-label fw-semibold small mb-1">pcsd URL</label>
             <input type="text" class="form-control form-control-sm" id="pcsdUrl" value="https://localhost:2224">
+            <div class="form-text">서버의 <code>/var/lib/pcsd/known-hosts</code> 노드 토큰을 자동으로 사용합니다.
+              <a href="/cluster/" class="ms-2"><i class="bi bi-diagram-3-fill"></i> 클러스터 현황 탭에서 전체 토폴로지 확인</a>
+            </div>
           </div>
-          <div class="col-md-3">
-            <label class="form-label fw-semibold small mb-1">사용자명</label>
-            <input type="text" class="form-control form-control-sm" id="pcsdUser" value="hacluster">
-          </div>
-          <div class="col-md-3">
-            <label class="form-label fw-semibold small mb-1">비밀번호</label>
-            <input type="password" class="form-control form-control-sm" id="pcsdPass" placeholder="pcsd 비밀번호">
-          </div>
-          <div class="col-md-2">
+          <div class="col-md-4">
             <button type="button" class="btn btn-info btn-sm w-100" onclick="pcsdFetch()">
-              <i class="bi bi-cloud-download"></i> 가져오기
+              <i class="bi bi-cloud-download"></i> 클러스터 설정 가져오기
             </button>
           </div>
         </div>
@@ -40,203 +35,244 @@
 
     <form action="/pacemaker/generate" method="post" id="pmForm">
 
-      <!-- 클러스터 기본 설정 -->
-      <div class="card shadow-sm mb-4">
-        <div class="card-header bg-danger text-white fw-bold">
-          <i class="bi bi-diagram-2-fill"></i> 클러스터 기본 설정
-        </div>
-        <div class="card-body">
-          <div class="row g-3">
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">클러스터 이름</label>
-              <input type="text" class="form-control" name="cluster_name" value="ha-cluster" required>
-            </div>
-            <div class="col-12">
-              <label class="form-label fw-semibold">클러스터 노드 선택</label>
-              <input type="hidden" name="nodes_json" id="pmNodesJson" value="[]">
-              <div class="row g-2">
-                <div class="col-md-5">
-                  <div class="small text-muted mb-1">노드 풀 <a href="/nodes/" target="_blank" class="ms-1"><i class="bi bi-pencil"></i></a></div>
-                  <ul class="list-group" id="pmPoolList" style="min-height:80px;max-height:180px;overflow-y:auto"></ul>
-                </div>
-                <div class="col-md-1 d-flex flex-column justify-content-center align-items-center gap-2">
-                  <button type="button" class="btn btn-outline-primary btn-sm" id="pmPoolList_add"><i class="bi bi-arrow-right"></i></button>
-                </div>
-                <div class="col-md-6">
-                  <div class="small text-muted mb-1">선택된 노드 <span class="badge bg-secondary" id="pmNodeCount">0</span></div>
-                  <ul class="list-group" id="pmSelectedList" style="min-height:80px;max-height:180px;overflow-y:auto"></ul>
-                </div>
-              </div>
-            </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">No-Quorum Policy</label>
-              <select class="form-select" name="no_quorum_policy">
-                <option value="stop" selected>stop (권장)</option>
-                <option value="freeze">freeze</option>
-                <option value="ignore">ignore</option>
-              </select>
-            </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">Migration Threshold</label>
-              <input type="number" class="form-control" name="migration_threshold" value="3">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">Failure Timeout</label>
-              <input type="text" class="form-control" name="failure_timeout" value="60s">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">STONITH</label>
-              <div class="form-check mt-2">
-                <input class="form-check-input" type="checkbox" name="stonith_enabled" id="stonithEnabled">
-                <label class="form-check-label" for="stonithEnabled">STONITH 활성화</label>
-                <div class="form-text text-warning">⚠ 테스트 환경에서는 비활성화 권장</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <div class="accordion" id="pmAccordion">
 
-      <!-- DRBD 리소스 설정 -->
-      <div class="card shadow-sm mb-4">
-        <div class="card-header bg-primary text-white fw-bold">
-          <i class="bi bi-database-fill"></i> DRBD Promotable Clone 리소스
-        </div>
-        <div class="card-body">
-          <div class="row g-3">
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">Pacemaker 리소스 이름</label>
-              <input type="text" class="form-control" name="drbd_resource_name" value="drbd-r0" required>
-            </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">DRBD .res 리소스 이름</label>
-              <input type="text" class="form-control" name="drbd_res_name" value="r0" required>
-              <div class="form-text">.res 파일의 <code>resource &lt;name&gt;</code></div>
-            </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">Clone 이름</label>
-              <input type="text" class="form-control" name="drbd_clone_name" value="drbd-r0-clone" required>
-            </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">선호 Primary 노드</label>
-              <input type="text" class="form-control" name="drbd_preferred_primary"
-                     placeholder="비워두면 자동">
-            </div>
-            <div class="col-md-3">
-              <label class="form-label fw-semibold">On Fail</label>
-              <select class="form-select" name="drbd_on_fail">
-                <option value="fence" selected>fence</option>
-                <option value="block">block</option>
-                <option value="stop">stop</option>
-                <option value="demote">demote</option>
-              </select>
-            </div>
-            <div class="col-md-3">
-              <div class="form-check mt-4">
-                <input class="form-check-input" type="checkbox" name="drbd_notify" id="drbdNotify" checked>
-                <label class="form-check-label" for="drbdNotify">notify 활성화</label>
+        <!-- ① 클러스터 기본 설정 -->
+        <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
+          <h2 class="accordion-header" id="pmHeadBasic">
+            <button class="accordion-button" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#pmSecBasic" aria-expanded="true">
+              <i class="bi bi-diagram-2-fill text-danger me-2"></i>
+              <span class="fw-semibold">클러스터 기본 설정</span>
+            </button>
+          </h2>
+          <div id="pmSecBasic" class="accordion-collapse collapse show">
+            <div class="accordion-body pt-3">
+              <div class="row g-3">
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">클러스터 이름</label>
+                  <input type="text" class="form-control" name="cluster_name" value="ha-cluster" required>
+                </div>
+                <div class="col-12">
+                  <label class="form-label fw-semibold">클러스터 노드 선택</label>
+                  <input type="hidden" name="nodes_json" id="pmNodesJson" value="[]">
+                  <div class="row g-2">
+                    <div class="col-md-5">
+                      <div class="small text-muted mb-1">노드 풀 <a href="/nodes/" target="_blank" class="ms-1"><i class="bi bi-pencil"></i></a></div>
+                      <ul class="list-group" id="pmPoolList" style="min-height:80px;max-height:180px;overflow-y:auto"></ul>
+                    </div>
+                    <div class="col-md-1 d-flex flex-column justify-content-center align-items-center gap-2">
+                      <button type="button" class="btn btn-outline-primary btn-sm" id="pmPoolList_add"><i class="bi bi-arrow-right"></i></button>
+                    </div>
+                    <div class="col-md-6">
+                      <div class="small text-muted mb-1">선택된 노드 <span class="badge bg-secondary" id="pmNodeCount">0</span></div>
+                      <ul class="list-group" id="pmSelectedList" style="min-height:80px;max-height:180px;overflow-y:auto"></ul>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">No-Quorum Policy</label>
+                  <select class="form-select" name="no_quorum_policy">
+                    <option value="stop" selected>stop (권장)</option>
+                    <option value="freeze">freeze</option>
+                    <option value="ignore">ignore</option>
+                  </select>
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">Migration Threshold</label>
+                  <input type="number" class="form-control" name="migration_threshold" value="3">
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">Failure Timeout</label>
+                  <input type="text" class="form-control" name="failure_timeout" value="60s">
+                </div>
+                <div class="col-md-3">
+                  <label class="form-label fw-semibold">STONITH</label>
+                  <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" name="stonith_enabled" id="stonithEnabled">
+                    <label class="form-check-label" for="stonithEnabled">STONITH 활성화</label>
+                    <div class="form-text text-warning">&#9888; 테스트 환경에서는 비활성화 권장</div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Systemd 리소스 (Quadlet) -->
-      <div class="card shadow-sm mb-4">
-        <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
-          <span><i class="bi bi-boxes"></i> Quadlet Systemd 리소스 목록 (JSON)</span>
-          <button type="button" class="btn btn-sm btn-light ms-auto" onclick="loadSvcExample()">
-            <i class="bi bi-lightning-fill"></i> 예시
-          </button>
-        </div>
-        <div class="card-body p-0">
-          <textarea id="svcJson" name="systemd_resources_json" class="code-editor"
-                    data-mode="javascript" style="min-height:200px">[]</textarea>
-        </div>
-        <div class="card-footer small text-muted">
-          <code>resource_name</code>: Pacemaker 리소스 이름,
-          <code>systemd_unit</code>: systemd 유닛 이름 (예: <code>myapp.service</code>),
-          <code>resource_type</code>: container | pod | volume
-        </div>
-      </div>
-
-      <!-- 제약조건 설정 -->
-      <div class="card shadow-sm mb-4">
-        <div class="card-header bg-secondary text-white fw-bold">
-          <i class="bi bi-link-45deg"></i> 리소스 제약조건
-        </div>
-        <div class="card-body">
-          <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" name="auto_constraints"
-                   id="autoConstraints" checked>
-            <label class="form-check-label fw-semibold" for="autoConstraints">
-              자동 제약조건 생성
-            </label>
-            <div class="form-text">
-              DRBD Promoted 후 서비스 시작 (Order) +
-              동일 노드 실행 (Colocation: INFINITY) 규칙을 자동 생성합니다.
+        <!-- ② DRBD + Filesystem 볼륨 리소스 -->
+        <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
+          <h2 class="accordion-header" id="pmHeadDrbd">
+            <button class="accordion-button collapsed" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#pmSecDrbd" aria-expanded="false">
+              <i class="bi bi-database-fill text-primary me-2"></i>
+              <span class="fw-semibold">DRBD Promotable Clone + Filesystem 리소스</span>
+              <span class="badge bg-primary ms-2" id="drbdGroupBadge">0</span>
+            </button>
+          </h2>
+          <div id="pmSecDrbd" class="accordion-collapse collapse">
+            <div class="accordion-body pt-3">
+              <input type="hidden" name="drbd_resources_json" id="drbdResourcesJson" value="[]">
+              <div class="d-flex gap-2 mb-3">
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addDrbdGroup()">
+                  <i class="bi bi-plus-lg"></i> DRBD 볼륨 추가
+                </button>
+                <select class="form-select form-select-sm w-auto" id="drbdQuickSel"
+                        onchange="if(this.value){addDrbdGroup(this.value);this.value='';}">
+                  <option value="">-- 등록된 리소스에서 추가 --</option>
+                </select>
+              </div>
+              <div id="drbdGroupList"></div>
+              <div class="text-center mt-2 text-muted small" id="drbdGroupEmpty">
+                DRBD 볼륨을 추가하거나 위 드롭다운에서 선택하세요.
+              </div>
+              <div class="mt-3 p-2 bg-light rounded small text-muted">
+                각 DRBD Promotable Clone 리소스마다 Filesystem 마운트가 연결됩니다.
+                DRBD Primary 승격 → FS 마운트 → 서비스 시작 순서로 자동 제약조건이 생성됩니다.
+              </div>
             </div>
           </div>
+        </div>
 
-          <!-- 수동 Order 제약조건 -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold">수동 Order 제약조건 (JSON, 선택)</label>
-            <textarea name="order_constraints_json" class="code-editor" data-mode="javascript"
-                      style="min-height:80px">[]</textarea>
-            <div class="form-text">
-              예: <code>[{"id":"ord-1","first":"drbd-r0-clone","first_action":"promote","then":"myapp","then_action":"start","kind":"Mandatory"}]</code>
+        <!-- ③ 리소스 그룹 (Pod + Container) -->
+        <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
+          <h2 class="accordion-header" id="pmHeadGrp">
+            <button class="accordion-button collapsed" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#pmSecGrp" aria-expanded="false">
+              <i class="bi bi-collection-fill me-2" style="color:#0d9488"></i>
+              <span class="fw-semibold">리소스 그룹 (Pod + Container)</span>
+            </button>
+          </h2>
+          <div id="pmSecGrp" class="accordion-collapse collapse">
+            <div class="accordion-body p-0">
+              <div class="px-3 pt-2 pb-1 d-flex justify-content-end">
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadGrpExample()">
+                  <i class="bi bi-lightning-fill"></i> 예시
+                </button>
+              </div>
+              <textarea id="grpJson" name="resource_groups_json" class="code-editor"
+                        data-mode="javascript" style="min-height:160px">[]</textarea>
+              <div class="px-3 py-2 small text-muted bg-light border-top">
+                <code>group_name</code>: 그룹 이름 (예: <code>grp-myapp</code>),
+                <code>members</code>: 리소스 이름 순서 목록 — Pod를 첫 번째로,
+                <code>after_fs</code>: 선행 FS 리소스 이름
+              </div>
             </div>
-          </div>
-
-          <!-- 수동 Colocation 제약조건 -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold">수동 Colocation 제약조건 (JSON, 선택)</label>
-            <textarea name="colocation_constraints_json" class="code-editor" data-mode="javascript"
-                      style="min-height:80px">[]</textarea>
-          </div>
-
-          <!-- Location 제약조건 -->
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Location 제약조건 (선호 노드, JSON, 선택)</label>
-            <textarea name="location_constraints_json" class="code-editor" data-mode="javascript"
-                      style="min-height:80px">[]</textarea>
           </div>
         </div>
-      </div>
 
-      <!-- Ansible 설정 -->
-      <div class="card shadow-sm mb-4">
-        <div class="card-header bg-warning text-dark fw-bold">
-          <i class="bi bi-send-fill"></i> Ansible 배포 설정
-        </div>
-        <div class="card-body">
-          <div class="row g-3">
-            <div class="col-md-4">
-              <label class="form-label">대상 호스트 (첫 번째 노드에서 실행됨)</label>
-              <input type="text" class="form-control" name="ansible_hosts" placeholder="all">
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Ansible 프로파일</label>
-              <select class="form-select" id="pmProfileSel" onchange="pmSyncProfile()">
-                <option value="">-- 직접 입력 --</option>
-              </select>
+        <!-- ④ Systemd 리소스 (Quadlet) -->
+        <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
+          <h2 class="accordion-header" id="pmHeadSvc">
+            <button class="accordion-button collapsed" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#pmSecSvc" aria-expanded="false">
+              <i class="bi bi-boxes text-success me-2"></i>
+              <span class="fw-semibold">Quadlet Systemd 리소스 목록</span>
+            </button>
+          </h2>
+          <div id="pmSecSvc" class="accordion-collapse collapse">
+            <div class="accordion-body p-0">
+              <div class="px-3 pt-2 pb-1 d-flex justify-content-end">
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadSvcExample()">
+                  <i class="bi bi-lightning-fill"></i> 예시
+                </button>
+              </div>
+              <textarea id="svcJson" name="systemd_resources_json" class="code-editor"
+                        data-mode="javascript" style="min-height:200px">[]</textarea>
+              <div class="px-3 py-2 small text-muted bg-light border-top">
+                <code>resource_name</code>: Pacemaker 리소스 이름,
+                <code>systemd_unit</code>: systemd 유닛 이름 (예: <code>myapp.service</code>),
+                <code>resource_type</code>: container | pod | volume
+              </div>
             </div>
           </div>
-          <div class="row g-3 mt-1" id="pmProfileManual">
-            <div class="col-md-4">
-              <label class="form-label">SSH 사용자</label>
-              <input type="text" class="form-control" name="ansible_user" id="pmAnsibleUser" value="root">
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">SSH 개인키</label>
-              <input type="text" class="form-control" name="ansible_ssh_key" id="pmAnsibleKey" value="~/.ssh/id_rsa">
+        </div>
+
+        <!-- ⑤ 제약조건 -->
+        <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
+          <h2 class="accordion-header" id="pmHeadCons">
+            <button class="accordion-button collapsed" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#pmSecCons" aria-expanded="false">
+              <i class="bi bi-link-45deg text-secondary me-2"></i>
+              <span class="fw-semibold">리소스 제약조건</span>
+            </button>
+          </h2>
+          <div id="pmSecCons" class="accordion-collapse collapse">
+            <div class="accordion-body">
+              <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" name="auto_constraints"
+                       id="autoConstraints" checked>
+                <label class="form-check-label fw-semibold" for="autoConstraints">
+                  자동 제약조건 생성
+                </label>
+                <div class="form-text">
+                  DRBD Promoted 후 서비스 시작 (Order) +
+                  동일 노드 실행 (Colocation: INFINITY) 규칙을 자동 생성합니다.
+                </div>
+              </div>
+              <div class="mb-3">
+                <label class="form-label fw-semibold">수동 Order 제약조건 (JSON, 선택)</label>
+                <textarea name="order_constraints_json" class="code-editor" data-mode="javascript"
+                          style="min-height:80px">[]</textarea>
+                <div class="form-text">
+                  예: <code>[{"id":"ord-1","first":"drbd-r0-clone","first_action":"promote","then":"myapp","then_action":"start","kind":"Mandatory"}]</code>
+                </div>
+              </div>
+              <div class="mb-3">
+                <label class="form-label fw-semibold">수동 Colocation 제약조건 (JSON, 선택)</label>
+                <textarea name="colocation_constraints_json" class="code-editor" data-mode="javascript"
+                          style="min-height:80px">[]</textarea>
+              </div>
+              <div class="mb-3">
+                <label class="form-label fw-semibold">Location 제약조건 (선호 노드, JSON, 선택)</label>
+                <textarea name="location_constraints_json" class="code-editor" data-mode="javascript"
+                          style="min-height:80px">[]</textarea>
+              </div>
             </div>
           </div>
-          <input type="hidden" id="pmAnsibleUserHidden">
-          <input type="hidden" id="pmAnsibleKeyHidden">
         </div>
-      </div>
 
-      <div class="d-flex gap-2">
+        <!-- ⑥ Ansible 배포 설정 -->
+        <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
+          <h2 class="accordion-header" id="pmHeadAnsible">
+            <button class="accordion-button collapsed" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#pmSecAnsible" aria-expanded="false">
+              <i class="bi bi-send-fill text-warning me-2"></i>
+              <span class="fw-semibold">Ansible 배포 설정</span>
+            </button>
+          </h2>
+          <div id="pmSecAnsible" class="accordion-collapse collapse">
+            <div class="accordion-body">
+              <div class="row g-3">
+                <div class="col-md-4">
+                  <label class="form-label">대상 호스트 (첫 번째 노드에서 실행됨)</label>
+                  <input type="text" class="form-control" name="ansible_hosts" placeholder="all">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">Ansible 프로파일</label>
+                  <select class="form-select" id="pmProfileSel" onchange="pmSyncProfile()">
+                    <option value="">-- 직접 입력 --</option>
+                  </select>
+                </div>
+              </div>
+              <div class="row g-3 mt-1" id="pmProfileManual">
+                <div class="col-md-4">
+                  <label class="form-label">SSH 사용자</label>
+                  <input type="text" class="form-control" name="ansible_user" id="pmAnsibleUser" value="root">
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">SSH 개인키</label>
+                  <input type="text" class="form-control" name="ansible_ssh_key" id="pmAnsibleKey" value="~/.ssh/id_rsa">
+                </div>
+              </div>
+              <input type="hidden" id="pmAnsibleUserHidden">
+              <input type="hidden" id="pmAnsibleKeyHidden">
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /.accordion -->
+
+      <div class="d-flex gap-2 mt-2">
         <button type="submit" class="btn btn-danger btn-lg">
           <i class="bi bi-gear-fill"></i> pcs 스크립트 생성
         </button>
@@ -293,9 +329,212 @@ function pmSyncJson() {
   document.getElementById('pmNodesJson').value = JSON.stringify(pmNodes);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+// ── DRBD + FS 그룹 빌더 ──────────────────────────────────────────────────
+let pmDrbdResources = [];  // /api/drbd/resources 결과
+let drbdGroups = [];       // [{resource_name, drbd_resource_name, clone_name, notify, on_fail, target_role_master_node, fs:{...}}]
+
+async function pmLoadDrbdResources() {
+  try {
+    const resp = await fetch('/api/drbd/resources');
+    pmDrbdResources = await resp.json();
+  } catch (e) {
+    pmDrbdResources = [];
+  }
+  // 빠른 추가 드롭다운 채우기
+  const sel = document.getElementById('drbdQuickSel');
+  pmDrbdResources.forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r.name;
+    opt.textContent = r.name + (r.lvm_vg ? ' (' + r.lvm_vg + ')' : '');
+    sel.appendChild(opt);
+  });
+}
+
+function addDrbdGroup(resName) {
+  const r = resName || '';
+  const group = {
+    resource_name:           r ? 'drbd-' + r : '',
+    drbd_resource_name:      r,
+    clone_name:              r ? 'drbd-' + r + '-clone' : '',
+    notify:                  true,
+    on_fail:                 'fence',
+    target_role_master_node: '',
+    fs: {
+      resource_name:    r ? 'fs-' + r : '',
+      device:           r ? '/dev/drbd/by-res/' + r + '/0' : '',
+      directory:        r ? '/mnt/drbd/' + r : '',
+      fstype:           'xfs',
+      monitor_interval: '20s',
+      start_timeout:    '60s',
+      stop_timeout:     '60s',
+    },
+  };
+  drbdGroups.push(group);
+  renderDrbdGroups();
+  // DRBD 섹션 열기
+  const sec = document.getElementById('pmSecDrbd');
+  if (!sec.classList.contains('show')) {
+    new bootstrap.Collapse(sec, { toggle: false }).show();
+  }
+}
+
+function removeDrbdGroup(idx) {
+  drbdGroups.splice(idx, 1);
+  renderDrbdGroups();
+}
+
+function renderDrbdGroups() {
+  const container = document.getElementById('drbdGroupList');
+  const empty     = document.getElementById('drbdGroupEmpty');
+  const badge     = document.getElementById('drbdGroupBadge');
+  container.innerHTML = '';
+  empty.style.display = drbdGroups.length ? 'none' : '';
+  badge.textContent = drbdGroups.length;
+
+  drbdGroups.forEach((g, idx) => {
+    const onFailOpts = ['fence','block','stop','demote'].map(v =>
+      `<option value="${v}"${g.on_fail===v?' selected':''}>${v}</option>`).join('');
+
+    const nodeOpts = getNodePool().map(n =>
+      `<option value="${n.hostname}"${g.target_role_master_node===n.hostname?' selected':''}>${n.hostname}</option>`
+    ).join('');
+
+    const div = document.createElement('div');
+    div.className = 'border rounded p-3 mb-3 position-relative';
+    div.innerHTML = `
+      <div class="d-flex align-items-center mb-2 gap-2">
+        <span class="fw-bold text-primary"><i class="bi bi-database-fill"></i> DRBD 볼륨 #${idx+1}</span>
+        <select class="form-select form-select-sm w-auto" onchange="fillDrbdGroupFromRes(${idx}, this.value)">
+          <option value="">-- 등록된 리소스 선택 --</option>
+          ${pmDrbdResources.map(r=>`<option value="${r.name}"${g.drbd_resource_name===r.name?' selected':''}>${r.name}${r.lvm_vg?' ('+r.lvm_vg+')':''}</option>`).join('')}
+        </select>
+        <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="removeDrbdGroup(${idx})">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+
+      <div class="row g-2 mb-2">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">Pacemaker 리소스 이름</label>
+          <input type="text" class="form-control form-control-sm" value="${g.resource_name}"
+            oninput="drbdGroups[${idx}].resource_name=this.value; syncDrbdJson()">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">DRBD .res 이름</label>
+          <input type="text" class="form-control form-control-sm" value="${g.drbd_resource_name}"
+            oninput="drbdGroups[${idx}].drbd_resource_name=this.value; syncDrbdJson()">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">Clone 이름</label>
+          <input type="text" class="form-control form-control-sm" value="${g.clone_name}"
+            oninput="drbdGroups[${idx}].clone_name=this.value; syncDrbdJson()">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">선호 Primary 노드</label>
+          <select class="form-select form-select-sm" onchange="drbdGroups[${idx}].target_role_master_node=this.value; syncDrbdJson()">
+            <option value="">-- 자동 --</option>
+            ${nodeOpts}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">On Fail</label>
+          <select class="form-select form-select-sm" onchange="drbdGroups[${idx}].on_fail=this.value; syncDrbdJson()">
+            ${onFailOpts}
+          </select>
+        </div>
+        <div class="col-md-3 d-flex align-items-end pb-1">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="notify_${idx}" ${g.notify?'checked':''}
+              onchange="drbdGroups[${idx}].notify=this.checked; syncDrbdJson()">
+            <label class="form-check-label small" for="notify_${idx}">notify</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="border-top pt-2 mt-1">
+        <div class="small fw-semibold text-warning mb-2">
+          <i class="bi bi-hdd-fill"></i> Filesystem 마운트 (ocf:heartbeat:Filesystem)
+          <span class="text-muted fw-normal">— 이 DRBD Clone이 Promoted될 때 마운트</span>
+        </div>
+        <div class="row g-2">
+          <div class="col-md-3">
+            <label class="form-label small mb-1">리소스 이름</label>
+            <input type="text" class="form-control form-control-sm" value="${g.fs.resource_name}"
+              oninput="drbdGroups[${idx}].fs.resource_name=this.value; syncDrbdJson()">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small mb-1">디바이스 경로</label>
+            <input type="text" class="form-control form-control-sm" value="${g.fs.device}"
+              oninput="drbdGroups[${idx}].fs.device=this.value; syncDrbdJson()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label small mb-1">마운트포인트</label>
+            <input type="text" class="form-control form-control-sm" value="${g.fs.directory}"
+              oninput="drbdGroups[${idx}].fs.directory=this.value; syncDrbdJson()">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small mb-1">파일시스템</label>
+            <select class="form-select form-select-sm" onchange="drbdGroups[${idx}].fs.fstype=this.value; syncDrbdJson()">
+              <option value="xfs"${g.fs.fstype==='xfs'?' selected':''}>xfs</option>
+              <option value="ext4"${g.fs.fstype==='ext4'?' selected':''}>ext4</option>
+            </select>
+          </div>
+        </div>
+      </div>`;
+    container.appendChild(div);
+  });
+
+  syncDrbdJson();
+}
+
+function fillDrbdGroupFromRes(idx, resName) {
+  if (!resName) return;
+  drbdGroups[idx] = {
+    resource_name:           'drbd-' + resName,
+    drbd_resource_name:      resName,
+    clone_name:              'drbd-' + resName + '-clone',
+    notify:                  drbdGroups[idx].notify,
+    on_fail:                 drbdGroups[idx].on_fail,
+    target_role_master_node: drbdGroups[idx].target_role_master_node,
+    fs: {
+      resource_name:    'fs-' + resName,
+      device:           '/dev/drbd/by-res/' + resName + '/0',
+      directory:        '/mnt/drbd/' + resName,
+      fstype:           drbdGroups[idx].fs.fstype || 'xfs',
+      monitor_interval: '20s',
+      start_timeout:    '60s',
+      stop_timeout:     '60s',
+    },
+  };
+  renderDrbdGroups();
+  updateGrpAfterFs();
+}
+
+function syncDrbdJson() {
+  document.getElementById('drbdResourcesJson').value = JSON.stringify(drbdGroups);
+}
+
+function updateGrpAfterFs() {
+  if (!drbdGroups.length) return;
+  const grpEl = document.getElementById('grpJson');
+  const grpVal = grpEl._cmEditor ? grpEl._cmEditor.getValue() : grpEl.value;
+  try {
+    const grps = JSON.parse(grpVal);
+    if (grps.length > 0) {
+      const firstFs = drbdGroups[0].fs && drbdGroups[0].fs.resource_name;
+      if (firstFs) grps.forEach(g => { if (!g.after_fs || g.after_fs.startsWith('fs-')) g.after_fs = firstFs; });
+      const updated = JSON.stringify(grps, null, 2);
+      if (grpEl._cmEditor) grpEl._cmEditor.setValue(updated);
+      else grpEl.value = updated;
+    }
+  } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
   pmRebuildPool();
   pmInitProfile();
+  await pmLoadDrbdResources();
+  renderDrbdGroups();
   document.getElementById('pmPoolList_add').addEventListener('click', () => {
     document.querySelectorAll('#pmPoolList li.active').forEach(li => {
       pmNodes.push({ hostname: li.dataset.hostname, ip: li.dataset.ip });
@@ -305,18 +544,70 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function loadExample() {
-  const f = document.forms['pmForm'];
   pmNodes = [
     { hostname:'node1.ha.local', ip:'192.168.10.11' },
     { hostname:'node2.ha.local', ip:'192.168.10.12' },
   ];
   pmRenderSelected(); pmRebuildPool();
-  f.drbd_preferred_primary.value = 'node1.ha.local';
+
+  drbdGroups = [{
+    resource_name:           'drbd-r0',
+    drbd_resource_name:      'r0',
+    clone_name:              'drbd-r0-clone',
+    notify:                  true,
+    on_fail:                 'fence',
+    target_role_master_node: 'node1.ha.local',
+    fs: {
+      resource_name:    'fs-r0',
+      device:           '/dev/drbd/by-res/r0/0',
+      directory:        '/mnt/drbd/r0',
+      fstype:           'xfs',
+      monitor_interval: '20s',
+      start_timeout:    '60s',
+      stop_timeout:     '60s',
+    },
+  }];
+  renderDrbdGroups();
+
+  // DRBD 섹션 펼치기
+  const sec = document.getElementById('pmSecDrbd');
+  if (!sec.classList.contains('show')) new bootstrap.Collapse(sec, { toggle: false }).show();
+
+  loadGrpExample();
   loadSvcExample();
+
+  // 그룹/Systemd 섹션도 펼치기
+  ['pmSecGrp','pmSecSvc'].forEach(id => {
+    const s = document.getElementById(id);
+    if (!s.classList.contains('show')) new bootstrap.Collapse(s, { toggle: false }).show();
+  });
+}
+
+function loadGrpExample() {
+  const firstFs = drbdGroups.length && drbdGroups[0].fs ? drbdGroups[0].fs.resource_name : 'fs-r0';
+  const example = JSON.stringify([
+    {
+      "group_name": "grp-myapp",
+      "members": ["svc-myapp-pod", "svc-myapp"],
+      "after_fs": firstFs
+    }
+  ], null, 2);
+  const el = document.getElementById('grpJson');
+  if (el._cmEditor) el._cmEditor.setValue(example);
+  else el.value = example;
 }
 
 function loadSvcExample() {
   const example = JSON.stringify([
+    {
+      "resource_name": "svc-myapp-pod",
+      "systemd_unit": "myapp-pod.service",
+      "resource_type": "pod",
+      "monitor_interval": "30s",
+      "start_timeout": "60s",
+      "stop_timeout": "60s",
+      "clone": false
+    },
     {
       "resource_name": "svc-myapp",
       "systemd_unit": "myapp.service",
@@ -374,9 +665,7 @@ function pmSyncProfile() {
 
 // ── pcsd 동기화 ─────────────────────────────────────────────────────────
 async function pcsdFetch() {
-  const url  = document.getElementById('pcsdUrl').value.trim();
-  const user = document.getElementById('pcsdUser').value.trim();
-  const pass = document.getElementById('pcsdPass').value;
+  const url = document.getElementById('pcsdUrl').value.trim();
   const statusEl = document.getElementById('pcsdStatus');
   const resultEl = document.getElementById('pcsdResult');
 
@@ -389,7 +678,7 @@ async function pcsdFetch() {
     const resp = await fetch('/api/pacemaker/pcsd-fetch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pcsd_url: url, pcsd_user: user, pcsd_pass: pass }),
+      body: JSON.stringify({ pcsd_url: url }),
     });
     const json = await resp.json();
 
@@ -405,7 +694,6 @@ async function pcsdFetch() {
     renderPcsdResult(json.data);
     resultEl.classList.remove('d-none');
 
-    // 클러스터 이름 자동 적용
     if (json.data.cluster_name) {
       const f = document.forms['pmForm'];
       if (f && f.cluster_name) f.cluster_name.value = json.data.cluster_name;
@@ -416,170 +704,194 @@ async function pcsdFetch() {
   }
 }
 
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 function renderPcsdResult(data) {
   const el = document.getElementById('pcsdResult');
   const nodes = data.nodes || [];
-  const resources = data.resources;
-  const constraints = data.constraints;
+  const resources = Array.isArray(data.resources) ? data.resources : [];
+  const constraints = data.constraints || { rsc_order:[], rsc_colocation:[] };
+
+  const resMap = {};
+  resources.forEach(r => {
+    resMap[r.id] = r;
+    (r.members||[]).forEach(m => { resMap[m.id] = m; });
+  });
+
   let html = '';
 
-  // 노드 섹션
+  // 노드
   if (nodes.length > 0) {
-    const nodeBadges = nodes.map(n =>
-      `<span class="badge bg-secondary me-1">${n.name}${n.addr ? ' (' + n.addr + ')' : ''}</span>`
-    ).join('');
     const nodeArr = JSON.stringify(nodes);
-    html += `<div class="mb-3 p-2 border rounded">
+    const badges = nodes.map(n =>
+      `<span class="badge bg-secondary me-1">${escHtml(n.name)}</span>`).join('');
+    html += `<div class="mb-3 p-2 border rounded bg-light">
       <div class="d-flex align-items-center gap-2 mb-1">
         <span class="fw-semibold small"><i class="bi bi-server"></i> 클러스터 노드 (${nodes.length}개)</span>
-        <button type="button" class="btn btn-xs btn-outline-primary btn-sm py-0 px-2"
+        <button type="button" class="btn btn-outline-primary btn-sm py-0 px-2"
                 onclick='applyPcsdNodes(${nodeArr})'>
           <i class="bi bi-arrow-down-circle"></i> 노드 적용
         </button>
       </div>
-      <div>${nodeBadges}</div>
+      <div>${badges}</div>
     </div>`;
   }
 
-  // 리소스 섹션
-  const hasResources = resources && !isNullOrEmpty(resources);
-  if (hasResources) {
-    const parsed = parsePcsdResources(resources);
-    html += renderResourceTable(parsed);
+  if (!resources.length) {
+    html += '<div class="text-muted small">리소스 데이터 없음.</div>';
+    el.innerHTML = html;
+    return;
   }
 
-  // 제약조건 섹션
-  const hasConstraints = constraints && !isNullOrEmpty(constraints);
-  if (hasConstraints) {
-    html += renderConstraintTable(constraints);
-  }
+  // 서비스 요약 (Union-Find)
+  const services = buildServiceGroups(resources, constraints);
+  const orders = constraints.rsc_order || [];
 
-  if (!hasResources && !hasConstraints) {
-    html += '<div class="text-muted small mb-2">리소스/제약조건 데이터를 파싱하지 못했습니다.</div>';
-  }
+  html += `<div class="fw-semibold small mb-2 text-secondary">
+    <i class="bi bi-diagram-3"></i> 독립 서비스 ${services.length}개 감지됨
+    <a href="/cluster/" class="ms-2 small"><i class="bi bi-box-arrow-up-right"></i> 클러스터 현황 탭에서 전체 토폴로지 확인</a>
+  </div>`;
 
-  // 원시 응답 토글
-  html += `<details class="mt-2">
-    <summary class="small text-muted" style="cursor:pointer">원시 응답 보기</summary>
-    <pre class="bg-dark text-light p-2 rounded small mt-1" style="max-height:300px;overflow:auto;font-size:0.75rem">${escHtml(JSON.stringify(data.raw_status, null, 2))}</pre>
-  </details>`;
+  services.forEach((svcResources, idx) => {
+    const topIds = svcResources.map(r => r.id);
+    const applyData = JSON.stringify({
+      resources: svcResources,
+      constraints: {
+        rsc_order: orders.filter(c => topIds.includes(c.first)||topIds.includes(c.then)),
+        rsc_colocation: (constraints.rsc_colocation||[]).filter(c=>topIds.includes(c.rsc)||topIds.includes(c['with-rsc']))
+      }
+    }).replace(/'/g, "\\'");
+
+    const idList = topIds.map(id => escHtml(id)).join(' · ');
+    html += `<div class="d-flex align-items-center gap-2 p-2 border rounded mb-2 bg-light">
+      <span class="badge bg-primary">#${idx+1}</span>
+      <span class="small flex-grow-1 text-truncate">${idList}</span>
+      <button type="button" class="btn btn-sm btn-warning py-0" onclick="applyServiceToForm('${applyData}')">
+        <i class="bi bi-arrow-down-circle"></i> 폼에 적용
+      </button>
+    </div>`;
+  });
 
   el.innerHTML = html;
 }
 
-function isNullOrEmpty(v) {
-  if (v === null || v === undefined) return true;
-  if (Array.isArray(v) && v.length === 0) return true;
-  if (typeof v === 'object' && Object.keys(v).length === 0) return true;
-  return false;
+// Union-Find 기반 서비스 분리
+function buildServiceGroups(resources, constraints) {
+  const resMap = {};
+  resources.forEach(r => {
+    resMap[r.id] = r;
+    (r.members||[]).forEach(m => { resMap[m.id] = m; });
+  });
+  const p = {};
+  Object.keys(resMap).forEach(id => p[id] = id);
+  const find = id => { if (p[id] !== id) p[id] = find(p[id]); return p[id] || id; };
+  const union = (a, b) => {
+    if (!p[a]) p[a] = a; if (!p[b]) p[b] = b;
+    const pa = find(a), pb = find(b);
+    if (pa !== pb) p[pa] = pb;
+  };
+  (constraints.rsc_order||[]).forEach(c => union(c.first, c.then));
+  (constraints.rsc_colocation||[]).forEach(c => union(c.rsc, c['with-rsc']));
+  resources.forEach(r => (r.members||[]).forEach(m => union(r.id, m.id)));
+  const comps = {};
+  Object.keys(resMap).forEach(id => {
+    const root = find(id);
+    if (!comps[root]) comps[root] = [];
+    if (!comps[root].includes(id)) comps[root].push(id);
+  });
+  return Object.values(comps).map(ids => resources.filter(r => ids.includes(r.id))).filter(s => s.length > 0);
 }
 
-function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function classifyResource(r) {
+  const agent = (r.agentname || r.resource_agent || '').toLowerCase();
+  const ct = (r.class_type || '').toLowerCase();
+  if (ct === 'clone' && (r.id.toLowerCase().includes('drbd') || agent.includes('drbd'))) return 'drbd';
+  if (ct === 'clone') return 'clone';
+  if (agent.includes('filesystem') || r.type === 'Filesystem') return 'fs';
+  if (ct === 'group') return 'group';
+  if (agent.includes('systemd') || (r.instance_attr||[]).some(a => a.name==='user_name')) return 'systemd';
+  return 'primitive';
 }
 
-function parsePcsdResources(resources) {
-  // resources 가 배열인 경우 (crm_mon 스타일)
-  const items = Array.isArray(resources) ? resources : (resources.resources || [resources]);
-  return items.map(r => ({
-    id:         r.id || r.resource_id || '(unknown)',
-    agent:      r.resource_agent || r.class_type || r.type || '',
-    role:       r.role || '',
-    active:     r.active,
-    managed:    r.managed,
-    group:      r.group || '',
-    clone:      !!(r.clone || r.promotable || (r.type||'').toLowerCase().includes('clone')),
-    promotable: !!(r.promotable),
-    nodes_running_on: r.nodes_running_on || [],
-  }));
-}
+// pcsd 서비스 데이터를 폼에 자동 적용
+function applyServiceToForm(dataStr) {
+  const { resources, constraints } = JSON.parse(dataStr);
+  const resMap = {};
+  resources.forEach(r => { resMap[r.id] = r; (r.members||[]).forEach(m => resMap[m.id]=m); });
 
-function renderResourceTable(items) {
-  if (!items.length) return '';
-  const rows = items.map(r => {
-    const badges = [];
-    if (r.clone)      badges.push('<span class="badge bg-secondary">clone</span>');
-    if (r.promotable) badges.push('<span class="badge bg-primary">promotable</span>');
-    if (r.group)      badges.push(`<span class="badge bg-light text-dark border">group: ${escHtml(r.group)}</span>`);
-    const activeIcon = r.active === false ? '<i class="bi bi-x-circle text-danger"></i>'
-                     : r.active === true  ? '<i class="bi bi-check-circle text-success"></i>'
-                     : '';
-    return `<tr>
-      <td class="fw-semibold">${escHtml(r.id)}</td>
-      <td class="small text-muted">${escHtml(r.agent)}</td>
-      <td>${badges.join(' ')}</td>
-      <td>${activeIcon}</td>
-    </tr>`;
-  }).join('');
-  return `<div class="mb-3 p-2 border rounded">
-    <div class="fw-semibold small mb-1"><i class="bi bi-boxes"></i> 리소스 (${items.length}개)</div>
-    <table class="table table-sm table-bordered mb-0 small">
-      <thead class="table-light"><tr><th>ID</th><th>Agent</th><th>속성</th><th>상태</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  </div>`;
-}
+  const drbdResources = resources.filter(r => classifyResource(r) === 'drbd');
+  const orders = constraints.rsc_order || [];
 
-function renderConstraintTable(constraints) {
-  const sections = [];
+  drbdGroups = drbdResources.map(drbd => {
+    const fsId = orders.find(o => o.first === drbd.id && classifyResource(resMap[o.then]||{}) === 'fs')?.then;
+    const fsRes = fsId ? resMap[fsId] : null;
+    const fsAttrs = {};
+    (fsRes?.instance_attr||[]).forEach(a => fsAttrs[a.name]=a.value);
+    const resName = drbd.id.replace(/^drbd[_-]/,'').replace(/-clone$/,'');
+    return {
+      resource_name:           drbd.id.replace(/-clone$/, ''),
+      drbd_resource_name:      resName,
+      clone_name:              drbd.id,
+      notify:                  true,
+      on_fail:                 'fence',
+      target_role_master_node: '',
+      fs: {
+        resource_name:    fsId || ('fs-' + resName),
+        device:           fsAttrs.device  || ('/dev/drbd/by-res/' + resName + '/0'),
+        directory:        fsAttrs.directory || ('/mnt/drbd/' + resName),
+        fstype:           fsAttrs.fstype || 'xfs',
+        monitor_interval: '20s',
+        start_timeout:    '60s',
+        stop_timeout:     '60s',
+      },
+    };
+  });
+  renderDrbdGroups();
 
-  // order constraints
-  const orders = constraints.order_constraints || constraints.orders || constraints.order || [];
-  if (Array.isArray(orders) && orders.length) {
-    const rows = orders.map(c => `<tr>
-      <td>${escHtml(c.id||'')}</td>
-      <td>${escHtml(c.first||c.resource_first||'')} → ${escHtml(c.then||c.resource_then||'')}</td>
-      <td>${escHtml(c.kind||'')}</td>
-    </tr>`).join('');
-    sections.push(`<div class="mb-2">
-      <div class="small fw-semibold mb-1 text-secondary">Order (${orders.length})</div>
-      <table class="table table-sm table-bordered mb-0 small">
-        <thead class="table-light"><tr><th>ID</th><th>순서</th><th>Kind</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`);
+  // DRBD 섹션 열기
+  const drbdSec = document.getElementById('pmSecDrbd');
+  if (!drbdSec.classList.contains('show')) new bootstrap.Collapse(drbdSec, { toggle: false }).show();
+
+  const groups = resources.filter(r => classifyResource(r) === 'group');
+  if (groups.length) {
+    const firstFs = drbdGroups.length && drbdGroups[0].fs ? drbdGroups[0].fs.resource_name : '';
+    const grpData = groups.map(g => ({
+      group_name: g.id,
+      members:    (g.members||[]).map(m=>m.id),
+      after_fs:   firstFs,
+    }));
+    const grpEl = document.getElementById('grpJson');
+    const val = JSON.stringify(grpData, null, 2);
+    if (grpEl._cmEditor) grpEl._cmEditor.setValue(val); else grpEl.value = val;
+
+    const grpSec = document.getElementById('pmSecGrp');
+    if (!grpSec.classList.contains('show')) new bootstrap.Collapse(grpSec, { toggle: false }).show();
   }
 
-  // colocation constraints
-  const cols = constraints.colocation_constraints || constraints.colocations || constraints.colocation || [];
-  if (Array.isArray(cols) && cols.length) {
-    const rows = cols.map(c => `<tr>
-      <td>${escHtml(c.id||'')}</td>
-      <td>${escHtml(c.rsc||c.resource||'')} ↔ ${escHtml(c.with_rsc||c.with_resource||'')}</td>
-      <td>${escHtml(String(c.score||''))}</td>
-    </tr>`).join('');
-    sections.push(`<div class="mb-2">
-      <div class="small fw-semibold mb-1 text-secondary">Colocation (${cols.length})</div>
-      <table class="table table-sm table-bordered mb-0 small">
-        <thead class="table-light"><tr><th>ID</th><th>리소스</th><th>Score</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`);
+  const svcItems = [];
+  groups.forEach(g => {
+    (g.members||[]).forEach(m => {
+      svcItems.push({
+        resource_name:    m.id,
+        systemd_unit:     m.id + '.service',
+        resource_type:    'container',
+        monitor_interval: '30s',
+        start_timeout:    '60s',
+        stop_timeout:     '60s',
+        clone:            false,
+      });
+    });
+  });
+  if (svcItems.length) {
+    const svcEl = document.getElementById('svcJson');
+    const val = JSON.stringify(svcItems, null, 2);
+    if (svcEl._cmEditor) svcEl._cmEditor.setValue(val); else svcEl.value = val;
+
+    const svcSec = document.getElementById('pmSecSvc');
+    if (!svcSec.classList.contains('show')) new bootstrap.Collapse(svcSec, { toggle: false }).show();
   }
-
-  // location constraints
-  const locs = constraints.location_constraints || constraints.locations || constraints.location || [];
-  if (Array.isArray(locs) && locs.length) {
-    const rows = locs.map(c => `<tr>
-      <td>${escHtml(c.id||'')}</td>
-      <td>${escHtml(c.rsc||c.resource||'')}</td>
-      <td>${escHtml(c.node||'')} (${escHtml(String(c.score||''))})</td>
-    </tr>`).join('');
-    sections.push(`<div class="mb-2">
-      <div class="small fw-semibold mb-1 text-secondary">Location (${locs.length})</div>
-      <table class="table table-sm table-bordered mb-0 small">
-        <thead class="table-light"><tr><th>ID</th><th>리소스</th><th>노드 (Score)</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`);
-  }
-
-  if (!sections.length) return '';
-
-  return `<div class="mb-3 p-2 border rounded">
-    <div class="fw-semibold small mb-2"><i class="bi bi-link-45deg"></i> 제약조건</div>
-    ${sections.join('')}
-  </div>`;
 }
 
 function applyPcsdNodes(nodes) {
@@ -595,6 +907,5 @@ function applyPcsdNodes(nodes) {
   pmRenderSelected();
   pmRebuildPool();
 }
-
 </script>
 {% endblock %}

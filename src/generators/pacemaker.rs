@@ -1,9 +1,9 @@
 use crate::models::pacemaker::{
-    ColocationConstraint, DrbdPacemakerResource, LocationConstraint, OrderConstraint,
-    PacemakerConfig, SystemdResource,
+    ColocationConstraint, DrbdPacemakerResource, FsResource, LocationConstraint,
+    OrderConstraint, PacemakerConfig, ResourceGroup, SystemdResource,
 };
 
-/// pcs コマンド スクリプト 전체 생성
+/// pcs 명령 스크립트 전체 생성
 pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     let mut lines: Vec<String> = Vec::new();
 
@@ -44,11 +44,31 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
         lines.push(String::new());
     }
 
+    // Filesystem 리소스 (DRBD 볼륨 위 마운트)
+    if !config.fs_resources.is_empty() {
+        lines.push("# ─── Filesystem 리소스 (ocf:heartbeat:Filesystem) ───────────".to_string());
+        lines.push("# DRBD가 Primary로 승격된 후 볼륨을 마운트합니다.".to_string());
+        for fs in &config.fs_resources {
+            lines.extend(generate_fs_resource_cmds(fs));
+        }
+        lines.push(String::new());
+    }
+
     // Systemd (Quadlet) 리소스
     if !config.systemd_resources.is_empty() {
-        lines.push("# ─── Quadlet Systemd 리소스 ──────────────────────────────────".to_string());
+        lines.push("# ─── Quadlet Systemd 리소스 (Pod / Container) ───────────────".to_string());
         for svc in &config.systemd_resources {
             lines.extend(generate_systemd_resource_cmds(svc));
+        }
+        lines.push(String::new());
+    }
+
+    // 리소스 그룹 (Pod + Container들을 순서대로 묶음)
+    if !config.resource_groups.is_empty() {
+        lines.push("# ─── 리소스 그룹 (Pod → Container 순서 보장) ───────────────".to_string());
+        lines.push("# 그룹 내 start: members 순서대로, stop: 역순 자동 처리".to_string());
+        for grp in &config.resource_groups {
+            lines.push(generate_resource_group_cmd(grp));
         }
         lines.push(String::new());
     }
@@ -87,7 +107,6 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
 fn generate_drbd_resource_cmds(drbd: &DrbdPacemakerResource) -> Vec<String> {
     let mut cmds = Vec::new();
 
-    // 기본 DRBD 리소스 에이전트 등록
     cmds.push(format!(
         "pcs resource create {name} ocf:linbit:drbd \\",
         name = drbd.resource_name
@@ -96,24 +115,15 @@ fn generate_drbd_resource_cmds(drbd: &DrbdPacemakerResource) -> Vec<String> {
         "    drbd_resource={res} \\",
         res = drbd.drbd_resource_name
     ));
-    cmds.push(format!(
-        "    op monitor interval=29s role=Promoted \\",
-    ));
-    cmds.push(format!(
-        "    op monitor interval=31s role=Unpromoted"
-    ));
+    cmds.push("    op monitor interval=29s role=Promoted \\".to_string());
+    cmds.push("    op monitor interval=31s role=Unpromoted".to_string());
 
-    // Promotable Clone
     cmds.push(format!(
         "pcs resource promotable {name} \\",
         name = drbd.resource_name
     ));
-    cmds.push(format!(
-        "    promoted-max=1 promoted-node-max=1 \\",
-    ));
-    cmds.push(format!(
-        "    clone-max=2 clone-node-max=1 \\",
-    ));
+    cmds.push("    promoted-max=1 promoted-node-max=1 \\".to_string());
+    cmds.push("    clone-max=2 clone-node-max=1 \\".to_string());
     cmds.push(format!(
         "    notify={notify} \\",
         notify = drbd.notify
@@ -123,7 +133,6 @@ fn generate_drbd_resource_cmds(drbd: &DrbdPacemakerResource) -> Vec<String> {
         clone_name = drbd.clone_name
     ));
 
-    // 선호 Primary 노드
     if let Some(node) = &drbd.target_role_master_node {
         cmds.push(format!(
             "pcs constraint location {clone} prefers {node}=200",
@@ -133,6 +142,21 @@ fn generate_drbd_resource_cmds(drbd: &DrbdPacemakerResource) -> Vec<String> {
     }
 
     cmds
+}
+
+fn generate_fs_resource_cmds(fs: &FsResource) -> Vec<String> {
+    vec![
+        format!(
+            "pcs resource create {name} ocf:heartbeat:Filesystem \\",
+            name = fs.resource_name
+        ),
+        format!("    device={dev} \\", dev = fs.device),
+        format!("    directory={dir} \\", dir = fs.directory),
+        format!("    fstype={fs} \\", fs = fs.fstype),
+        format!("    op monitor interval={mon} \\", mon = fs.monitor_interval),
+        format!("    op start  timeout={start} \\", start = fs.start_timeout),
+        format!("    op stop   timeout={stop}", stop = fs.stop_timeout),
+    ]
 }
 
 fn generate_systemd_resource_cmds(svc: &SystemdResource) -> Vec<String> {
@@ -167,6 +191,14 @@ fn generate_systemd_resource_cmds(svc: &SystemdResource) -> Vec<String> {
     }
 
     cmds
+}
+
+fn generate_resource_group_cmd(grp: &ResourceGroup) -> String {
+    format!(
+        "pcs resource group add {group} {members}",
+        group = grp.group_name,
+        members = grp.members.join(" "),
+    )
 }
 
 fn generate_order_constraint(ord: &OrderConstraint) -> String {
@@ -215,31 +247,129 @@ fn generate_location_constraint(loc: &LocationConstraint) -> String {
 }
 
 /// 기본 권장 제약조건 자동 생성
-/// DRBD Promoted → Quadlet 서비스 시작 순서 보장
+///
+/// 체인: DRBD promote → FS mount start → Group(Pod→Container) start
+/// Move 시 역순: Group stop → FS unmount → DRBD demote
+///
+/// 케이스별 처리:
+/// 1. DRBD + FS + Group  → DRBD→FS, FS→Group (권장)
+/// 2. DRBD + FS (그룹 없음) → DRBD→FS, FS→각 systemd 리소스
+/// 3. DRBD + 그룹 (FS 없음) → DRBD→Group
+/// 4. DRBD만 (레거시) → DRBD→각 systemd 리소스
 pub fn generate_default_constraints(config: &mut PacemakerConfig) {
-    for drbd in &config.drbd_resources {
-        for svc in &config.systemd_resources {
-            // DRBD가 Promoted 상태가 된 후에 서비스 시작
-            let order_id = format!("ord-{}-after-{}", svc.resource_name, drbd.clone_name);
-            config.order_constraints.push(OrderConstraint {
-                id: order_id,
-                first: drbd.clone_name.clone(),
-                first_action: "promote".to_string(),
-                then: svc.resource_name.clone(),
-                then_action: "start".to_string(),
-                kind: "Mandatory".to_string(),
-            });
+    // 사전에 필요한 데이터를 복제 (borrow checker 회피)
+    let drbd_list: Vec<_> = config.drbd_resources.clone();
+    let fs_list: Vec<_> = config.fs_resources.clone();
+    let svc_list: Vec<_> = config.systemd_resources.clone();
+    let grp_list: Vec<_> = config.resource_groups.clone();
 
-            // 서비스는 DRBD Promoted 노드와 같은 노드에서 실행
-            let col_id = format!("col-{}-with-{}", svc.resource_name, drbd.clone_name);
-            config.colocation_constraints.push(ColocationConstraint {
-                id: col_id,
-                rsc: svc.resource_name.clone(),
-                rsc_role: None,
-                with_rsc: drbd.clone_name.clone(),
-                with_rsc_role: Some("Promoted".to_string()),
-                score: "INFINITY".to_string(),
-            });
+    for drbd in &drbd_list {
+        if !fs_list.is_empty() {
+            // ── 1단계: DRBD → FS ─────────────────────────────────────────────
+            for fs in &fs_list {
+                let linked_drbd = if fs.drbd_clone_name.is_empty() {
+                    &drbd.clone_name
+                } else {
+                    &fs.drbd_clone_name
+                };
+                // FS가 다른 DRBD에 귀속된 경우 건너뜀
+                if !fs.drbd_clone_name.is_empty() && fs.drbd_clone_name != drbd.clone_name {
+                    continue;
+                }
+
+                config.order_constraints.push(OrderConstraint {
+                    id: format!("ord-{}-after-{}", fs.resource_name, linked_drbd),
+                    first: linked_drbd.clone(),
+                    first_action: "promote".to_string(),
+                    then: fs.resource_name.clone(),
+                    then_action: "start".to_string(),
+                    kind: "Mandatory".to_string(),
+                });
+                config.colocation_constraints.push(ColocationConstraint {
+                    id: format!("col-{}-with-{}", fs.resource_name, linked_drbd),
+                    rsc: fs.resource_name.clone(),
+                    rsc_role: None,
+                    with_rsc: linked_drbd.clone(),
+                    with_rsc_role: Some("Promoted".to_string()),
+                    score: "INFINITY".to_string(),
+                });
+
+                // ── 2단계: FS → Group 또는 FS → 개별 리소스 ─────────────────
+                let groups_for_fs: Vec<&ResourceGroup> = grp_list
+                    .iter()
+                    .filter(|g| {
+                        g.after_fs.as_deref() == Some(&fs.resource_name)
+                            || g.after_fs.is_none()
+                    })
+                    .collect();
+
+                if !groups_for_fs.is_empty() {
+                    for grp in groups_for_fs {
+                        config.order_constraints.push(OrderConstraint {
+                            id: format!("ord-{}-after-{}", grp.group_name, fs.resource_name),
+                            first: fs.resource_name.clone(),
+                            first_action: "start".to_string(),
+                            then: grp.group_name.clone(),
+                            then_action: "start".to_string(),
+                            kind: "Mandatory".to_string(),
+                        });
+                        config.colocation_constraints.push(ColocationConstraint {
+                            id: format!("col-{}-with-{}", grp.group_name, fs.resource_name),
+                            rsc: grp.group_name.clone(),
+                            rsc_role: None,
+                            with_rsc: fs.resource_name.clone(),
+                            with_rsc_role: None,
+                            score: "INFINITY".to_string(),
+                        });
+                    }
+                } else {
+                    // 그룹 없음 → 개별 systemd 리소스에 직접 연결
+                    for svc in &svc_list {
+                        config.order_constraints.push(OrderConstraint {
+                            id: format!("ord-{}-after-{}", svc.resource_name, fs.resource_name),
+                            first: fs.resource_name.clone(),
+                            first_action: "start".to_string(),
+                            then: svc.resource_name.clone(),
+                            then_action: "start".to_string(),
+                            kind: "Mandatory".to_string(),
+                        });
+                        config.colocation_constraints.push(ColocationConstraint {
+                            id: format!("col-{}-with-{}", svc.resource_name, fs.resource_name),
+                            rsc: svc.resource_name.clone(),
+                            rsc_role: None,
+                            with_rsc: fs.resource_name.clone(),
+                            with_rsc_role: None,
+                            score: "INFINITY".to_string(),
+                        });
+                    }
+                }
+            }
+        } else {
+            // FS 없음 — DRBD → Group 또는 DRBD → 개별 리소스
+            let targets: Vec<String> = if !grp_list.is_empty() {
+                grp_list.iter().map(|g| g.group_name.clone()).collect()
+            } else {
+                svc_list.iter().map(|s| s.resource_name.clone()).collect()
+            };
+
+            for target in targets {
+                config.order_constraints.push(OrderConstraint {
+                    id: format!("ord-{}-after-{}", target, drbd.clone_name),
+                    first: drbd.clone_name.clone(),
+                    first_action: "promote".to_string(),
+                    then: target.clone(),
+                    then_action: "start".to_string(),
+                    kind: "Mandatory".to_string(),
+                });
+                config.colocation_constraints.push(ColocationConstraint {
+                    id: format!("col-{}-with-{}", target, drbd.clone_name),
+                    rsc: target.clone(),
+                    rsc_role: None,
+                    with_rsc: drbd.clone_name.clone(),
+                    with_rsc_role: Some("Promoted".to_string()),
+                    score: "INFINITY".to_string(),
+                });
+            }
         }
     }
 }
@@ -271,12 +401,53 @@ pub fn generate_cib_xml_snippet(config: &PacemakerConfig) -> String {
         xml.push_str("      </clone>\n");
     }
 
-    for svc in &config.systemd_resources {
+    for fs in &config.fs_resources {
         xml.push_str(&format!(
-            "      <primitive id=\"{name}\" class=\"systemd\" type=\"{unit}\"/>\n",
-            name = svc.resource_name,
-            unit = svc.systemd_unit,
+            "      <primitive id=\"{name}\" class=\"ocf\" provider=\"heartbeat\" type=\"Filesystem\">\n",
+            name = fs.resource_name
         ));
+        xml.push_str("        <instance_attributes>\n");
+        xml.push_str(&format!(
+            "          <nvpair name=\"device\" value=\"{dev}\"/>\n",
+            dev = fs.device
+        ));
+        xml.push_str(&format!(
+            "          <nvpair name=\"directory\" value=\"{dir}\"/>\n",
+            dir = fs.directory
+        ));
+        xml.push_str(&format!(
+            "          <nvpair name=\"fstype\" value=\"{fs}\"/>\n",
+            fs = fs.fstype
+        ));
+        xml.push_str("        </instance_attributes>\n");
+        xml.push_str("      </primitive>\n");
+    }
+
+    for grp in &config.resource_groups {
+        xml.push_str(&format!(
+            "      <group id=\"{group}\">\n",
+            group = grp.group_name
+        ));
+        for member in &grp.members {
+            xml.push_str(&format!(
+                "        <primitive id=\"{m}\"/>\n",
+                m = member
+            ));
+        }
+        xml.push_str("      </group>\n");
+    }
+
+    for svc in &config.systemd_resources {
+        // 그룹에 속하지 않는 리소스만 표시
+        let in_group = config.resource_groups.iter()
+            .any(|g| g.members.contains(&svc.resource_name));
+        if !in_group {
+            xml.push_str(&format!(
+                "      <primitive id=\"{name}\" class=\"systemd\" type=\"{unit}\"/>\n",
+                name = svc.resource_name,
+                unit = svc.systemd_unit,
+            ));
+        }
     }
 
     xml.push_str("    </resources>\n");

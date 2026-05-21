@@ -9,7 +9,8 @@ use tera::Context;
 use crate::AppState;
 use crate::models::pacemaker::{
     ClusterConfig, ClusterNode, ColocationConstraint, DrbdPacemakerResource,
-    LocationConstraint, OrderConstraint, PacemakerConfig, SystemdResource, SystemdResourceType,
+    FsResource, LocationConstraint, OrderConstraint, PacemakerConfig,
+    ResourceGroup, SystemdResource, SystemdResourceType,
 };
 use crate::generators::pacemaker::{
     generate_pcs_script, generate_default_constraints, generate_cib_xml_snippet,
@@ -35,16 +36,14 @@ pub struct PacemakerFormData {
     pub migration_threshold: Option<u32>,
     pub failure_timeout: Option<String>,
 
-    // DRBD 리소스
-    pub drbd_resource_name: String,        // pacemaker 리소스 이름
-    pub drbd_res_name: String,             // DRBD .res의 resource 이름
-    pub drbd_clone_name: String,
-    pub drbd_notify: Option<String>,
-    pub drbd_on_fail: Option<String>,
-    pub drbd_preferred_primary: Option<String>,
+    // DRBD 리소스 목록 (JSON 배열) — 각 항목에 FS 리소스 포함
+    pub drbd_resources_json: Option<String>,
 
     // Systemd 리소스 목록 (JSON 배열)
     pub systemd_resources_json: Option<String>,
+
+    // 리소스 그룹 목록 (JSON 배열)
+    pub resource_groups_json: Option<String>,
 
     // 제약조건 자동 생성 여부
     pub auto_constraints: Option<String>,
@@ -62,6 +61,36 @@ pub struct PacemakerFormData {
     pub ansible_hosts: Option<String>,
     pub ansible_user: Option<String>,
     pub ansible_ssh_key: Option<String>,
+}
+
+/// UI에서 DRBD+FS 묶음으로 입력받는 구조체
+#[derive(Debug, Deserialize, Serialize)]
+pub struct DrbdGroupInput {
+    pub resource_name: String,          // pacemaker 리소스 이름 (drbd-r0)
+    pub drbd_resource_name: String,     // .res resource 이름 (r0)
+    pub clone_name: String,             // clone 이름 (drbd-r0-clone)
+    pub notify: Option<bool>,
+    pub on_fail: Option<String>,
+    pub target_role_master_node: Option<String>,
+    pub fs: Option<FsResourceInput>,    // 연결된 FS 리소스 (없으면 None)
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct FsResourceInput {
+    pub resource_name: String,
+    pub device: String,
+    pub directory: String,
+    pub fstype: Option<String>,
+    pub monitor_interval: Option<String>,
+    pub start_timeout: Option<String>,
+    pub stop_timeout: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ResourceGroupInput {
+    pub group_name: String,
+    pub members: Vec<String>,    // 순서 있는 리소스 이름 목록
+    pub after_fs: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -112,19 +141,40 @@ pub async fn generate(
         failure_timeout: form.failure_timeout.clone().unwrap_or_else(|| "60s".to_string()),
     };
 
-    // DRBD 리소스
-    config.drbd_resources.push(DrbdPacemakerResource {
-        resource_name: form.drbd_resource_name.clone(),
-        drbd_resource_name: form.drbd_res_name.clone(),
-        clone_name: form.drbd_clone_name.clone(),
-        notify: form.drbd_notify.as_deref() == Some("on"),
-        promotable: true,
-        on_fail: form.drbd_on_fail.clone().unwrap_or_else(|| "fence".to_string()),
-        target_role_master_node: form
-            .drbd_preferred_primary
-            .clone()
-            .filter(|s| !s.trim().is_empty()),
-    });
+    // DRBD + FS 리소스 파싱 (UI에서 묶음으로 입력)
+    if let Some(json) = &form.drbd_resources_json {
+        if !json.trim().is_empty() {
+            if let Ok(groups) = serde_json::from_str::<Vec<DrbdGroupInput>>(json) {
+                for g in groups {
+                    if g.resource_name.is_empty() { continue; }
+                    config.drbd_resources.push(DrbdPacemakerResource {
+                        resource_name: g.resource_name.clone(),
+                        drbd_resource_name: g.drbd_resource_name.clone(),
+                        clone_name: g.clone_name.clone(),
+                        notify: g.notify.unwrap_or(true),
+                        promotable: true,
+                        on_fail: g.on_fail.unwrap_or_else(|| "fence".to_string()),
+                        target_role_master_node: g.target_role_master_node
+                            .filter(|s| !s.trim().is_empty()),
+                    });
+                    if let Some(fs) = g.fs {
+                        if !fs.resource_name.is_empty() {
+                            config.fs_resources.push(FsResource {
+                                resource_name: fs.resource_name,
+                                device: fs.device,
+                                directory: fs.directory,
+                                fstype: fs.fstype.unwrap_or_else(|| "xfs".to_string()),
+                                monitor_interval: fs.monitor_interval.unwrap_or_else(|| "20s".to_string()),
+                                start_timeout: fs.start_timeout.unwrap_or_else(|| "60s".to_string()),
+                                stop_timeout: fs.stop_timeout.unwrap_or_else(|| "60s".to_string()),
+                                drbd_clone_name: g.clone_name.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Systemd 리소스 파싱
     if let Some(json) = &form.systemd_resources_json {
@@ -152,6 +202,23 @@ pub async fn generate(
                         clone: input.clone.unwrap_or(false),
                         clone_name: input.clone_name,
                     });
+                }
+            }
+        }
+    }
+
+    // 리소스 그룹 파싱
+    if let Some(json) = &form.resource_groups_json {
+        if !json.trim().is_empty() {
+            if let Ok(inputs) = serde_json::from_str::<Vec<ResourceGroupInput>>(json) {
+                for input in inputs {
+                    if !input.group_name.is_empty() && !input.members.is_empty() {
+                        config.resource_groups.push(ResourceGroup {
+                            group_name: input.group_name,
+                            members: input.members,
+                            after_fs: input.after_fs,
+                        });
+                    }
                 }
             }
         }
@@ -285,21 +352,13 @@ fn generate_pacemaker_ansible_playbook(
 
 #[derive(Debug, Deserialize)]
 pub struct PcsdFetchRequest {
-    pub pcsd_url:  String,
-    pub pcsd_user: String,
-    pub pcsd_pass: String,
+    pub pcsd_url: String,
 }
 
 pub async fn api_pcsd_fetch(
     Json(req): Json<PcsdFetchRequest>,
 ) -> impl IntoResponse {
-    if req.pcsd_pass.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "ok": false, "message": "비밀번호가 필요합니다" })),
-        ).into_response();
-    }
-    match pcsd_fetch_cluster_info(&req.pcsd_url, &req.pcsd_user, &req.pcsd_pass).await {
+    match pcsd_fetch_cluster_info(&req.pcsd_url).await {
         Ok(data) => Json(serde_json::json!({ "ok": true, "data": data })).into_response(),
         Err(e) => (
             StatusCode::BAD_GATEWAY,
@@ -308,112 +367,95 @@ pub async fn api_pcsd_fetch(
     }
 }
 
-async fn pcsd_fetch_cluster_info(
-    url: &str,
-    user: &str,
-    pass: &str,
-) -> anyhow::Result<serde_json::Value> {
+/// `/remote/status` 엔드포인트 + 로컬 known-hosts 토큰으로 클러스터 상태 조회
+async fn pcsd_fetch_cluster_info(url: &str) -> anyhow::Result<serde_json::Value> {
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .build()?;
 
     let base = url.trim_end_matches('/');
 
-    // 1. 로그인 → 토큰 획득
-    let login_resp = client
-        .post(&format!("{}/api/v1/auth/login", base))
-        .json(&serde_json::json!({"username": user, "password": pass}))
-        .send()
-        .await?;
-
-    if !login_resp.status().is_success() {
-        return Err(anyhow::anyhow!("pcsd 로그인 실패: HTTP {}", login_resp.status()));
-    }
-
-    let login_data: serde_json::Value = login_resp.json().await?;
-    let token = login_data["token"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("pcsd 응답에서 토큰을 찾을 수 없습니다"))?
+    // URL 에서 호스트명 추출
+    let host = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split(':').next()
+        .unwrap_or("localhost")
         .to_string();
 
-    // 2. 클러스터 상태 조회
-    let status_resp = client
-        .get(&format!("{}/api/v1/cluster/status", base))
-        .bearer_auth(&token)
+    // /var/lib/pcsd/known-hosts 에서 노드 토큰 읽기
+    let token = pcsd_read_node_token(&host)?;
+
+    // /remote/status — 노드/리소스/제약조건 전체 포함
+    let resp = client
+        .get(&format!("{}/remote/status?version=2&operations=1", base))
+        .header("Cookie", format!("token={}", token))
         .send()
         .await?;
 
-    if !status_resp.status().is_success() {
+    if !resp.status().is_success() {
         return Err(anyhow::anyhow!(
             "클러스터 상태 조회 실패: HTTP {}",
-            status_resp.status()
+            resp.status()
         ));
     }
 
-    let status: serde_json::Value = status_resp.json().await?;
+    let status: serde_json::Value = resp.json().await?;
 
-    // 클러스터 이름 및 노드 추출
-    let cluster_name = status["cluster_settings"]["cluster_name"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    if status.get("notauthorized").and_then(|v| v.as_str()) == Some("true") {
+        return Err(anyhow::anyhow!(
+            "pcsd 인증 실패: known-hosts 토큰이 유효하지 않습니다"
+        ));
+    }
 
-    let nodes: Vec<serde_json::Value> = status["cluster_settings"]["nodes"]
+    let cluster_name = status["cluster_name"].as_str().unwrap_or("").to_string();
+
+    // known_nodes / corosync_online 에서 노드 목록 추출
+    let nodes: Vec<serde_json::Value> = status["corosync_online"]
         .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|n| {
-                    let name = n["name"].as_str()?;
-                    let addr = n["addr"].as_str().unwrap_or("");
-                    Some(serde_json::json!({ "name": name, "addr": addr }))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+        .into_iter().flatten()
+        .filter_map(|v| v.as_str())
+        .map(|n| serde_json::json!({"name": n, "addr": n}))
+        .collect();
 
-    // 리소스 정보 추출 (pcsd 버전에 따라 경로가 다를 수 있음)
-    let resources = pcsd_find_resources(&status);
-
-    // 제약조건 추출
-    let constraints = pcsd_find_constraints(&status);
+    let resources = status.get("resource_list").cloned()
+        .unwrap_or(serde_json::Value::Array(vec![]));
+    let constraints = status.get("constraints").cloned()
+        .unwrap_or(serde_json::Value::Object(Default::default()));
+    let groups = status.get("groups").cloned()
+        .unwrap_or(serde_json::Value::Array(vec![]));
 
     Ok(serde_json::json!({
         "cluster_name": cluster_name,
         "nodes": nodes,
         "resources": resources,
         "constraints": constraints,
+        "groups": groups,
         "raw_status": status,
     }))
 }
 
-/// 클러스터 상태 JSON 에서 리소스 배열을 찾아 반환 (경로 여러 곳 시도)
-fn pcsd_find_resources(v: &serde_json::Value) -> serde_json::Value {
-    // pcs 0.11+ / pcsd v2 — pacemaker.resources
-    if let Some(r) = v.pointer("/pacemaker/resources") {
-        if !r.is_null() { return r.clone(); }
-    }
-    // 일부 버전 — resources 최상위
-    if let Some(r) = v.get("resources") {
-        if !r.is_null() { return r.clone(); }
-    }
-    // cluster_info.resources
-    if let Some(r) = v.pointer("/cluster_info/resources") {
-        if !r.is_null() { return r.clone(); }
-    }
-    serde_json::Value::Null
+/// /var/lib/pcsd/known-hosts 에서 hostname 에 해당하는 토큰 반환
+/// 정확히 일치하는 호스트 없으면 첫 번째 항목 사용
+fn pcsd_read_node_token(host: &str) -> anyhow::Result<String> {
+    let path = "/var/lib/pcsd/known-hosts";
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("{} 읽기 실패: {}.\n클러스터 노드에서 실행해야 합니다.", path, e))?;
+
+    let json: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("{} 파싱 실패: {}", path, e))?;
+
+    let known = json.get("known_hosts")
+        .ok_or_else(|| anyhow::anyhow!("known_hosts 키 없음"))?;
+
+    let entry = known.get(host)
+        .or_else(|| known.as_object().and_then(|m| m.values().next()));
+
+    entry
+        .and_then(|e| e.get("token"))
+        .and_then(|t| t.as_str())
+        .map(|t| t.to_string())
+        .ok_or_else(|| anyhow::anyhow!("호스트 '{}' 의 토큰을 찾을 수 없습니다", host))
 }
 
-/// 클러스터 상태 JSON 에서 제약조건 오브젝트를 찾아 반환
-fn pcsd_find_constraints(v: &serde_json::Value) -> serde_json::Value {
-    if let Some(c) = v.pointer("/pacemaker/constraints") {
-        if !c.is_null() { return c.clone(); }
-    }
-    if let Some(c) = v.get("constraints") {
-        if !c.is_null() { return c.clone(); }
-    }
-    if let Some(c) = v.pointer("/cluster_info/constraints") {
-        if !c.is_null() { return c.clone(); }
-    }
-    serde_json::Value::Null
-}

@@ -79,6 +79,7 @@
             <tr>
               <th>이름</th>
               <th>드라이버</th>
+              <th>스택</th>
               <th>인터페이스 <small class="text-muted fw-normal">(자동감지)</small></th>
               <th>IPv4 서브넷 / 게이트웨이</th>
               <th>IPv6 서브넷 / 게이트웨이</th>
@@ -87,7 +88,7 @@
               <th style="width:80px"></th>
             </tr>
           </thead>
-          <tbody id="netsTbody"><tr><td colspan="8" class="text-center text-muted py-3">로딩 중...</td></tr></tbody>
+          <tbody id="netsTbody"><tr><td colspan="9" class="text-center text-muted py-3">로딩 중...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -182,9 +183,10 @@
     <div class="modal-content">
       <div class="modal-header"><h5 class="modal-title">네트워크 추가</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
       <div class="modal-body row g-3">
-        <div class="col-md-6"><label class="form-label">이름 <span class="text-danger">*</span></label>
-          <input class="form-control" id="netName" placeholder="ipvlan0"></div>
-        <div class="col-md-3"><label class="form-label">드라이버</label>
+        <!-- 기본 정보 -->
+        <div class="col-md-5"><label class="form-label">이름 <span class="text-danger">*</span></label>
+          <input class="form-control" id="netName" placeholder="public-ipvlan"></div>
+        <div class="col-md-4"><label class="form-label">드라이버</label>
           <select class="form-select" id="netDriver">
             <option value="ipvlan" selected>ipvlan</option>
             <option value="macvlan">macvlan</option>
@@ -196,16 +198,43 @@
             <option value="l3">l3</option>
             <option value="l3s">l3s</option>
           </select></div>
+
+        <!-- IP 스택 타입 선택 -->
+        <div class="col-12">
+          <label class="form-label fw-semibold">IP 스택 타입</label>
+          <div class="btn-group w-100" role="group">
+            <input type="radio" class="btn-check" name="netStack" id="stackV4" value="ipv4" checked>
+            <label class="btn btn-outline-primary" for="stackV4">
+              <i class="bi bi-4-circle"></i> IPv4 전용
+            </label>
+            <input type="radio" class="btn-check" name="netStack" id="stackDual" value="dual">
+            <label class="btn btn-outline-success" for="stackDual">
+              <i class="bi bi-46-square"></i> IPv4 + IPv6 듀얼스택
+            </label>
+            <input type="radio" class="btn-check" name="netStack" id="stackV6" value="ipv6">
+            <label class="btn btn-outline-info" for="stackV6">
+              <i class="bi bi-6-circle"></i> IPv6 전용
+            </label>
+          </div>
+        </div>
+
+        <!-- IPv4 필드 -->
+        <div id="netV4Fields" class="col-12 row g-3 m-0 p-0">
+          <div class="col-md-6"><label class="form-label">IPv4 서브넷 <span class="text-danger">*</span></label>
+            <input class="form-control font-monospace" id="netSubnet" placeholder="203.0.113.0/24"></div>
+          <div class="col-md-6"><label class="form-label">IPv4 게이트웨이</label>
+            <input class="form-control font-monospace" id="netGateway" placeholder="203.0.113.1"></div>
+        </div>
+
+        <!-- IPv6 필드 -->
+        <div id="netV6Fields" class="col-12 row g-3 m-0 p-0 d-none">
+          <div class="col-md-6"><label class="form-label">IPv6 서브넷 <span class="text-danger">*</span></label>
+            <input class="form-control font-monospace" id="netSubnet6" placeholder="2001:db8:1::/64"></div>
+          <div class="col-md-6"><label class="form-label">IPv6 게이트웨이</label>
+            <input class="form-control font-monospace" id="netGateway6" placeholder="2001:db8:1::1"></div>
+        </div>
+
         <div class="col-12"><small class="text-muted"><i class="bi bi-info-circle"></i> 호스트 인터페이스는 Ansible 수집을 통해 자동감지됩니다.</small></div>
-        <div class="col-md-4"><label class="form-label">IPv4 서브넷</label>
-          <input class="form-control" id="netSubnet" placeholder="192.168.1.0/24"></div>
-        <div class="col-md-4"><label class="form-label">IPv4 게이트웨이</label>
-          <input class="form-control" id="netGateway" placeholder="192.168.1.1"></div>
-        <div class="col-12"><small class="text-muted fw-semibold">듀얼스택 (선택)</small></div>
-        <div class="col-md-6"><label class="form-label">IPv6 서브넷</label>
-          <input class="form-control" id="netSubnet6" placeholder="2001:db8::/64"></div>
-        <div class="col-md-6"><label class="form-label">IPv6 게이트웨이</label>
-          <input class="form-control" id="netGateway6" placeholder="2001:db8::1"></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
@@ -356,14 +385,24 @@ function renderNodes(nodes) {
 function renderNetworks(nets) {
   const tbody = document.getElementById('netsTbody');
   if (!nets.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">네트워크 없음</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">네트워크 없음</td></tr>';
     return;
   }
   tbody.innerHTML = nets.map(n => {
-    const v4 = [n.subnet, n.gateway].filter(Boolean).join(' / ') || '-';
+    const hasV4 = !!n.subnet;
+    const hasV6 = !!n.subnet6;
+    let stackBadge;
+    if (hasV4 && hasV6) {
+      stackBadge = '<span class="badge bg-success">듀얼스택</span>';
+    } else if (hasV6) {
+      stackBadge = '<span class="badge bg-info">IPv6</span>';
+    } else {
+      stackBadge = '<span class="badge bg-primary">IPv4</span>';
+    }
+    const v4 = [n.subnet, n.gateway].filter(Boolean).join(' / ') || '<span class="text-muted">-</span>';
     const v6 = [n.subnet6, n.gateway6].filter(Boolean).join(' / ');
     const v6cell = v6
-      ? `<span class="badge bg-success-subtle text-success border border-success-subtle">${esc(v6)}</span>`
+      ? `<code class="small">${esc(v6)}</code>`
       : '<span class="text-muted">-</span>';
     const ifaceCell = n.interface
       ? `<span class="badge bg-success">${esc(n.interface)}</span>`
@@ -372,8 +411,9 @@ function renderNetworks(nets) {
     <tr>
       <td><strong>${esc(n.name)}</strong></td>
       <td>${esc(n.driver)}</td>
+      <td>${stackBadge}</td>
       <td>${ifaceCell}</td>
-      <td><code class="small">${esc(v4)}</code></td>
+      <td><code class="small">${v4}</code></td>
       <td>${v6cell}</td>
       <td>${esc(n.ipvlan_mode)}</td>
       <td><span class="badge ${n.source==='scanned'?'bg-secondary':'bg-info'}">${esc(n.source)}</span></td>
@@ -444,6 +484,17 @@ async function deleteNode(id) {
 // ── 네트워크 CRUD ─────────────────────────────────────────────────────────
 
 let netModalInst;
+
+function getNetStack() {
+  return document.querySelector('input[name="netStack"]:checked')?.value || 'ipv4';
+}
+
+function onNetStackChange() {
+  const stack = getNetStack();
+  document.getElementById('netV4Fields').classList.toggle('d-none', stack === 'ipv6');
+  document.getElementById('netV6Fields').classList.toggle('d-none', stack === 'ipv4');
+}
+
 function openNetModal() {
   document.getElementById('netName').value = '';
   document.getElementById('netDriver').value = 'ipvlan';
@@ -452,6 +503,8 @@ function openNetModal() {
   document.getElementById('netSubnet6').value = '';
   document.getElementById('netGateway6').value = '';
   document.getElementById('netIpvlanMode').value = 'l2';
+  document.getElementById('stackV4').checked = true;
+  onNetStackChange();
   netModalInst = netModalInst || new bootstrap.Modal(document.getElementById('netModal'));
   netModalInst.show();
 }
@@ -459,15 +512,28 @@ function openNetModal() {
 async function saveNetwork() {
   const name = document.getElementById('netName').value.trim();
   if (!name) { alert('네트워크 이름을 입력하세요.'); return; }
+
+  const stack   = getNetStack();
+  const useV4   = stack !== 'ipv6';
+  const useV6   = stack !== 'ipv4';
+  const subnet  = useV4 ? document.getElementById('netSubnet').value.trim()  : '';
+  const gateway = useV4 ? document.getElementById('netGateway').value.trim() : '';
+  const subnet6  = useV6 ? document.getElementById('netSubnet6').value.trim()  : '';
+  const gateway6 = useV6 ? document.getElementById('netGateway6').value.trim() : '';
+
+  if (useV4 && !subnet)  { alert('IPv4 서브넷을 입력하세요.'); return; }
+  if (useV6 && !subnet6) { alert('IPv6 서브넷을 입력하세요.'); return; }
+
   await fetch('/api/networks', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({
       name,
       driver:      document.getElementById('netDriver').value,
-      subnet:      document.getElementById('netSubnet').value.trim(),
-      gateway:     document.getElementById('netGateway').value.trim(),
-      subnet6:     document.getElementById('netSubnet6').value.trim(),
-      gateway6:    document.getElementById('netGateway6').value.trim(),
+      subnet,
+      gateway,
+      subnet6,
+      gateway6,
+      ipv6:        useV6,
       ipvlan_mode: document.getElementById('netIpvlanMode').value,
     })
   });
@@ -634,6 +700,11 @@ async function doScan() {
 function esc(s) {
   return (s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+
+// ── IP 스택 라디오 이벤트 ────────────────────────────────────────────────────
+document.querySelectorAll('input[name="netStack"]').forEach(el => {
+  el.addEventListener('change', onNetStackChange);
+});
 
 // 초기 로드
 loadAll();

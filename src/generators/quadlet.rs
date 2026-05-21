@@ -41,6 +41,16 @@ pub fn generate_network_unit(net: &QuadletNetwork) -> String {
     out.push_str("[Network]\n");
     out.push_str(&format!("Driver={}\n", net.driver));
 
+    // IPv6= 라인: 듀얼스택이면 true, IPv6 없는 ipvlan/macvlan이면 no
+    let is_dual = !net.subnet6.is_empty();
+    if net.driver == "ipvlan" || net.driver == "macvlan" {
+        if is_dual || net.ipv6 {
+            out.push_str("IPv6=true\n");
+        } else {
+            out.push_str("IPv6=no\n");
+        }
+    }
+
     // IPv4
     if !net.subnet.is_empty() {
         out.push_str(&format!("Subnet={}\n", net.subnet));
@@ -57,26 +67,25 @@ pub fn generate_network_unit(net: &QuadletNetwork) -> String {
         out.push_str(&format!("Gateway={}\n", net.gateway6));
     }
 
-    // IPv6= 라인: 듀얼스택이면 true, IPv6 없는 ipvlan/macvlan이면 no
-    let is_dual = !net.subnet6.is_empty();
-    if net.driver == "ipvlan" || net.driver == "macvlan" {
-        if is_dual || net.ipv6 {
-            out.push_str("IPv6=true\n");
-        } else {
-            out.push_str("IPv6=no\n");
-        }
-    }
+    // 부모 인터페이스 + mode를 한 줄로 결합
+    let mode_part = if !net.ipvlan_mode.is_empty() {
+        format!(",mode={}", net.ipvlan_mode)
+    } else {
+        String::new()
+    };
 
-    // 부모 인터페이스
     if !net.interface.is_empty() {
-        out.push_str(&format!("Options=parent={}\n", net.interface));
+        out.push_str(&format!("Options=parent={}{}\n", net.interface, mode_part));
     } else if net.driver == "ipvlan" || net.driver == "macvlan" {
         // 인터페이스 미지정 시 Ansible 배포 시 자동감지 placeholder
-        out.push_str("Options=parent=__PARENT_IFACE__\n");
+        out.push_str(&format!("Options=parent=__PARENT_IFACE__{}\n", mode_part));
     }
-    if (net.driver == "ipvlan" || net.driver == "macvlan") && !net.ipvlan_mode.is_empty() {
-        out.push_str(&format!("Options=mode={}\n", net.ipvlan_mode));
+
+    // Internal 네트워크 (외부 접근 차단)
+    if net.internal {
+        out.push_str("Internal=true\n");
     }
+
     for opt in &net.options {
         out.push_str(&format!("Options={}\n", opt));
     }
@@ -87,44 +96,78 @@ pub fn generate_network_unit(net: &QuadletNetwork) -> String {
 pub fn generate_pod_unit(pod: &QuadletPod) -> String {
     let mut out = String::new();
 
-    // [Unit] 섹션: 네트워크 의존성 (복수 네트워크)
+    // [Unit] 섹션: 네트워크 의존성
     let valid_nets: Vec<&PodNetworkEntry> = pod.networks.iter()
         .filter(|e| !e.network.is_empty())
         .collect();
 
-    if !valid_nets.is_empty() {
+    let has_unit = !valid_nets.is_empty() || pod.description.as_deref().map_or(false, |s| !s.is_empty());
+    if has_unit {
         out.push_str("[Unit]\n");
-        for entry in &valid_nets {
-            out.push_str(&format!("After={}.network\n", entry.network));
-            out.push_str(&format!("Requires={}.network\n", entry.network));
+        if let Some(desc) = &pod.description {
+            if !desc.is_empty() {
+                out.push_str(&format!("Description={}\n", desc));
+            }
+        }
+        if !valid_nets.is_empty() {
+            // After=net1.network net2.network (한 줄로 병합)
+            let after_list: Vec<String> = valid_nets.iter()
+                .map(|e| format!("{}.network", e.network))
+                .collect();
+            out.push_str(&format!("After={}\n", after_list.join(" ")));
+            out.push_str(&format!("Requires={}\n", after_list.join(" ")));
         }
         out.push('\n');
     }
 
     out.push_str("[Pod]\n");
     out.push_str(&format!("PodName={}\n", pod.name));
-    for entry in &valid_nets {
-        let has_ip  = entry.ip.as_deref().map_or(false, |s| !s.is_empty());
-        let has_ip6 = entry.ip6.as_deref().map_or(false, |s| !s.is_empty());
-        if has_ip && has_ip6 {
-            out.push_str(&format!(
-                "Network={}.network:ip={}:ip6={}\n",
-                entry.network,
-                entry.ip.as_deref().unwrap(),
-                entry.ip6.as_deref().unwrap(),
-            ));
-        } else if has_ip {
-            out.push_str(&format!("Network={}.network:ip={}\n", entry.network, entry.ip.as_deref().unwrap()));
-        } else if has_ip6 {
-            out.push_str(&format!("Network={}.network:ip6={}\n", entry.network, entry.ip6.as_deref().unwrap()));
-        } else {
-            out.push_str(&format!("Network={}.network\n", entry.network));
+
+    if let Some(hostname) = &pod.hostname {
+        if !hostname.is_empty() {
+            out.push_str(&format!("HostName={}\n", hostname));
         }
     }
+    if let Some(shm) = &pod.shm_size {
+        if !shm.is_empty() {
+            out.push_str(&format!("ShmSize={}\n", shm));
+        }
+    }
+
+    for entry in &valid_nets {
+        out.push_str(&format!("Network={}", build_network_param(entry)));
+        out.push('\n');
+    }
+
     for label in &pod.labels {
         out.push_str(&format!("Label={}\n", label));
     }
     out
+}
+
+/// Pod Network= 파라미터 문자열 빌드 (쉼표 구분)
+/// 형식: netname.network:ip=X,ip6=Y,gateway=G,gateway6=G6
+fn build_network_param(entry: &PodNetworkEntry) -> String {
+    let mut opts: Vec<String> = Vec::new();
+
+    if let Some(ip) = &entry.ip {
+        if !ip.is_empty() { opts.push(format!("ip={}", ip)); }
+    }
+    if let Some(ip6) = &entry.ip6 {
+        if !ip6.is_empty() { opts.push(format!("ip6={}", ip6)); }
+    }
+    if let Some(gw) = &entry.gateway {
+        if !gw.is_empty() { opts.push(format!("gateway={}", gw)); }
+    }
+    if let Some(gw6) = &entry.gateway6 {
+        if !gw6.is_empty() { opts.push(format!("gateway6={}", gw6)); }
+    }
+
+    if opts.is_empty() {
+        format!("{}.network", entry.network)
+    } else {
+        format!("{}.network:{}", entry.network, opts.join(","))
+    }
 }
 
 /// DRBD/호스트 바인드 마운트용 .volume 유닛 파일 생성
@@ -150,14 +193,24 @@ pub fn generate_bind_volume_unit(name: &str, host_path: &str, description: &str)
 pub fn generate_container_unit(c: &QuadletContainer) -> String {
     let mut out = String::new();
 
-    // [Unit] 섹션: 의존성 (pod 의존이면 .pod, 그 외 .service)
-    if !c.depends_on.is_empty() {
+    // [Unit] 섹션: Description + 의존성
+    let has_desc = c.description.as_deref().map_or(false, |s| !s.is_empty());
+    let has_deps = !c.depends_on.is_empty();
+    if has_desc || has_deps {
         out.push_str("[Unit]\n");
-        for dep in &c.depends_on {
-            // pod 이름과 동일한 dep이면 .pod suffix, 아니면 .service
-            let suffix = if c.pod.as_deref() == Some(dep.as_str()) { "pod" } else { "service" };
-            out.push_str(&format!("After={}.{}\n", dep, suffix));
-            out.push_str(&format!("Requires={}.{}\n", dep, suffix));
+        if let Some(desc) = &c.description {
+            if !desc.is_empty() {
+                out.push_str(&format!("Description={}\n", desc));
+            }
+        }
+        if has_deps {
+            // After= / Requires= 한 줄로 병합
+            let after_parts: Vec<String> = c.depends_on.iter().map(|dep| {
+                let suffix = if c.pod.as_deref() == Some(dep.as_str()) { "pod" } else { "service" };
+                format!("{}.{}", dep, suffix)
+            }).collect();
+            out.push_str(&format!("After={}\n", after_parts.join(" ")));
+            out.push_str(&format!("Requires={}\n", after_parts.join(" ")));
         }
         out.push('\n');
     }
@@ -198,6 +251,11 @@ pub fn generate_container_unit(c: &QuadletContainer) -> String {
         out.push_str(&format!("Volume={}\n", vol));
     }
 
+    // tmpfs
+    for t in &c.tmpfs {
+        out.push_str(&format!("Tmpfs={}\n", t));
+    }
+
     // exec
     if let Some(exec) = &c.exec {
         if !exec.is_empty() {
@@ -205,10 +263,24 @@ pub fn generate_container_unit(c: &QuadletContainer) -> String {
         }
     }
 
+    // entrypoint
+    if let Some(ep) = &c.entrypoint {
+        if !ep.is_empty() {
+            out.push_str(&format!("Entrypoint={}\n", ep));
+        }
+    }
+
     // user
     if let Some(user) = &c.user {
         if !user.is_empty() {
             out.push_str(&format!("User={}\n", user));
+        }
+    }
+
+    // auto_update
+    if let Some(au) = &c.auto_update {
+        if !au.is_empty() {
+            out.push_str(&format!("AutoUpdate={}\n", au));
         }
     }
 
@@ -224,8 +296,27 @@ pub fn generate_container_unit(c: &QuadletContainer) -> String {
 
     out.push('\n');
     out.push_str("[Service]\n");
+
+    // service type
+    if let Some(stype) = &c.service_type {
+        if !stype.is_empty() {
+            out.push_str(&format!("Type={}\n", stype));
+        }
+    }
+
     out.push_str("Restart=no\n");
     out.push_str("TimeoutStartSec=0\n");
+
+    if let Some(stop) = &c.timeout_stop_sec {
+        if !stop.is_empty() {
+            out.push_str(&format!("TimeoutStopSec={}\n", stop));
+        }
+    }
+
+    if let Some(rae) = c.remain_after_exit {
+        out.push_str(&format!("RemainAfterExit={}\n", if rae { "yes" } else { "no" }));
+    }
+
     out
 }
 

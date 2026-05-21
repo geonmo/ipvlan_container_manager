@@ -35,7 +35,6 @@ impl ContainerFullForm {
     /// generate_quadlet_ansible_playbook 에서 사용하는 QuadletFullForm 으로 변환
     fn as_quadlet_form(&self) -> QuadletFullForm {
         QuadletFullForm {
-            net_name: None,
             net_driver: None,
             net_interface: None,
             net_subnet: None,
@@ -44,6 +43,9 @@ impl ContainerFullForm {
             net_gateway6: None,
             net_ipvlan_mode: None,
             pod_name: self.pod_name.clone(),
+            pod_description: None,
+            pod_hostname: None,
+            pod_shm_size: None,
             pod_networks_json: None,
             ansible_hosts: self.ansible_hosts.clone(),
             ansible_user: self.ansible_user.clone(),

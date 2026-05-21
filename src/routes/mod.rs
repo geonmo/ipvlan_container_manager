@@ -6,3 +6,4 @@ pub mod nft;
 pub mod main;
 pub mod nodes;
 pub mod volume;
+pub mod cluster;

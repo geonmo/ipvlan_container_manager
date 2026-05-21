@@ -276,31 +276,6 @@ pub fn list_resources(conn: &Connection) -> Result<Vec<DbDrbdResource>> {
     rows.collect()
 }
 
-/// 이름으로 단일 리소스 조회
-pub fn get_resource(conn: &Connection, name: &str) -> Result<Option<DbDrbdResource>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, resource_name, protocol, minor, nodes_json,
-                net_options_json, disk_options_json, startup_options_json,
-                source, created_at, updated_at
-         FROM drbd_resources WHERE resource_name = ?1",
-    )?;
-    let mut rows = stmt.query_map(params![name], |row| {
-        Ok(DbDrbdResource {
-            id:                   row.get(0)?,
-            resource_name:        row.get(1)?,
-            protocol:             row.get(2)?,
-            minor:                row.get::<_, i64>(3)? as u32,
-            nodes_json:           row.get(4)?,
-            net_options_json:     row.get(5)?,
-            disk_options_json:    row.get(6)?,
-            startup_options_json: row.get(7)?,
-            source:               row.get(8)?,
-            created_at:           row.get(9)?,
-            updated_at:           row.get(10)?,
-        })
-    })?;
-    Ok(rows.next().transpose()?)
-}
 
 /// 이름으로 리소스 삭제
 pub fn delete_resource(conn: &Connection, name: &str) -> Result<usize> {

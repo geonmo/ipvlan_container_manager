@@ -227,8 +227,16 @@ fn parse_network_file(name: &str, content: &str) -> Option<DbNetwork> {
         } else if let Some(v) = trimmed.strip_prefix("Gateway=") {
             gateways.push(v.trim().to_string());
         } else if let Some(v) = trimmed.strip_prefix("Options=parent=") {
-            interface = v.trim().to_string();
+            // 결합된 형식 처리: "Options=parent=eno1,mode=l2" 또는 "Options=parent=eno1"
+            let v = v.trim();
+            if let Some(comma) = v.find(",mode=") {
+                interface = v[..comma].to_string();
+                ipvlan_mode = v[comma + 6..].to_string();
+            } else {
+                interface = v.to_string();
+            }
         } else if let Some(v) = trimmed.strip_prefix("Options=mode=") {
+            // 분리된 형식 (레거시): "Options=mode=l2"
             ipvlan_mode = v.trim().to_string();
         } else if trimmed.eq_ignore_ascii_case("IPv6=true")
                || trimmed.eq_ignore_ascii_case("IPv6=yes") {
@@ -324,24 +332,32 @@ fn parse_pod_file(stem: &str, content: &str) -> ScannedPodInfo {
     ScannedPodInfo { name, networks }
 }
 
-/// "netname.network:ip=X:ip6=Y" → PodNetworkEntry
+/// "netname.network:ip=X,ip6=Y,gateway=G,gateway6=G6" → PodNetworkEntry
+/// Pod Network= 옵션은 쉼표(,)로 구분합니다 (IPv6 주소의 콜론과 충돌 방지)
 fn parse_network_param(param: &str) -> PodNetworkEntry {
     let mut parts = param.splitn(2, ':');
     let net_part = parts.next().unwrap_or("").trim_end_matches(".network").to_string();
     let rest = parts.next().unwrap_or("");
 
-    let mut ip: Option<String>  = None;
-    let mut ip6: Option<String> = None;
+    let mut ip: Option<String>       = None;
+    let mut ip6: Option<String>      = None;
+    let mut gateway: Option<String>  = None;
+    let mut gateway6: Option<String> = None;
 
-    for kv in rest.split(':') {
+    // 옵션은 쉼표로 구분 (IP 주소의 콜론과 혼동 방지)
+    for kv in rest.split(',') {
         if let Some(v) = kv.strip_prefix("ip=") {
             ip = Some(v.to_string());
         } else if let Some(v) = kv.strip_prefix("ip6=") {
             ip6 = Some(v.to_string());
+        } else if let Some(v) = kv.strip_prefix("gateway=") {
+            gateway = Some(v.to_string());
+        } else if let Some(v) = kv.strip_prefix("gateway6=") {
+            gateway6 = Some(v.to_string());
         }
     }
 
-    PodNetworkEntry { network: net_part, ip, ip6 }
+    PodNetworkEntry { network: net_part, ip, ip6, gateway, gateway6 }
 }
 
 // ─── Pacemaker 노드 스캔 ──────────────────────────────────────────────────

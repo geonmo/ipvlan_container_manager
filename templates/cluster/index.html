@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+{% block title %}클러스터 현황 - HA Container Manager{% endblock %}
+{% block nav_cluster %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-11">
+    <h2 class="fw-bold mb-1"><i class="bi bi-diagram-3-fill text-primary"></i> 클러스터 현황</h2>
+    <p class="text-muted mb-4">pcsd에서 리소스·제약조건을 가져와 서비스 토폴로지를 시각화합니다.</p>
+
+    <!-- pcsd 연결 카드 -->
+    <div class="card shadow-sm mb-4 border-info">
+      <div class="card-header bg-info text-white fw-bold">
+        <i class="bi bi-cloud-download-fill"></i> pcsd 클러스터 정보 가져오기
+      </div>
+      <div class="card-body">
+        <div class="row g-2 align-items-end">
+          <div class="col-md-8">
+            <label class="form-label fw-semibold small mb-1">pcsd URL</label>
+            <input type="text" class="form-control form-control-sm" id="pcsdUrl" value="https://localhost:2224">
+            <div class="form-text">서버의 <code>/var/lib/pcsd/known-hosts</code> 노드 토큰을 자동으로 사용합니다.</div>
+          </div>
+          <div class="col-md-4">
+            <button type="button" class="btn btn-info w-100" onclick="pcsdFetch()">
+              <i class="bi bi-cloud-download"></i> 클러스터 정보 가져오기
+            </button>
+          </div>
+        </div>
+        <div id="pcsdStatus" class="mt-2 small d-none"></div>
+      </div>
+    </div>
+
+    <!-- 토폴로지 결과 -->
+    <div id="topoResult" class="d-none"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── 등록된 DRBD 리소스 (DB) ───────────────────────────────────────────────
+let knownDrbdNames = new Set();  // DB에 등록된 DRBD resource 이름 (r0, r1 등)
+
+async function loadKnownDrbd() {
+  try {
+    const resp = await fetch('/api/drbd/resources');
+    const items = await resp.json();
+    knownDrbdNames = new Set(items.map(r => r.name.toLowerCase()));
+  } catch(e) {
+    knownDrbdNames = new Set();
+  }
+}
+
+// ── 리소스 타입 분류 ──────────────────────────────────────────────────────
+function classifyResource(r) {
+  const agent = (r.agentname || r.resource_agent || '').toLowerCase();
+  const ct    = (r.class_type || '').toLowerCase();
+  const id    = (r.id || '').toLowerCase();
+
+  if (ct === 'group') return 'group';
+
+  if (ct === 'clone') {
+    // DB에 등록된 DRBD 볼륨과 매칭
+    for (const name of knownDrbdNames) {
+      if (id === `drbd_${name}-clone` ||
+          id === `drbd-${name}-clone` ||
+          id === `${name}-clone`      ||
+          id.includes(name)) {
+        return 'drbd';
+      }
+    }
+    // 폴백: agentname 에 drbd 포함
+    if (agent.includes('drbd')) return 'drbd';
+    return 'clone';
+  }
+
+  if (agent.includes('filesystem') || r.type === 'Filesystem') return 'fs';
+  if (agent.includes('systemd'))  return 'systemd';
+  return 'primitive';
+}
+
+const RES_STYLE = {
+  drbd:      { bg:'#0d6efd', label:'DRBD Clone',  icon:'bi-database-fill',    text:'#fff' },
+  clone:     { bg:'#6c757d', label:'Clone',        icon:'bi-copy',             text:'#fff' },
+  fs:        { bg:'#e6a817', label:'Filesystem',   icon:'bi-hdd-fill',         text:'#fff' },
+  group:     { bg:'#198754', label:'Group',        icon:'bi-collection-fill',  text:'#fff' },
+  systemd:   { bg:'#0d9488', label:'Systemd',      icon:'bi-gear-fill',        text:'#fff' },
+  primitive: { bg:'#6c757d', label:'Primitive',    icon:'bi-box',              text:'#fff' },
+};
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Union-Find ────────────────────────────────────────────────────────────
+function makeUF() {
+  const p = {};
+  const find = id => {
+    if (!p[id]) p[id] = id;
+    if (p[id] !== id) p[id] = find(p[id]);
+    return p[id];
+  };
+  const union = (a, b) => {
+    if (!p[a]) p[a] = a;
+    if (!p[b]) p[b] = b;
+    const pa = find(a), pb = find(b);
+    if (pa !== pb) p[pa] = pb;
+  };
+  return { find, union };
+}
+
+// 연결된 서비스 컴포넌트 분리
+function buildServiceGroups(resources, constraints) {
+  const resMap = {};
+  resources.forEach(r => {
+    resMap[r.id] = r;
+    (r.members || []).forEach(m => { resMap[m.id] = resMap[m.id] || m; });
+  });
+
+  const uf = makeUF();
+  (constraints.rsc_order      || []).forEach(c => uf.union(c.first, c.then));
+  (constraints.rsc_colocation || []).forEach(c => uf.union(c.rsc, c['with-rsc']));
+  resources.forEach(r => (r.members || []).forEach(m => uf.union(r.id, m.id)));
+
+  const comps = {};
+  Object.keys(resMap).forEach(id => {
+    const root = uf.find(id);
+    if (!comps[root]) comps[root] = [];
+    if (!comps[root].includes(id)) comps[root].push(id);
+  });
+
+  // top-level 리소스만 포함
+  return Object.values(comps)
+    .map(ids => resources.filter(r => ids.includes(r.id)))
+    .filter(s => s.length > 0)
+    .sort((a, b) => b.length - a.length); // 큰 서비스 먼저
+}
+
+// order 기반 토폴로지 정렬
+function topoSort(topIds, orders) {
+  const inDeg = {}, adj = {};
+  topIds.forEach(id => { inDeg[id] = inDeg[id] || 0; adj[id] = []; });
+  orders.forEach(c => {
+    if (!topIds.includes(c.first) || !topIds.includes(c.then)) return;
+    adj[c.first].push({ to: c.then, label: `${c['first-action']||''}→${c['then-action']||''}` });
+    inDeg[c.then] = (inDeg[c.then] || 0) + 1;
+  });
+  const queue = topIds.filter(id => !inDeg[id]);
+  const sorted = [], labels = {};
+  while (queue.length) {
+    const cur = queue.shift();
+    sorted.push(cur);
+    (adj[cur] || []).forEach(e => {
+      labels[e.to] = e.label;
+      if (--inDeg[e.to] === 0) queue.push(e.to);
+    });
+  }
+  topIds.forEach(id => { if (!sorted.includes(id)) sorted.push(id); });
+  return { sorted, labels };
+}
+
+// ── 리소스 박스 렌더링 ────────────────────────────────────────────────────
+function renderResBox(r, resMap) {
+  const type  = classifyResource(r);
+  const style = RES_STYLE[type];
+
+  // 실행 노드
+  const status  = (r.crm_status || []).find(s => s.active) || (r.crm_status || [])[0];
+  const runNode = status?.node?.name || '';
+  const statusBadge = r.status === 'running'
+    ? '<span class="badge bg-success" style="font-size:.6em">running</span>'
+    : r.status === 'stopped'
+    ? '<span class="badge bg-danger"  style="font-size:.6em">stopped</span>'
+    : r.status
+    ? `<span class="badge bg-secondary" style="font-size:.6em">${escHtml(r.status)}</span>`
+    : '';
+
+  // FS 파라미터
+  let extra = '';
+  if (type === 'fs') {
+    const a = {};
+    (r.instance_attr || []).forEach(x => a[x.name] = x.value);
+    extra = `<div class="mt-1" style="font-size:.72em;color:#ddd">
+      <i class="bi bi-hdd"></i> <code style="color:#ffd">${escHtml(a.device||'')}</code><br>
+      <i class="bi bi-folder"></i> <code style="color:#ffd">${escHtml(a.directory||'')}</code>
+      <span class="text-muted ms-1">${escHtml(a.fstype||'')}</span>
+    </div>`;
+  }
+
+  // 그룹/클론 멤버
+  if ((type === 'group' || type === 'drbd' || type === 'clone') && r.members?.length) {
+    const chips = r.members.map(m => {
+      const mt = classifyResource(resMap[m.id] || m);
+      const ms = RES_STYLE[mt] || RES_STYLE.primitive;
+      return `<span class="badge me-1 mb-1" style="background:${ms.bg};opacity:.9;font-weight:normal;font-size:.7em">
+        <i class="bi ${ms.icon}"></i> ${escHtml(m.id)}
+      </span>`;
+    }).join('');
+    extra = `<div class="mt-2">${chips}</div>`;
+  }
+
+  return `<div class="rounded p-2 shadow-sm" style="background:${style.bg};color:${style.text};min-width:180px;max-width:280px;flex-shrink:0">
+    <div class="d-flex align-items-center gap-1 mb-1 flex-wrap">
+      <span class="badge" style="background:rgba(0,0,0,.25);font-size:.65em">
+        <i class="bi ${style.icon}"></i> ${style.label}
+      </span>
+      ${statusBadge}
+    </div>
+    <div class="fw-bold" style="font-size:.85em;word-break:break-all">${escHtml(r.id)}</div>
+    ${runNode ? `<div style="font-size:.68em;opacity:.8"><i class="bi bi-server"></i> ${escHtml(runNode)}</div>` : ''}
+    ${extra}
+  </div>`;
+}
+
+// ── 서비스 카드 렌더링 ────────────────────────────────────────────────────
+function renderServiceCard(svcResources, idx, allOrders, allColocs, resMap) {
+  const topIds = svcResources.map(r => r.id);
+  const svcOrders = allOrders.filter(c => topIds.includes(c.first) || topIds.includes(c.then));
+  const svcColocs = allColocs.filter(c => topIds.includes(c.rsc)   || topIds.includes(c['with-rsc']));
+  const { sorted, labels } = topoSort(topIds, svcOrders);
+
+  const drbdCnt  = sorted.filter(id => classifyResource(resMap[id]||{id}) === 'drbd').length;
+  const fsCnt    = sorted.filter(id => classifyResource(resMap[id]||{id}) === 'fs').length;
+  const grpCnt   = sorted.filter(id => classifyResource(resMap[id]||{id}) === 'group').length;
+  const otherCnt = sorted.filter(id => !['drbd','fs','group'].includes(classifyResource(resMap[id]||{id}))).length;
+
+  const summaryBadges = [
+    drbdCnt  ? `<span class="badge" style="background:#0d6efd"><i class="bi bi-database-fill"></i> DRBD ×${drbdCnt}</span>` : '',
+    fsCnt    ? `<span class="badge" style="background:#e6a817"><i class="bi bi-hdd-fill"></i> FS ×${fsCnt}</span>` : '',
+    grpCnt   ? `<span class="badge bg-success"><i class="bi bi-collection-fill"></i> Group ×${grpCnt}</span>` : '',
+    otherCnt ? `<span class="badge bg-secondary"><i class="bi bi-box"></i> 기타 ×${otherCnt}</span>` : '',
+  ].filter(Boolean).join(' ');
+
+  // 파이프라인 박스+화살표
+  let pipeline = `<div class="d-flex align-items-start flex-wrap gap-1 py-2">`;
+  sorted.forEach((id, i) => {
+    const r = resMap[id] || { id, class_type:'primitive', status:'' };
+    if (i > 0) {
+      const lbl = labels[id] || '';
+      pipeline += `<div class="d-flex flex-column align-items-center justify-content-center" style="min-width:40px;padding-top:8px">
+        <span style="font-size:1.3em;color:#aaa">→</span>
+        ${lbl ? `<span style="font-size:.6em;color:#888;white-space:nowrap">${escHtml(lbl)}</span>` : ''}
+      </div>`;
+    }
+    pipeline += renderResBox(r, resMap);
+  });
+  pipeline += `</div>`;
+
+  // Order 제약 표
+  let orderTable = '';
+  if (svcOrders.length) {
+    const rows = svcOrders.map(c => `<tr>
+      <td class="text-nowrap"><span class="badge" style="background:#0d6efd;font-size:.7em">${escHtml(c.first)}</span></td>
+      <td class="text-center text-muted small">${escHtml(c['first-action']||'')} → ${escHtml(c['then-action']||'')}</td>
+      <td class="text-nowrap"><span class="badge bg-success;font-size:.7em" style="background:#198754">${escHtml(c.then)}</span></td>
+    </tr>`).join('');
+    orderTable = `<details class="mt-2">
+      <summary class="small text-muted" style="cursor:pointer"><i class="bi bi-sort-down"></i> Order 제약 (${svcOrders.length})</summary>
+      <table class="table table-sm table-bordered mt-1 small mb-0"><tbody>${rows}</tbody></table>
+    </details>`;
+  }
+
+  // Colocation 제약 표
+  let colocTable = '';
+  if (svcColocs.length) {
+    const rows = svcColocs.map(c => `<tr>
+      <td class="small text-nowrap">${escHtml(c.rsc)}${c['rsc-role']?` <span class="text-muted">(${c['rsc-role']})</span>`:''}</td>
+      <td class="text-center">↔</td>
+      <td class="small text-nowrap">${escHtml(c['with-rsc'])}${c['with-rsc-role']?` <span class="text-muted">(${c['with-rsc-role']})</span>`:''}</td>
+      <td class="small text-muted">${escHtml(String(c.score||''))}</td>
+    </tr>`).join('');
+    colocTable = `<details class="mt-1">
+      <summary class="small text-muted" style="cursor:pointer"><i class="bi bi-link-45deg"></i> Colocation 제약 (${svcColocs.length})</summary>
+      <table class="table table-sm table-bordered mt-1 small mb-0">
+        <thead class="table-light"><tr><th>리소스</th><th></th><th>With</th><th>Score</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </details>`;
+  }
+
+  return `<div class="card shadow-sm mb-4">
+    <div class="card-header d-flex align-items-center gap-2" style="background:#1e293b;color:#e2e8f0">
+      <span class="badge bg-primary fs-6">#${idx + 1}</span>
+      <span class="fw-semibold">${sorted.map(id => escHtml(id)).join(' · ')}</span>
+      <div class="ms-auto d-flex gap-1 flex-wrap">${summaryBadges}</div>
+    </div>
+    <div class="card-body pb-2" style="background:#f8fafc">
+      ${pipeline}
+      ${orderTable}
+      ${colocTable}
+    </div>
+  </div>`;
+}
+
+// ── pcsd fetch ────────────────────────────────────────────────────────────
+async function pcsdFetch() {
+  const url      = document.getElementById('pcsdUrl').value.trim();
+  const statusEl = document.getElementById('pcsdStatus');
+  const resultEl = document.getElementById('topoResult');
+
+  statusEl.className = 'mt-2 small text-warning';
+  statusEl.textContent = '연결 중...';
+  statusEl.classList.remove('d-none');
+  resultEl.classList.add('d-none');
+  resultEl.innerHTML = '';
+
+  try {
+    const resp = await fetch('/api/pacemaker/pcsd-fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pcsd_url: url }),
+    });
+    const json = await resp.json();
+    if (!json.ok) {
+      statusEl.className = 'mt-2 small text-danger';
+      statusEl.textContent = '오류: ' + json.message;
+      return;
+    }
+    statusEl.className = 'mt-2 small text-success';
+    statusEl.textContent = `✓ 연결 성공 — 클러스터: ${json.data.cluster_name || '(unknown)'}`;
+    renderTopology(json.data);
+    resultEl.classList.remove('d-none');
+  } catch(e) {
+    statusEl.className = 'mt-2 small text-danger';
+    statusEl.textContent = '오류: ' + e.message;
+  }
+}
+
+function renderTopology(data) {
+  const el        = document.getElementById('topoResult');
+  const nodes     = data.nodes     || [];
+  const resources = Array.isArray(data.resources) ? data.resources : [];
+  const constr    = data.constraints || { rsc_order:[], rsc_colocation:[] };
+  const orders    = constr.rsc_order       || [];
+  const colocs    = constr.rsc_colocation  || [];
+
+  // 리소스 맵
+  const resMap = {};
+  resources.forEach(r => {
+    resMap[r.id] = r;
+    (r.members || []).forEach(m => { resMap[m.id] = resMap[m.id] || m; });
+  });
+
+  let html = '';
+
+  // 노드 상태 요약
+  if (nodes.length) {
+    const badges = nodes.map(n =>
+      `<span class="badge bg-success me-1"><i class="bi bi-server"></i> ${escHtml(n.name)}</span>`
+    ).join('');
+    html += `<div class="card shadow-sm mb-3">
+      <div class="card-body py-2 d-flex align-items-center gap-3 flex-wrap">
+        <span class="fw-semibold small"><i class="bi bi-diagram-2"></i> 클러스터 노드</span>
+        ${badges}
+        <span class="text-muted small ms-auto">${resources.length}개 리소스 · ${orders.length}개 Order · ${colocs.length}개 Colocation</span>
+      </div>
+    </div>`;
+  }
+
+  if (!resources.length) {
+    html += '<div class="alert alert-warning">리소스 정보를 가져오지 못했습니다.</div>';
+    el.innerHTML = html;
+    return;
+  }
+
+  // 서비스 그룹 분리
+  const services = buildServiceGroups(resources, constr);
+  html += `<p class="text-muted small mb-3">
+    <i class="bi bi-info-circle"></i>
+    Order / Colocation 제약으로 연결된 리소스를 서비스 단위로 묶었습니다.
+    연결되지 않은 리소스는 독립 서비스로 표시됩니다.
+  </p>`;
+
+  services.forEach((svc, i) => {
+    html += renderServiceCard(svc, i, orders, colocs, resMap);
+  });
+
+  // 원시 응답
+  html += `<details class="mt-2 mb-4">
+    <summary class="small text-muted" style="cursor:pointer">원시 응답 보기</summary>
+    <pre class="bg-dark text-light p-2 rounded small mt-1" style="max-height:300px;overflow:auto;font-size:.72rem">${escHtml(JSON.stringify(data.raw_status, null, 2))}</pre>
+  </details>`;
+
+  el.innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadKnownDrbd();
+});
+</script>
+{% endblock %}

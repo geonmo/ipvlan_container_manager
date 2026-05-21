@@ -201,6 +201,8 @@ async fn main() {
         .route("/pacemaker/", get(routes::pacemaker::index))
         .route("/pacemaker/generate", post(routes::pacemaker::generate))
         .route("/api/pacemaker/pcsd-fetch", post(routes::pacemaker::api_pcsd_fetch))
+        // 클러스터 현황 (토폴로지 뷰어)
+        .route("/cluster/", get(routes::cluster::index))
         // nftables 방화벽
         .route("/nft/", get(routes::nft::index))
         .route("/nft/generate", post(routes::nft::generate))

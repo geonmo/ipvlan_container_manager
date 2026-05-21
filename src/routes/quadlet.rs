@@ -56,7 +56,6 @@ pub struct PodForm {
 #[derive(Debug, Deserialize)]
 pub struct QuadletFullForm {
     // Network (단일 네트워크 정의 — 풀에서 선택되지 않을 때 직접 입력용)
-    pub net_name: Option<String>,
     pub net_driver: Option<String>,
     pub net_interface: Option<String>,
     pub net_subnet: Option<String>,
@@ -67,6 +66,9 @@ pub struct QuadletFullForm {
 
     // Pod
     pub pod_name: Option<String>,
+    pub pod_description: Option<String>,
+    pub pod_hostname: Option<String>,
+    pub pod_shm_size: Option<String>,
     // pod_networks_json: JSON 배열 [{"network":"ipvlan0","ip":"192.168.1.100"}, ...]
     pub pod_networks_json: Option<String>,
 
@@ -89,7 +91,7 @@ pub async fn generate(
     let mut config = QuadletConfig::new();
 
     // Network 처리: pod_networks_json에서 네트워크 이름 목록 수집 → DB에서 조회
-    let pod_networks: Vec<PodNetworkEntry> = if let Some(json_str) = &form.pod_networks_json {
+    let mut pod_networks: Vec<PodNetworkEntry> = if let Some(json_str) = &form.pod_networks_json {
         if !json_str.trim().is_empty() {
             serde_json::from_str(json_str).unwrap_or_default()
         } else {
@@ -100,6 +102,8 @@ pub async fn generate(
     };
 
     // 각 네트워크를 DB에서 조회해 config.networks에 추가
+    // (gateway 정보도 수집해서 나중에 pod_networks에 주입)
+    let mut gw_map: Vec<(String, String, String)> = Vec::new(); // (name, gateway, gateway6)
     {
         let db = state.db.lock().unwrap();
         for entry in &pod_networks {
@@ -131,18 +135,21 @@ pub async fn generate(
                 // 이미 추가된 네트워크 중복 방지
                 if !config.networks.iter().any(|n| n.name == db_net.name) {
                     config.networks.push(QuadletNetwork {
-                        name: db_net.name,
+                        name: db_net.name.clone(),
                         driver: db_net.driver,
                         interface: db_net.interface,
                         subnet: db_net.subnet,
-                        gateway: db_net.gateway,
+                        gateway: db_net.gateway.clone(),
                         subnet6: db_net.subnet6,
-                        gateway6: db_net.gateway6,
+                        gateway6: db_net.gateway6.clone(),
                         ipv6: db_net.ipv6,
                         ipvlan_mode: db_net.ipvlan_mode,
+                        internal: false,
                         options: Vec::new(),
                     });
                 }
+                // gateway 정보를 나중에 주입하기 위해 저장
+                gw_map.push((db_net.name.clone(), db_net.gateway.clone(), db_net.gateway6.clone()));
             } else {
                 // DB에 없으면 net_name 등 직접 입력 필드에서 추가 (풀 미등록 네트워크)
                 if !config.networks.iter().any(|n| n.name == entry.network) {
@@ -159,9 +166,22 @@ pub async fn generate(
                         gateway6,
                         ipv6,
                         ipvlan_mode: form.net_ipvlan_mode.clone().unwrap_or_else(|| "l2".to_string()),
+                        internal: false,
                         options: Vec::new(),
                     });
                 }
+            }
+        }
+    }
+
+    // PodNetworkEntry에 gateway 정보 자동 주입
+    for (net_name, gw, gw6) in &gw_map {
+        if let Some(pne) = pod_networks.iter_mut().find(|e| &e.network == net_name) {
+            if pne.gateway.is_none() && !gw.is_empty() {
+                pne.gateway = Some(gw.clone());
+            }
+            if pne.gateway6.is_none() && !gw6.is_empty() {
+                pne.gateway6 = Some(gw6.clone());
             }
         }
     }
@@ -171,6 +191,9 @@ pub async fn generate(
         if !pname.trim().is_empty() {
             config.pods.push(QuadletPod {
                 name: pname.trim().to_string(),
+                description: form.pod_description.clone().filter(|s| !s.trim().is_empty()),
+                hostname: form.pod_hostname.clone().filter(|s| !s.trim().is_empty()),
+                shm_size: form.pod_shm_size.clone().filter(|s| !s.trim().is_empty()),
                 networks: pod_networks,
                 labels: Vec::new(),
             });
@@ -240,9 +263,10 @@ pub fn generate_quadlet_ansible_playbook(
                 "    - name: {} 부모 인터페이스 감지\n      shell: ip route show to match {} | grep -oP 'dev \\K\\S+' | head -1\n      register: {}\n      changed_when: false\n      failed_when: false",
                 net_name, subnet, var_name
             ));
+            // __PARENT_IFACE__ 만 교체 — "Options=parent=__PARENT_IFACE__,mode=l2" 등도 처리
             let new_content = content.replace(
-                "Options=parent=__PARENT_IFACE__",
-                &format!("Options=parent={{{{ {}.stdout | trim }}}}", var_name),
+                "__PARENT_IFACE__",
+                &format!("{{{{ {}.stdout | trim }}}}", var_name),
             );
             resolved_files.push((filename.clone(), new_content));
         } else {

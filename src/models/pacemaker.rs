@@ -132,12 +132,53 @@ pub struct LocationConstraint {
     pub score: String,
 }
 
+/// ocf:heartbeat:Filesystem 리소스 (DRBD 볼륨 위 FS 마운트)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FsResource {
+    pub resource_name: String,   // e.g. "fs-r0"
+    pub device: String,          // e.g. "/dev/drbd/by-res/r0/0"
+    pub directory: String,       // mountpoint e.g. "/mnt/drbd/r0"
+    pub fstype: String,          // e.g. "xfs"
+    pub monitor_interval: String,
+    pub start_timeout: String,
+    pub stop_timeout: String,
+    /// 이 FS가 어느 DRBD clone에 귀속되는지 (colocation/order 자동생성용)
+    pub drbd_clone_name: String,
+}
+
+impl Default for FsResource {
+    fn default() -> Self {
+        Self {
+            resource_name: "fs-r0".to_string(),
+            device: "/dev/drbd/by-res/r0/0".to_string(),
+            directory: "/mnt/drbd/r0".to_string(),
+            fstype: "xfs".to_string(),
+            monitor_interval: "20s".to_string(),
+            start_timeout: "60s".to_string(),
+            stop_timeout: "60s".to_string(),
+            drbd_clone_name: String::new(),
+        }
+    }
+}
+
+/// Pacemaker 리소스 그룹 (Pod + Container들을 순서대로 묶음)
+/// 그룹 안에서 start는 members 순서대로, stop은 역순으로 진행됨
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceGroup {
+    pub group_name: String,         // e.g. "grp-myapp"
+    pub members: Vec<String>,       // 순서 있는 리소스 이름 목록 (pod → container들)
+    /// 이 그룹이 어느 FS 리소스 뒤에 와야 하는지 (없으면 DRBD clone 직후)
+    pub after_fs: Option<String>,
+}
+
 /// Pacemaker 전체 설정
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PacemakerConfig {
     pub cluster: ClusterConfig,
     pub drbd_resources: Vec<DrbdPacemakerResource>,
-    pub systemd_resources: Vec<SystemdResource>,
+    pub fs_resources: Vec<FsResource>,          // DRBD 위 파일시스템 마운트
+    pub systemd_resources: Vec<SystemdResource>, // Pod / Container 리소스
+    pub resource_groups: Vec<ResourceGroup>,     // Pod+Container 그룹
     pub order_constraints: Vec<OrderConstraint>,
     pub colocation_constraints: Vec<ColocationConstraint>,
     pub location_constraints: Vec<LocationConstraint>,
