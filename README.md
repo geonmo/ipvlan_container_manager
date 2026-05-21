@@ -1,6 +1,6 @@
-# HA Container Manager
+# IPVLAN Container Manager
 
-A web-based configuration helper for building 2-node High Availability container clusters on **RHEL9 / AlmaLinux9** using **DRBD + Quadlet + Pacemaker**.
+A web-based configuration helper for building 3-nodes High Availability container clusters on **RHEL9 / AlmaLinux9** using **DRBD + Quadlet + Pacemaker**.
 
 > **한국어 문서**: [README.kor.md](README.kor.md)
 
@@ -8,12 +8,13 @@ A web-based configuration helper for building 2-node High Availability container
 
 ## Overview
 
-HA Container Manager is a Rust web application that generates all the configuration files needed to run Podman containers in an Active/Passive HA cluster:
+HA Container Manager is a Rust web application that generates all the configuration files needed to run Podman containers in a Primary/Secondary HA cluster:
 
 ```
 [Node 1] DRBD Primary ← Promoted → Quadlet Container (IPVLAN)
                   ↕ DRBD Sync
 [Node 2] DRBD Secondary ← Standby
+[Node 3] DRBD Secondary ← Standby
 ```
 
 Sequential configuration steps, each accessible from the navigation bar:
