@@ -88,6 +88,40 @@ pub fn generate_res_file(resource: &DrbdResource) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────
+// global_common.conf 생성 (fence-peer 핸들러)
+// ─────────────────────────────────────────────────────────────
+
+/// `/etc/drbd.d/global_common.conf` 내용 생성.
+///
+/// `net { fencing resource-only; }` 정책은 피어 단절 시 fence-peer
+/// 핸들러가 실행되어야만 promote가 진행된다. 이 핸들러는 `.res` 파일이
+/// 아니라 노드별 `global_common.conf`의 `handlers {}` 블록에 등록해야
+/// 하며, 없으면 promote가 응답 없이 hang 되다 op timeout으로 실패한다.
+/// 핸들러 스크립트 자체는 `drbd9x-utils` 패키지에 이미 포함되어 있다.
+pub fn generate_global_common_conf() -> String {
+    let mut out = String::new();
+    out.push_str("global {\n");
+    out.push_str("    usage-count yes;\n");
+    out.push_str("    udev-always-use-vnr;\n");
+    out.push_str("}\n");
+    out.push_str("common {\n");
+    out.push_str("    handlers {\n");
+    out.push_str("        fence-peer \"/usr/lib/drbd/crm-fence-peer.9.sh\";\n");
+    out.push_str("        after-resync-target \"/usr/lib/drbd/crm-unfence-peer.9.sh\";\n");
+    out.push_str("    }\n");
+    out.push_str("    startup {\n");
+    out.push_str("    }\n");
+    out.push_str("    options {\n");
+    out.push_str("    }\n");
+    out.push_str("    disk {\n");
+    out.push_str("    }\n");
+    out.push_str("    net {\n");
+    out.push_str("    }\n");
+    out.push_str("}\n");
+    out
+}
+
+// ─────────────────────────────────────────────────────────────
 // Ansible 인벤토리(YAML) 생성
 // ─────────────────────────────────────────────────────────────
 
@@ -243,11 +277,38 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
     out.push_str("        state: enabled\n");
     out.push_str("      notify: Reload Firewalld\n\n");
 
+    // fencing=resource-only 인 경우에만 fence-peer 핸들러 등록
+    // (핸들러가 없으면 피어 단절 시 promote가 op timeout까지 hang 됨)
+    let needs_fence_peer_handler = resource.disk_options.fencing == "resource-only";
+    if needs_fence_peer_handler {
+        out.push_str("    - name: 11. DRBD 전역 공통 설정(global_common.conf) 배포\n");
+        out.push_str("      # fencing resource-only 정책이 동작하려면 fence-peer 핸들러가 필요합니다.\n");
+        out.push_str("      # 핸들러가 없으면 피어 단절 시 promote가 op timeout까지 그대로 hang 됩니다.\n");
+        out.push_str("      ansible.builtin.copy:\n");
+        out.push_str("        dest: /etc/drbd.d/global_common.conf\n");
+        out.push_str("        content: |\n");
+        for line in generate_global_common_conf().lines() {
+            out.push_str(&format!("          {}\n", line));
+        }
+        out.push_str("        mode: '0644'\n");
+        out.push_str("        backup: yes\n");
+        out.push_str("      notify: Adjust DRBD config\n\n");
+    }
+
     out.push_str("  handlers:\n");
     out.push_str("    - name: Reload Firewalld\n");
     out.push_str("      ansible.builtin.systemd:\n");
     out.push_str("        name: firewalld\n");
     out.push_str("        state: restarted\n\n");
+
+    if needs_fence_peer_handler {
+        out.push_str("    - name: Adjust DRBD config\n");
+        out.push_str("      # drbdadm adjust는 로컬 설정 파일과 커널 상태의 diff만 반영하는\n");
+        out.push_str("      # 멱등적 명령이라 변경이 없으면 no-op이며, 매 배포마다 재부팅 없이\n");
+        out.push_str("      # 안전하게 재실행할 수 있습니다.\n");
+        out.push_str("      ansible.builtin.command: drbdadm adjust all\n");
+        out.push_str("      changed_when: true\n\n");
+    }
 
     // ── Play 2: LVM + .res 파일 배포 ──────────────────────────
     out.push_str(&format!("- name: DRBD LVM 볼륨 및 리소스 설정\n"));
@@ -575,4 +636,63 @@ pub fn scan_drbd_dir(dir: &str) -> Vec<ScannedDrbdResource> {
     }
 
     resources
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::drbd::DrbdNode;
+
+    fn sample_resource(fencing: &str) -> DrbdResource {
+        let mut resource = DrbdResource {
+            resource_name: "r0".to_string(),
+            nodes: vec![
+                DrbdNode {
+                    hostname: "node1".to_string(),
+                    ip: "192.168.10.11".to_string(),
+                    port: 7789,
+                    ..DrbdNode::default()
+                },
+                DrbdNode {
+                    hostname: "node2".to_string(),
+                    ip: "192.168.10.12".to_string(),
+                    port: 7789,
+                    ..DrbdNode::default()
+                },
+            ],
+            ..DrbdResource::default()
+        };
+        resource.disk_options.fencing = fencing.to_string();
+        resource
+    }
+
+    #[test]
+    fn global_common_conf_contains_fence_peer_handlers() {
+        let conf = generate_global_common_conf();
+        assert!(conf.contains("fence-peer \"/usr/lib/drbd/crm-fence-peer.9.sh\";"));
+        assert!(conf.contains("after-resync-target \"/usr/lib/drbd/crm-unfence-peer.9.sh\";"));
+        assert!(conf.contains("usage-count yes;"));
+    }
+
+    #[test]
+    fn ansible_playbook_deploys_global_common_conf_when_fencing_is_resource_only() {
+        let resource = sample_resource("resource-only");
+        let inventory = AnsibleInventory::default();
+        let playbook = generate_ansible_playbook(&resource, &inventory);
+
+        assert!(playbook.contains("global_common.conf"));
+        assert!(playbook.contains("fence-peer"));
+        assert!(playbook.contains("notify: Adjust DRBD config"));
+        assert!(playbook.contains("drbdadm adjust all"));
+    }
+
+    #[test]
+    fn ansible_playbook_skips_global_common_conf_when_fencing_is_not_resource_only() {
+        let resource = sample_resource("dont-care");
+        let inventory = AnsibleInventory::default();
+        let playbook = generate_ansible_playbook(&resource, &inventory);
+
+        assert!(!playbook.contains("global_common.conf"));
+        assert!(!playbook.contains("Adjust DRBD config"));
+    }
 }

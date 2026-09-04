@@ -165,6 +165,11 @@
                     <option value="resource-and-stonith">resource-and-stonith</option>
                     <option value="dont-care">dont-care</option>
                   </select>
+                  <div class="form-text">
+                    <code>resource-only</code> 선택 시 <code>/etc/drbd.d/global_common.conf</code>에
+                    fence-peer 핸들러(<code>crm-fence-peer.9.sh</code>)가 자동으로 함께 배포됩니다.
+                    이 핸들러가 없으면 피어 단절 시 promote가 응답 없이 hang 되다가 실패 처리됩니다.
+                  </div>
                 </div>
               </div>
               <div class="col-md-4">
