@@ -535,41 +535,74 @@ udp sport 53 accept
 
 ### D.2 DRBD 모델/생성기의 LINSTOR 확장
 
-이 부분은 아직 설계 스케치 수준이다 — LINSTOR의 리소스 관리 개념
-(storage pool, resource-group, volume-definition, `--auto-place`로 배치
-노드 자동 선택 등)이 현재 `.res` 파일 중심의 `DrbdResource` 모델과
-근본적으로 다르기 때문에, 코드부터 들어가기보다 아래를 먼저 확인해야
-한다.
+**✅ 중요 발견(2026-09) — 직접 CLI 명령을 생성할 필요가 없다.** LINBIT이
+공식 Ansible 컬렉션 `linbit.linstor`(+ 의존 컬렉션 `linbit.common`,
+`linbit.drbd`, `linbit.drbd_reactor`)를 제공하며, `roles/`와
+`plugins/modules/` 전체를 직접 열어 확인했다:
 
-- **A.1과의 관계(중요, 이미 확인됨)**: LINSTOR는 DRBD 커널모듈+
-  `drbd-utils`를 **대체하지 않고 그 위에서 오케스트레이션**한다. 즉
-  fencing/fence-peer 핸들러(A.1) 요구사항은 LINSTOR 환경에서도 동일하게
-  적용된다 — A.1 작업이 LINSTOR 도입으로 무효화되지 않는다. 다만 `.res`
-  파일 자체는 LINSTOR가 자동 생성/관리하므로(보통
-  `/var/lib/linstor.d/` 아래), 이 앱이 지금처럼 `/etc/drbd.d/*.res`를
-  직접 `copy`로 밀어넣는 방식과 충돌하는지는 **구현 전 실제 LINSTOR
-  배포본에서 확인 필요**.
+- **설치 role**: `controller_install`/`satellite_install`/`client_install`.
+  실제 태스크(`tasks/main.yml`)를 확인한 결과 `ansible.builtin.package:
+  name: linstor-controller` 같은 **일반 패키지 모듈만 쓰고 LINBIT 저장소
+  URL을 하드코딩하지 않는다.** 이미 systemd 유닛이 설치돼 있으면
+  (`ansible.builtin.stat`으로 확인) install 단계를 건너뛰고 설정
+  단계로만 진행한다.
+- **리소스 관리 모듈**: `resource`/`resource_definition`/`resource_group`/
+  `storage_pool`/`node`/`snapshot`/`backup`/`key_value_store` 등 LINSTOR
+  전 기능을 커버하는 선언적 모듈 세트가 이미 갖춰져 있다.
+- 라이선스 MIT/GPL-3.0, 최근 업데이트(2026-09) — 활발히 유지보수됨.
+
+**결론: 역할 분담이 깔끔하게 나뉜다.**
+1. `gsdc-linbit-build`(D.3)가 만든 RPM을 대상 노드에 로컬 설치
+   (`dnf install ./linstor-common-*.rpm ./linstor-controller-*.rpm ...`,
+   같은 트랜잭션으로 묶어 의존성 자동 해결).
+2. `linbit.linstor.controller_install`/`satellite_install`/`client_install`
+   role을 그대로 실행 — 이미 설치된 상태를 감지하고 설정/방화벽/서비스
+   기동만 이어서 처리한다.
+3. 리소스(볼륨/스토리지풀) 생성·관리는 `linbit.linstor`의
+   `resource_definition`/`resource_group`/`storage_pool` 등 모듈을
+   Ansible 태스크로 조합해서 쓴다 — **이 앱이 직접 `linstor` CLI 문자열을
+   조립할 필요가 없다.**
+
+이전 초안에 있던 "신규 모델(`LinstorStoragePool` 등) + `linstor` CLI 명령을
+직접 생성하는 생성기" 설계는 폐기한다 — 공식 컬렉션의 모듈을 그대로 쓰는
+쪽이 훨씬 견고하고 유지보수 부담도 적다.
+
+- **A.1과의 관계(확인됨)**: LINSTOR는 DRBD 커널모듈+`drbd-utils`를
+  **대체하지 않고 그 위에서 오케스트레이션**한다. `linbit.drbd` 컬렉션도
+  범위가 "DRBD 커널모듈/패키지 설치"(`drbd_install` role)뿐이라 fence-peer
+  핸들러(A.1)와 겹치지 않는다 — A.1 작업은 LINSTOR 도입과 무관하게 계속
+  유효하다. 다만 `.res` 파일 자체는 LINSTOR 새틀라이트가 자동 생성/관리
+  하므로, 이 앱이 지금처럼 `/etc/drbd.d/*.res`를 직접 `copy`로 밀어넣는
+  A.1의 방식과 실제로 충돌하는지는 **VM 테스트 클러스터에서 확인 필요**
+  (LINSTOR가 관리하는 리소스에 한해서만 우회하면 될 가능성이 높음).
 - **단계적 접근 제안**:
   - Phase 1 (D.1과 함께, 낮은 리스크): 감지 결과를 UI에 정보로만
     표시. 생성기 로직 변경 없음.
-  - Phase 2: LINSTOR 전용 신규 모델(`LinstorStoragePool`,
-    `LinstorResourceGroup` 등)과 신규 생성기(`generators/linstor.rs`,
-    `linstor` CLI 명령 또는 LINBIT의 `linstor-ansible`/`linstor.linstor`
-    Ansible 컬렉션 기반 플레이북 생성) 추가. 기존 `DrbdResource`/
-    `generate_res_file()`/`generate_ansible_playbook()`는 그대로 두고
-    **완전히 별도 경로**로 만드는 것을 권장 — 기존 코드 회귀 위험 없이
-    점진적으로 확장 가능하고, A.1~A.9에서 이미 계획한 DRBD 관련 변경들과
-    충돌할 위험도 없다.
+  - Phase 2: `linbit.linstor`/`linbit.common`/`linbit.drbd` 컬렉션을
+    `ansible-galaxy collection install`로 설치하는 태스크 + 위 3단계
+    (로컬 RPM 설치 → `*_install` role → 리소스 관리 모듈)를 조합하는
+    Ansible 플레이북 생성기 추가. 기존 `DrbdResource`/`generate_res_file()`/
+    `generate_ansible_playbook()`는 그대로 두고 **완전히 별도 경로**로
+    만드는 것을 권장 — 기존 코드 회귀 위험 없이 점진적으로 확장 가능하고,
+    A.1~A.9에서 이미 계획한 DRBD 관련 변경들과 충돌할 위험도 없다.
   - UI: `/drbd/` 탭에서 D.1의 감지 결과에 따라 "커널모듈 방식" 폼과
     "LINSTOR 방식" 폼을 분기 표시(탭 또는 라디오 선택).
 
 ### D.3 (이 저장소 범위 밖 — 참고용 메모) LINSTOR 소스 빌드 파이프라인
 
-- 범위 확정 1번에 따라 **별도 코드/저장소 + GitHub Actions 워크플로우**로
-  진행. 이 문서에서 설계하지 않는다.
-- 다만 D.1의 설치 Ansible 태스크가 그 산출물을 어떻게 가져다 쓸지는
-  연동 지점이므로, 그 워크플로우가 뭘 만들어내는지(RPM 패키지 아티팩트
-  URL, 또는 tarball + 설치 스크립트 등) 정해지면 D.1에 반영이 필요.
+- 범위 확정 1번에 따라 **별도 저장소**(`gsdc-linbit-build`,
+  `github.com/geonmo/gsdc-linbit-build`, private) + GitHub Actions
+  워크플로우로 진행 중 — `linstor-server`(linstor-common/controller/
+  satellite), `linstor-api-py`(python-linstor), `linstor-client`를
+  각 저장소의 spec/Makefile/build.gradle을 직접 확인해 EL9용 RPM으로
+  빌드하도록 구성했다 (`linstor-gui`는 controller가 서빙하는 선택적
+  정적 대시보드로 판단해 제외). server와 client/api-py는 서로 독립된
+  버전 체계를 쓰는 것도 확인해 반영함. 아직 실제 실행 검증 전.
+- D.2에서 확인한 대로, 이 산출물(RPM)은 노드에 로컬 설치한 뒤
+  `linbit.linstor` 공식 Ansible 컬렉션의 `*_install` role이 "이미 설치됨"을
+  감지해 설정을 이어받는 방식으로 소비한다 — RPM 저장소 메타데이터
+  (`createrepo_c`)까지는 필요 없고, `dnf install ./*.rpm` 로컬 설치로
+  충분하다.
 
 **결정 필요(사용자 확인 필요, 구현 착수 전)**:
 - ~~LINBIT EL9 공개 저장소의 실제 포함 범위~~ → 조사 완료, 무료 저장소
