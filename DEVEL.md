@@ -1,6 +1,8 @@
-# STRUCTURE.md — 코드 구조 및 함수 레퍼런스
+# DEVEL.md — 코드 구조 및 함수 레퍼런스
 
-HA Container Manager 코드베이스의 상세 구조 문서입니다.
+HA Container Manager 코드베이스의 상세 구조 문서입니다. 설치/사용법은
+[README.md](README.md), 기능 개선 계획 및 검증 방법은 [PLAN.md](PLAN.md)를
+참고하세요.
 
 ---
 
@@ -71,7 +73,8 @@ ipvlan_container_manager/
 ├── icm.conf                      # 설정 파일
 ├── CLAUDE.md
 ├── README.md
-└── STRUCTURE.md                  # 이 파일
+├── PLAN.md                       # 기능 개선 계획 + 검증/테스트 방법
+└── DEVEL.md                      # 이 파일
 ```
 
 ---

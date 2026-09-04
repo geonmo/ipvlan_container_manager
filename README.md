@@ -3,6 +3,7 @@
 A web-based configuration helper for building 3-nodes High Availability container clusters on **RHEL9 / AlmaLinux9** using **DRBD + Quadlet + Pacemaker**.
 
 > **한국어 문서**: [README.kor.md](README.kor.md)
+> **더 알아보기**: 코드 구조/함수 레퍼런스는 [DEVEL.md](DEVEL.md), 기능 개선 계획 및 검증 방법은 [PLAN.md](PLAN.md)
 
 ---
 
@@ -64,9 +65,9 @@ pip install ansible
 **Firewall rules (cluster nodes):**
 
 ```bash
-firewall-cmd --permanent --add-port=7789/tcp   # DRBD replication
-firewall-cmd --permanent --add-port=5404/udp   # Corosync
-firewall-cmd --permanent --add-port=5405/udp
+firewall-cmd --permanent --add-port=7789/tcp   # DRBD replication (adjust to your resource's port/range)
+firewall-cmd --permanent --add-port=5404-5405/udp   # Corosync
+firewall-cmd --permanent --add-port=2224/tcp   # pcsd (needed for `pcs host auth` between nodes and for this app's pcsd REST calls)
 firewall-cmd --reload
 ```
 

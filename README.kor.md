@@ -3,6 +3,7 @@
 **RHEL9 / AlmaLinux9**에서 **DRBD + Quadlet + Pacemaker**를 사용하는 2-노드 HA 컨테이너 클러스터 설정 파일을 생성해주는 웹 도우미입니다.
 
 > **English documentation**: [README.md](README.md)
+> **더 알아보기**: 코드 구조/함수 레퍼런스는 [DEVEL.md](DEVEL.md), 기능 개선 계획 및 검증 방법은 [PLAN.md](PLAN.md)
 
 ---
 
@@ -63,9 +64,9 @@ pip install ansible
 **클러스터 노드 방화벽 설정:**
 
 ```bash
-firewall-cmd --permanent --add-port=7789/tcp   # DRBD 복제
-firewall-cmd --permanent --add-port=5404/udp   # Corosync
-firewall-cmd --permanent --add-port=5405/udp
+firewall-cmd --permanent --add-port=7789/tcp   # DRBD 복제 (리소스 포트/범위에 맞게 조정)
+firewall-cmd --permanent --add-port=5404-5405/udp   # Corosync
+firewall-cmd --permanent --add-port=2224/tcp   # pcsd (노드 간 `pcs host auth` 및 이 앱의 pcsd REST 호출에 필요)
 firewall-cmd --reload
 ```
 
