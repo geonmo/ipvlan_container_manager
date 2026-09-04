@@ -37,6 +37,13 @@ DRBD + Quadlet + Pacemaker + nftables 구성을 웹 UI로 대체하기 위한 �
 
 ### A.1 [치명적] DRBD fence-peer 핸들러가 전혀 생성되지 않음
 
+**✅ 구현 완료 (2026-09-04)** — `src/generators/drbd.rs`에
+`generate_global_common_conf()` 추가, `generate_ansible_playbook()`에
+task 11(조건부: `fencing == "resource-only"`)로 배포 + `drbdadm adjust
+all` 핸들러 연결, `/drbd/` 화면에 안내 문구 추가. 단위 테스트 3개
+통과(`cargo test drbd::`). 실동작 검증은 VM 3대 테스트 클러스터에서 별도
+진행 예정.
+
 **이게 바로 사용자가 언급한 "pacemaker가 primary를 옮겼는데 drbd가 이를
 몰라서 활성화 안 되는" 현상의 근본 원인과 일치한다.**
 
@@ -460,6 +467,122 @@ udp sport 53 accept
 
 ---
 
+## D. [신규 제안, 설계 스케치 단계] LINSTOR 백엔드 지원
+
+**배경**: 현재 이 앱은 순수 DRBD 커널모듈(`drbdadm` + 수동 `.res` 파일)만
+다룬다. 사용자가 LINSTOR(DRBD 위에서 스토리지 풀/리소스 그룹/노드 배치를
+관리해주는 LINBIT의 오케스트레이션 레이어) 도입을 검토 중이며, **VM
+테스트 클러스터도 LINSTOR로 구성할 예정**이라 우선순위가 낮지 않다.
+
+**범위 확정 (사용자 결정, 2026-09)**:
+1. **LINSTOR 소스 다운로드/컴파일/빌드/설치 자동화는 이 저장소에 넣지
+   않는다.** LINBIT 공식 RPM 저장소는 구독/구매 고객 전용이라 소스 빌드가
+   필요한데, 그 빌드 파이프라인은 **별도 코드 + 별도 GitHub Actions
+   워크플로우**로 분리한다. 이 앱은 그 결과물(패키지 또는 설치
+   스크립트/아티팩트)을 "소비"하는 입장만 맡는다.
+2. **✅ 조사 완료(2026-09, 웹 검색 기준) — EL9(AlmaLinux9/RHEL9)용 무료
+   공식 저장소는 존재하지 않는다.** LINBIT 문서/KB를 직접 확인한 결과:
+   - `packages.linbit.com/public/`(진짜 무료 공개 저장소)는 **Debian/Proxmox
+     전용**이고, Ubuntu는 별도 무료 PPA(`launchpad.net/~linbit/...`)가
+     있다 — **둘 다 RHEL 계열이 아니다.**
+   - EL9를 포함한 RHEL 계열은 DRBD 프리빌드 패키지와 LINSTOR
+     (controller/satellite/client) 전부 **유료 구독 고객 계정(customer
+     hash)이 있어야 접근되는 저장소**로만 배포된다 (DRBD 9 공식
+     사용자 가이드: "커스터머 포털 계정이 필요").
+   - "Staging" 저장소(릴리스 후보)도 동일한 customer hash 인증이
+     필요해 무료가 아니다.
+   - "평가판(1개월 무료 평가 등)"은 명시적으로 기간 제한이 있어 이번
+     조사에서 제외 대상.
+   - COPR/ELRepo 등 제3자 커뮤니티 저장소에도 LINSTOR RPM은 없는 것으로
+     보인다 — ELRepo는 DRBD 커널모듈(`kmod-drbd9x`, 이미 R09/A.1이 쓰는
+     방식)만 다루고, LINSTOR controller/satellite(Java/Rust 애플리케이션)는
+     대상이 아니다.
+   - 대신 **소스코드는 상시 무료 다운로드 가능**하고
+     (`github.com/LINBIT/drbd`, `github.com/LINBIT/linstor-server`),
+     LINBIT 스스로도 "release tarball에서 spec 파일로 표준 RPM 빌드
+     방식이 그대로 동작한다"고 문서화해뒀다 — 즉 **소스 빌드(D.3)가
+     LINBIT이 인정하는, 비구독자를 위한 유일한 경로**다.
+
+   **결론: "무료 저장소 우선 사용" 조건은 폐기 — D.3(별도 빌드
+   파이프라인)이 유일한 설치 경로로 확정.** 이 앱(D.1)은 처음부터 D.3의
+   산출물(빌드된 RPM 또는 tarball+설치스크립트)을 소비하는 것으로
+   설계한다.
+3. **설치된 게 LINSTOR인지 순수 커널모듈인지는 "설치된 환경"을 보고
+   판단**하고, 그 판단 결과를 설정 정보로 저장한다.
+4. 그 판단(감지)은 **웹 UI(서버) 기동 시마다 갱신**한다.
+
+### D.1 설치 환경 감지 + 설정 저장
+
+- **재사용**: `src/scan.rs`의 기존 `startup_scan()` 패턴(서버 기동 시
+  `tokio::spawn`으로 백그라운드 실행, `main.rs`에서 이미 호출 중)을 그대로
+  확장 — DRBD/Quadlet/pcsd 스캔과 나란히 "스토리지 백엔드 감지" 단계
+  추가.
+- **감지 방법(제안)**: 노드별로 `linstor` CLI 존재 여부, 또는
+  `linstor-controller`/`linstor-satellite` systemd 유닛 존재/활성 여부를
+  확인. 로컬 스캔이 아니라 원격 노드 대상이므로, 기존
+  `POST /api/collect-interfaces`가 쓰는 Ansible 실행 패턴(임시 인벤토리 +
+  playbook 생성 → 실행 → 결과 파싱, `src/routes/nodes.rs`)을 재사용하는
+  것이 자연스럽다.
+- **저장 위치(제안)**: 노드별로 다를 수 있으므로 `nodes` 테이블에
+  `storage_backend TEXT NOT NULL DEFAULT 'kernel-module'` 컬럼 추가
+  (`'kernel-module' | 'linstor'`), 기존 `ALTER TABLE ... ADD COLUMN`
+  마이그레이션 패턴(`src/db.rs`) 재사용. 클러스터 전체가 한 방식으로
+  통일된다고 가정할 수 있으면 전역 설정 하나로 단순화해도 됨 — 실제
+  LINSTOR 배포가 클러스터 내 노드마다 혼재 가능한지 여부에 따라 결정
+  (일반적으로는 클러스터 전체가 한 방식으로 통일되므로 전역 설정 쪽을
+  권장).
+- `/nodes/` 화면에 감지된 백엔드를 배지로 표시.
+
+### D.2 DRBD 모델/생성기의 LINSTOR 확장
+
+이 부분은 아직 설계 스케치 수준이다 — LINSTOR의 리소스 관리 개념
+(storage pool, resource-group, volume-definition, `--auto-place`로 배치
+노드 자동 선택 등)이 현재 `.res` 파일 중심의 `DrbdResource` 모델과
+근본적으로 다르기 때문에, 코드부터 들어가기보다 아래를 먼저 확인해야
+한다.
+
+- **A.1과의 관계(중요, 이미 확인됨)**: LINSTOR는 DRBD 커널모듈+
+  `drbd-utils`를 **대체하지 않고 그 위에서 오케스트레이션**한다. 즉
+  fencing/fence-peer 핸들러(A.1) 요구사항은 LINSTOR 환경에서도 동일하게
+  적용된다 — A.1 작업이 LINSTOR 도입으로 무효화되지 않는다. 다만 `.res`
+  파일 자체는 LINSTOR가 자동 생성/관리하므로(보통
+  `/var/lib/linstor.d/` 아래), 이 앱이 지금처럼 `/etc/drbd.d/*.res`를
+  직접 `copy`로 밀어넣는 방식과 충돌하는지는 **구현 전 실제 LINSTOR
+  배포본에서 확인 필요**.
+- **단계적 접근 제안**:
+  - Phase 1 (D.1과 함께, 낮은 리스크): 감지 결과를 UI에 정보로만
+    표시. 생성기 로직 변경 없음.
+  - Phase 2: LINSTOR 전용 신규 모델(`LinstorStoragePool`,
+    `LinstorResourceGroup` 등)과 신규 생성기(`generators/linstor.rs`,
+    `linstor` CLI 명령 또는 LINBIT의 `linstor-ansible`/`linstor.linstor`
+    Ansible 컬렉션 기반 플레이북 생성) 추가. 기존 `DrbdResource`/
+    `generate_res_file()`/`generate_ansible_playbook()`는 그대로 두고
+    **완전히 별도 경로**로 만드는 것을 권장 — 기존 코드 회귀 위험 없이
+    점진적으로 확장 가능하고, A.1~A.9에서 이미 계획한 DRBD 관련 변경들과
+    충돌할 위험도 없다.
+  - UI: `/drbd/` 탭에서 D.1의 감지 결과에 따라 "커널모듈 방식" 폼과
+    "LINSTOR 방식" 폼을 분기 표시(탭 또는 라디오 선택).
+
+### D.3 (이 저장소 범위 밖 — 참고용 메모) LINSTOR 소스 빌드 파이프라인
+
+- 범위 확정 1번에 따라 **별도 코드/저장소 + GitHub Actions 워크플로우**로
+  진행. 이 문서에서 설계하지 않는다.
+- 다만 D.1의 설치 Ansible 태스크가 그 산출물을 어떻게 가져다 쓸지는
+  연동 지점이므로, 그 워크플로우가 뭘 만들어내는지(RPM 패키지 아티팩트
+  URL, 또는 tarball + 설치 스크립트 등) 정해지면 D.1에 반영이 필요.
+
+**결정 필요(사용자 확인 필요, 구현 착수 전)**:
+- ~~LINBIT EL9 공개 저장소의 실제 포함 범위~~ → 조사 완료, 무료 저장소
+  없음으로 확정 (위 범위 확정 2번 참고).
+- 클러스터 내 노드별 백엔드 혼재를 허용할지, 전역 설정 하나로 충분한지.
+- LINSTOR가 관리하는 `.res` 파일 경로/방식이 현재 A.1의 `global_common.conf`
+  배포 방식과 실제로 충돌하는지 (VM 테스트 클러스터에서 확인 가능하면
+  가장 확실함).
+- D.3(별도 빌드 파이프라인)의 산출물 형태(RPM vs tarball+설치스크립트) —
+  D.1의 설치 Ansible 태스크 설계에 직접 영향.
+
+---
+
 ## 검증/테스트 계획
 
 항목별로 "생성된 텍스트가 맞는가"와 "실제 클러스터에서 의도대로 동작하는가"
@@ -519,6 +642,11 @@ udp sport 53 accept
   WantedBy=...`/`AddCapability=...` 라인이 정확히 나오는지 확인. 실제
   `systemctl daemon-reload` 후 `systemctl status <name>.service`로
   Install 섹션이 인식되는지도 확인.
+- **D (LINSTOR)**: 아직 설계 스케치 단계라 구체적 테스트 계획은 D.1/D.2의
+  "결정 필요" 항목이 정해진 뒤 채운다. D.1(감지)만 먼저 구현한다면, 최소
+  단위 테스트는 "linstor CLI가 있는 노드 → `storage_backend=linstor`",
+  "없는 노드 → `kernel-module`"로 감지 결과가 갈리는지 확인하는 수준부터
+  시작.
 
 각 생성기 함수는 순수 함수(문자열 반환)이므로, 새 로직마다
 `src/generators/*.rs` 하단에 `#[cfg(test)] mod tests` 유닛 테스트를
@@ -548,6 +676,10 @@ udp sport 53 accept
   설정 등) 생성 기능은 이 앱의 범용 지향과 맞지 않아 이식하지 않음.
 - Quadlet에서 실제 사용 사례가 없는 `HealthCmd=`/`Secret=`/
   `EnvironmentFile=` 등은 이번 계획에서 제외 (필요해지면 추후 추가).
+- **LINSTOR 소스 컴파일/빌드/설치 자동화는 이 저장소에 넣지 않는다** —
+  사용자 결정(2026-09). 별도 코드 + 별도 GitHub Actions 워크플로우로
+  분리하고, 이 앱은 그 산출물을 소비하는 역할만 한다 (D.3 참고). 이
+  저장소가 다루는 건 D.1(설치 환경 감지)과 D.2(모델/생성기 확장)뿐이다.
 
 ## 구현 순서 제안
 
@@ -567,3 +699,9 @@ udp sport 53 accept
 6. C (Quadlet Install/AddCapability) — 우선순위 낮음, 여유 있을 때
    (주 동기였던 사이드카 유즈케이스가 빠졌으므로).
 7. A.7, A.8 (유지보수 스크립트, 인벤토리 검증) — 선택 사항, 여유 있을 때.
+8. **D.1 (LINSTOR 설치 환경 감지)** — VM 테스트 클러스터가 LINSTOR로
+   구성될 예정이므로 실제로는 우선순위가 낮지 않지만, "결정 필요" 항목
+   (LINBIT EL9 공개 저장소 범위, 노드별 백엔드 혼재 허용 여부)이 먼저
+   확인돼야 착수 가능. D.2(모델/생성기 확장)는 D.1 이후, 그리고 VM
+   클러스터에서 LINSTOR의 실제 `.res` 관리 방식을 확인한 뒤 설계를
+   구체화한다.
