@@ -1,0 +1,96 @@
+---
+# DRBD 커널 모듈 설치 + 버전 고정(versionlock) 참고 Playbook
+#
+# deploy_drbd.yml이 다루지 않는 두 가지를 보여준다:
+#   1. 커널 패키지와 DRBD 패키지를 versionlock으로 고정해, 무심코
+#      `dnf update`로 커널만 먼저 올라가고 DRBD 커널 모듈이 못 맞춰
+#      부팅이 깨지는 사고를 막는다 (커널/DRBD 모듈은 항상 세트로만
+#      갱신되어야 함).
+#   2. 커널이 실제로 갱신됐을 때만 재부팅한다 (register + when으로
+#      불필요한 재부팅을 피함).
+#
+# 사용법:
+#   ansible-playbook -i inventory.yml drbd_kernel_versionlock.yml
+
+- name: DRBD 커널 모듈 설치 및 버전 고정
+  hosts: all
+  become: true
+  vars:
+    kernel_packages:
+      - kernel
+      - kernel-devel
+    drbd_packages:
+      - drbd9x-utils
+      - kmod-drbd9x
+      - drbd-selinux
+    lock_plugin: python3-dnf-plugin-versionlock
+
+  tasks:
+    - name: ELRepo GPG 키 등록
+      ansible.builtin.rpm_key:
+        state: present
+        key: https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
+
+    - name: ELRepo 저장소 설치 (AlmaLinux/RHEL9)
+      ansible.builtin.dnf:
+        name: https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm
+        state: present
+        disable_gpg_check: yes
+
+    - name: dnf-plugin-versionlock 설치
+      ansible.builtin.dnf:
+        name: "{{ lock_plugin }}"
+        state: present
+
+    - name: 커널 패키지 업데이트
+      ansible.builtin.dnf:
+        name: "{{ kernel_packages }}"
+        state: latest
+        enablerepo: baseos,appstream
+      register: kernel_update_result
+
+    - name: DRBD 관련 패키지 설치
+      ansible.builtin.dnf:
+        name: "{{ drbd_packages }}"
+        state: latest
+        enablerepo: elrepo
+      register: drbd_install_result
+
+    - name: 커널 + DRBD 모듈 버전 고정 (한 세트로만 갱신되도록)
+      ansible.builtin.command:
+        cmd: "dnf versionlock add {{ item }}"
+      loop: "{{ kernel_packages + drbd_packages }}"
+      register: lock_result
+      changed_when: "'adding' in lock_result.stdout"
+
+    - name: 커널이 실제로 갱신됐을 때만 재부팅
+      ansible.builtin.reboot:
+        reboot_timeout: 1800
+      when: kernel_update_result.changed
+
+    - name: 부팅 시 DRBD 커널 모듈 자동 로드 설정
+      ansible.builtin.copy:
+        content: "drbd"
+        dest: /etc/modules-load.d/drbd.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: DRBD 커널 모듈 즉시 로드 (현재 세션)
+      community.general.modprobe:
+        name: drbd
+        state: present
+
+    - name: 방화벽 DRBD 포트 대역 허용 (7788-7799/tcp)
+      ansible.posix.firewalld:
+        zone: work
+        port: "7788-7799/tcp"
+        permanent: yes
+        state: enabled
+      notify: Reload Firewalld
+
+  handlers:
+    - name: Reload Firewalld
+      ansible.builtin.systemd:
+        name: firewalld
+        state: reloaded

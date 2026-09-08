@@ -300,3 +300,16 @@ ansible-playbook -i inventory.yml ansible/playbooks/deploy_drbd.yml
 ansible-playbook -i inventory.yml ansible/playbooks/deploy_quadlet.yml
 ansible-playbook -i inventory.yml ansible/playbooks/deploy_pacemaker.yml
 ```
+
+`ansible/playbooks/`에는 실제 운영 환경에서 익명화한 참고용 플레이북도 몇 개 더 있습니다
+(웹 UI와는 연결돼 있지 않고, 이 앱의 생성기들이 어떤 실제 패턴을 본떴는지 보여주는
+자료입니다):
+
+- `drbd_kernel_versionlock.yml` — ELRepo GPG 키/커널+DRBD 패키지 버전 고정, 커널이 실제로
+  갱신됐을 때만 재부팅
+- `drbd_multi_resource_provision.yml` (+ `templates/drbd_resource.res.j2`) — **LVM thin
+  provisioning** 볼륨 위에 여러 DRBD 리소스를 한 번에 멱등하게(생성 전 확인 후 조건부
+  `create-md`) 프로비저닝, 초기 `primary --force`는 인벤토리 첫 번째 노드로만 한정
+- `quadlet_ipvlan_autodetect.yml` — 특정 서브넷에 속한 물리 NIC을 자동감지해
+  `.network` 유닛의 `Options=parent=`에 채우는 방법 (이 앱의 `__PARENT_IFACE__`
+  플레이스홀더 치환과 동일한 로직)

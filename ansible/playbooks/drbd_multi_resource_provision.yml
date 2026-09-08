@@ -1,0 +1,110 @@
+---
+# 여러 DRBD 리소스를 LVM 논리 볼륨 위에 한 번에 멱등하게 프로비저닝하는
+# 참고 Playbook. deploy_drbd.yml은 리소스 1개(res_content 하나)를
+# 배포하는 것을 전제로 하지만, 이 파일은 다음을 보여준다:
+#
+#   1. `drbd_resources` 목록 하나로 LV 생성 → .res 파일 생성(템플릿,
+#      templates/drbd_resource.res.j2) → 메타데이터 생성 → up까지 여러
+#      리소스를 한 번에 처리.
+#   2. **멱등성**: `drbdadm status`/`drbdadm dump-md`로 먼저 상태를
+#      확인한 뒤, 아직 없을 때만 `create-md`를 실행 — 재실행해도
+#      안전하다 (PLAN.md A.3이 Pacemaker 쪽에서 채용한 것과 동일한
+#      "먼저 조회 → 조건부 생성" 패턴을 DRBD 리소스 생성 자체에도
+#      적용한 예).
+#   3. 초기 Primary 강제 지정은 인벤토리의 **첫 번째 노드에서만**
+#      실행 (`groups['drbd_nodes'][0]`) — 두 번째 노드에서 실행하면
+#      데이터를 서로 덮어쓰려는 split-brain을 유발하므로 반드시 한
+#      노드로 한정해야 한다.
+#   4. **LVM thin provisioning**: LINSTOR를 쓰지 않고 순수 DRBD 커널
+#      모듈만 쓰더라도, 백엔드는 thick LV보다 **thin pool 위의 thin
+#      LV**를 권장한다 — 나중에 리소스를 늘릴 때(볼륨 그룹 여유공간을
+#      실제 사용량만큼만 나눠 쓸 수 있음)와 스냅샷(`lvcreate -s`)이
+#      필요할 때 thick LV보다 훨씬 유연하다. 물론 오버커밋(썬 풀 용량을
+#      넘는 총 가상 크기 할당)은 실제 사용량을 모니터링해야 한다.
+#
+# 사용법:
+#   ansible-playbook -i inventory.yml drbd_multi_resource_provision.yml
+
+- name: 여러 DRBD 리소스를 LVM thin provisioning 위에 멱등하게 프로비저닝
+  hosts: drbd_nodes
+  become: true
+  vars:
+    vg_name: vg_drbd
+    thinpool_name: thinpool_drbd
+    thinpool_size: 500G  # 백엔드 물리 공간 기준으로 조정
+    drbd_resources:
+      - { name: app_data,   lv_name: app_data_lv,   size: 20G, port: 7788, device: /dev/drbd0 }
+      - { name: app_config, lv_name: app_config_lv, size: 5G,  port: 7789, device: /dev/drbd1 }
+
+  tasks:
+    - name: LVM thin pool 생성 (없으면)
+      community.general.lvol:
+        vg: "{{ vg_name }}"
+        thinpool: "{{ thinpool_name }}"
+        size: "{{ thinpool_size }}"
+
+    - name: thin pool 위에 thin 논리 볼륨(LV) 생성 (가상 크기 — 실제 사용량만큼만 소비)
+      community.general.lvol:
+        vg: "{{ vg_name }}"
+        lv: "{{ item.lv_name }}"
+        thinpool: "{{ thinpool_name }}"
+        size: "{{ item.size }}"
+      loop: "{{ drbd_resources }}"
+
+    - name: DRBD 리소스 설정 파일(.res) 생성
+      ansible.builtin.template:
+        src: drbd_resource.res.j2
+        dest: "/etc/drbd.d/{{ item.name }}.res"
+      loop: "{{ drbd_resources }}"
+
+    - name: 리소스 활성화 상태 확인 (drbdadm status)
+      ansible.builtin.command:
+        cmd: "drbdadm status {{ item.name }}"
+      register: check_status
+      failed_when: false
+      changed_when: false
+      loop: "{{ drbd_resources }}"
+
+    - name: 메타데이터 존재 여부 확인 (drbdadm dump-md)
+      ansible.builtin.command:
+        cmd: "drbdadm dump-md {{ item.name }}"
+      register: check_md
+      failed_when: false
+      changed_when: false
+      loop: "{{ drbd_resources }}"
+
+    - name: DRBD 메타데이터 생성 (아직 없을 때만)
+      ansible.builtin.command:
+        cmd: "drbdadm create-md {{ item.name }}"
+      loop: "{{ drbd_resources }}"
+      loop_control:
+        index_var: idx
+      when:
+        - check_md.results[idx].rc != 0
+        - check_status.results[idx].rc != 0
+
+    - name: DRBD 리소스 Up (활성화)
+      ansible.builtin.command:
+        cmd: "drbdadm up {{ item.name }}"
+      register: up_result
+      changed_when: "'already' not in up_result.stderr and up_result.rc == 0"
+      failed_when: "up_result.rc != 0 and 'already' not in up_result.stderr"
+      loop: "{{ drbd_resources }}"
+
+    - name: 첫 번째 노드에서만 초기 Primary 강제 지정 (split-brain 방지 — 다른 노드에서는 절대 실행 금지)
+      ansible.builtin.command:
+        cmd: "drbdadm primary --force {{ item.name }}"
+      loop: "{{ drbd_resources }}"
+      when: inventory_hostname == groups['drbd_nodes'][0]
+      register: primary_result
+      changed_when: primary_result.rc == 0
+      failed_when:
+        - primary_result.rc != 0
+        - "'already' not in primary_result.stderr"
+
+    - name: 동기화 상태 확인
+      ansible.builtin.command:
+        cmd: "drbdadm status {{ item.name }}"
+      loop: "{{ drbd_resources }}"
+      register: drbd_status
+      changed_when: false

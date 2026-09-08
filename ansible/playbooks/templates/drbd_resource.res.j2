@@ -1,0 +1,35 @@
+resource {{ item.name }} {
+    protocol C;
+
+    options {
+        quorum majority;
+        on-no-quorum io-error;
+    }
+
+    disk {
+        on-io-error detach;
+    }
+
+    net {
+        fencing resource-only;
+        max-buffers 8000;
+        max-epoch-size 8000;
+        after-sb-0pri discard-zero-changes;
+        after-sb-1pri discard-secondary;
+    }
+
+    # 인벤토리 순서대로 node-id를 0, 1, 2... 순으로 부여합니다.
+    {% for host in groups['drbd_nodes'] %}
+    on {{ hostvars[host]['inventory_hostname'] }} {
+        node-id   {{ loop.index0 }};
+        device    {{ item.device }};
+        disk      /dev/{{ vg_name }}/{{ item.lv_name }};
+        address   {{ hostvars[host]['ansible_host'] | default(hostvars[host]['ansible_default_ipv4']['address']) }}:{{ item.port }};
+        meta-disk internal;
+    }
+    {% endfor %}
+
+    connection-mesh {
+        hosts {% for host in groups['drbd_nodes'] %}{{ hostvars[host]['inventory_hostname'] }} {% endfor %};
+    }
+}

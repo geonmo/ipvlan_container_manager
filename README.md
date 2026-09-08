@@ -301,3 +301,17 @@ ansible-playbook -i inventory.yml ansible/playbooks/deploy_drbd.yml
 ansible-playbook -i inventory.yml ansible/playbooks/deploy_quadlet.yml
 ansible-playbook -i inventory.yml ansible/playbooks/deploy_pacemaker.yml
 ```
+
+`ansible/playbooks/` also has a few extra reference-only playbooks (anonymized from a real
+deployment) showing patterns this app's generators are modeled after — not wired into the
+web UI, just illustrative:
+
+- `drbd_kernel_versionlock.yml` — ELRepo GPG/kernel+DRBD package versionlock, reboot only
+  when the kernel actually changed
+- `drbd_multi_resource_provision.yml` (+ `templates/drbd_resource.res.j2`) — provisioning
+  several DRBD resources at once on top of **LVM thin-provisioned** volumes, idempotently
+  (check before `create-md`), with the initial `primary --force` restricted to the first
+  inventory host only
+- `quadlet_ipvlan_autodetect.yml` — auto-detecting which physical NIC belongs to a given
+  subnet for `.network` unit `Options=parent=` (same logic behind this app's
+  `__PARENT_IFACE__` placeholder substitution)

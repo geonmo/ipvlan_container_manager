@@ -1,0 +1,58 @@
+---
+# IPVLAN 네트워크 인터페이스 자동감지 참고 Playbook.
+#
+# 노드마다 물리 NIC 이름(eth0, eno1np0 등)이 다를 수 있으므로,
+# `ansible_interfaces`를 순회하며 원하는 서브넷에 속한 인터페이스를
+# `ansible.utils.ipaddr` 필터로 찾아낸 뒤 그 이름을 `.network` 유닛의
+# `Options=parent=...`에 채워 넣는다. 이 앱의 /nodes/ 인터페이스
+# 자동감지(POST /api/collect-interfaces)와, 생성기가 인터페이스를 모를
+# 때 내보내는 `__PARENT_IFACE__` 플레이스홀더도 정확히 이 방식으로
+# 치환된다.
+#
+# (방화벽은 컨테이너 사이드카가 아니라 호스트 레벨 nft netdev table
+# 필터 하나로 처리한다 — PLAN.md Section B 결정. 이 파일은 그 결정과
+# 무관한 순수 네트워크 인터페이스 감지 패턴만 다룬다.)
+#
+# 사용법:
+#   ansible-playbook -i inventory.yml quadlet_ipvlan_autodetect.yml
+
+- name: IPVLAN 네트워크 인터페이스 자동감지 + .network 유닛 생성
+  hosts: all
+  become: true
+  vars:
+    quadlet_dir: /etc/containers/systemd
+    public_subnet: "203.0.113.0/24"
+    public_gateway: "203.0.113.1"
+    public_subnet6: "2001:db8:1::/64"
+    public_gateway6: "2001:db8:1::1"
+
+  tasks:
+    - name: Public 서브넷에 속한 인터페이스 자동감지
+      ansible.builtin.set_fact:
+        public_interface: "{{ hostvars[inventory_hostname]['ansible_' + item]['device'] }}"
+      when:
+        - hostvars[inventory_hostname]['ansible_' + item] is defined
+        - hostvars[inventory_hostname]['ansible_' + item].ipv4 is defined
+        - hostvars[inventory_hostname]['ansible_' + item]['ipv4']['address'] is defined
+        - (hostvars[inventory_hostname]['ansible_' + item]['ipv4']['address'] | ansible.utils.ipaddr(public_subnet))
+      with_items: "{{ ansible_interfaces }}"
+
+    - name: Public IPVLAN .network 유닛 생성 (감지된 인터페이스를 parent=로 사용)
+      ansible.builtin.copy:
+        dest: "{{ quadlet_dir }}/public-ipvlan.network"
+        mode: "0644"
+        content: |
+          [Network]
+          Driver=ipvlan
+          IPv6=true
+          Subnet={{ public_subnet }}
+          Gateway={{ public_gateway }}
+          Subnet={{ public_subnet6 }}
+          Gateway={{ public_gateway6 }}
+          Options=parent={{ public_interface }}
+      notify: daemon-reload
+
+  handlers:
+    - name: daemon-reload
+      ansible.builtin.command: systemctl daemon-reload
+      changed_when: true
