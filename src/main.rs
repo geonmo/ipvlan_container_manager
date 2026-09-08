@@ -245,6 +245,9 @@ async fn main() {
         // 노드 인터페이스 API
         .route("/api/node-interfaces", get(routes::nodes::api_list_node_interfaces))
         .route("/api/collect-interfaces", post(routes::nodes::api_collect_interfaces))
+        // 스토리지 백엔드 감지 (PLAN.md D.1)
+        .route("/api/storage-backend", get(routes::nodes::api_get_storage_backend))
+        .route("/api/storage-backend/detect", post(routes::nodes::api_detect_storage_backend))
         // Quadlet Pod 스캔 API
         .route("/api/quadlet-pods", get(routes::nodes::api_list_quadlet_pods))
         // 정적 파일

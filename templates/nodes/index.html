@@ -111,6 +111,32 @@
       </div>
     </div>
 
+    <!-- 스토리지 백엔드 감지 (PLAN.md D.1) -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-dark text-white fw-bold d-flex align-items-center">
+        <span><i class="bi bi-hdd-stack-fill"></i> 스토리지 백엔드</span>
+        <span class="badge ms-2" id="storageBackendBadge">확인 중...</span>
+        <div class="ms-auto d-flex align-items-center gap-2">
+          <small class="text-white-50" id="storageBackendDetectedAt"></small>
+          <select class="form-select form-select-sm w-auto" id="storageProfileSel">
+            <option value="">-- Ansible 프로파일 --</option>
+          </select>
+          <button class="btn btn-sm btn-light" onclick="detectStorageBackend()">
+            <i class="bi bi-search"></i> 지금 다시 감지
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="small text-muted mb-2">
+          클러스터 노드에 <code>linstor-controller</code>/<code>linstor-satellite</code> systemd 유닛이
+          설치돼 있는지 확인해 순수 DRBD 커널모듈 방식인지 LINSTOR 방식인지 판정합니다
+          (클러스터 전체 기준 하나의 전역 설정 — 노드별 혼재는 다루지 않습니다).
+          <a href="/linstor/">LINSTOR 배포 탭</a>에서 감지 결과를 참고해 폼을 선택하세요.
+        </p>
+        <div id="storageBackendDetail" class="small"></div>
+      </div>
+    </div>
+
     <!-- 활성 Ansible 프로파일 선택 -->
     <div class="card shadow-sm mb-3">
       <div class="card-header bg-warning text-dark fw-bold">
@@ -302,6 +328,74 @@ async function loadAll() {
   rebuildActiveProfileSel(getProfilePool());
   const sel = document.getElementById('activeProfileSel');
   if (sel) sel.value = getActiveProfileName();
+
+  await loadStorageBackend();
+  const spSel = document.getElementById('storageProfileSel');
+  const profiles = JSON.parse(localStorage.getItem('icm_ansible_profiles') || '[]');
+  spSel.innerHTML = '<option value="">-- Ansible 프로파일 --</option>';
+  profiles.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    spSel.appendChild(opt);
+  });
+}
+
+// ── 스토리지 백엔드 감지 (PLAN.md D.1) ──────────────────────────────────────
+
+function renderStorageBackendBadge(backend, detectedAt) {
+  const badge = document.getElementById('storageBackendBadge');
+  const at = document.getElementById('storageBackendDetectedAt');
+  if (backend === 'linstor') {
+    badge.className = 'badge ms-2 bg-info text-dark';
+    badge.textContent = 'LINSTOR';
+  } else {
+    badge.className = 'badge ms-2 bg-secondary';
+    badge.textContent = '커널모듈 (DRBD)';
+  }
+  at.textContent = detectedAt ? `마지막 감지: ${detectedAt}` : '아직 감지되지 않음';
+}
+
+async function loadStorageBackend() {
+  try {
+    const resp = await fetch('/api/storage-backend');
+    const data = await resp.json();
+    renderStorageBackendBadge(data.backend, data.detected_at);
+  } catch (e) {
+    // 무시 — 기본값(커널모듈)로 남겨둠
+  }
+}
+
+async function detectStorageBackend() {
+  const profileId = document.getElementById('storageProfileSel').value;
+  const detail = document.getElementById('storageBackendDetail');
+  const badge = document.getElementById('storageBackendBadge');
+  badge.className = 'badge ms-2 bg-warning text-dark';
+  badge.textContent = '감지 중...';
+  detail.innerHTML = '';
+  try {
+    const resp = await fetch('/api/storage-backend/detect', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ profile_name: profileId || null })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      renderStorageBackendBadge(data.backend, data.detected_at);
+      detail.innerHTML = data.per_node.map(([host, ctrl, sat]) =>
+        `<span class="badge bg-light text-dark border me-1">${esc(host)}: ` +
+        `controller=${ctrl ? '✓' : '✗'} satellite=${sat ? '✓' : '✗'}</span>`
+      ).join(' ');
+    } else {
+      const errText = await resp.text();
+      badge.className = 'badge ms-2 bg-danger';
+      badge.textContent = '감지 실패';
+      detail.innerHTML = `<span class="text-danger">${esc(errText || resp.statusText)}</span>`;
+    }
+  } catch (e) {
+    badge.className = 'badge ms-2 bg-danger';
+    badge.textContent = '감지 실패';
+    detail.innerHTML = `<span class="text-danger">${esc(String(e))}</span>`;
+  }
 }
 
 async function loadNodes() {

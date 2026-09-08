@@ -7,12 +7,13 @@ use serde::{Deserialize, Serialize};
 use tera::Context;
 use crate::AppState;
 use crate::db::{
-    DbNode, DbNetwork, DbAnsibleProfile, DbNodeInterface, DbVolume,
+    DbNode, DbNetwork, DbAnsibleProfile, DbNodeInterface, DbVolume, DbStorageBackend,
     list_nodes, upsert_node, delete_node,
     list_networks, upsert_network, delete_network,
     list_ansible_profiles, upsert_ansible_profile, delete_ansible_profile,
     list_node_interfaces, upsert_node_interface, delete_node_interfaces_for_host,
     insert_volume_if_not_exists,
+    get_storage_backend, set_storage_backend,
 };
 use crate::scan::{self, auto_match_network_interfaces};
 
@@ -340,6 +341,155 @@ pub async fn api_collect_interfaces(
             ansible_output,
         }));
     }
+}
+
+// ─── 스토리지 백엔드 감지 (PLAN.md D.1) ────────────────────────────────────
+//
+// linbit.linstor 공식 컬렉션의 controller_install/satellite_install role이
+// 실제로 쓰는 것과 동일한 판정 방식(systemd 유닛 파일 존재 여부)을 그대로
+// 재사용한다 — `roles/controller_install/tasks/main.yml`의
+// `/usr/lib/systemd/system/linstor-controller.service` stat 확인,
+// `roles/satellite_install/tasks/main.yml`의
+// `/usr/lib/systemd/system/linstor-satellite.service` stat 확인과 동일한
+// 경로. 사용자 결정에 따라 노드별 혼재는 다루지 않고, 클러스터 내 한 노드
+// 라도 컨트롤러/새틀라이트 유닛이 있으면 전역적으로 "linstor"로 판정한다.
+
+pub async fn api_get_storage_backend(
+    State(state): State<AppState>,
+) -> Result<Json<DbStorageBackend>, StatusCode> {
+    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(get_storage_backend(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
+}
+
+#[derive(Serialize)]
+pub struct StorageBackendDetectResult {
+    pub backend: String,
+    pub detected_at: String,
+    /// 노드별 감지 상세 (hostname, linstor-controller 유닛 존재, linstor-satellite 유닛 존재)
+    pub per_node: Vec<(String, bool, bool)>,
+    pub ansible_output: String,
+}
+
+pub async fn api_detect_storage_backend(
+    State(state): State<AppState>,
+    Json(input): Json<CollectInput>,
+) -> Result<Json<StorageBackendDetectResult>, (StatusCode, String)> {
+    let temp_dir = state.temp_dir.clone();
+    let e500 = |m: String| (StatusCode::INTERNAL_SERVER_ERROR, m);
+
+    let (nodes, profile) = {
+        let conn = state.db.lock().map_err(|_| e500("DB lock 실패".into()))?;
+        let nodes = list_nodes(&conn).map_err(|e| e500(e.to_string()))?;
+        if nodes.is_empty() {
+            return Err((StatusCode::BAD_REQUEST,
+                "감지할 노드가 없습니다. 먼저 노드 풀에 노드를 추가하세요.".to_string()));
+        }
+        let all_profiles = list_ansible_profiles(&conn).map_err(|e| e500(e.to_string()))?;
+        let profile = if let Some(ref name) = input.profile_name {
+            all_profiles.into_iter().find(|p| &p.name == name)
+        } else {
+            all_profiles.into_iter().next()
+        };
+        (nodes, profile)
+    };
+
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e500(format!("temp_dir 생성: {}", e)))?;
+
+    let inv_path = format!("{}/linstor_detect_inventory.ini", temp_dir);
+    let pb_path  = format!("{}/linstor_detect.yml", temp_dir);
+    write_ansible_inventory(&nodes, &profile, &inv_path)
+        .map_err(|e| e500(format!("인벤토리 생성: {}", e)))?;
+    write_storage_backend_detect_playbook(&temp_dir, &pb_path)
+        .map_err(|e| e500(format!("플레이북 생성: {}", e)))?;
+
+    let mut cmd = tokio::process::Command::new("ansible-playbook");
+    cmd.arg("-i").arg(&inv_path).arg(&pb_path)
+       .arg("--ssh-extra-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
+       .stdout(std::process::Stdio::piped())
+       .stderr(std::process::Stdio::piped());
+
+    if let Some(ref p) = profile {
+        if p.auth_method == "key" && !p.ssh_key.is_empty() {
+            let key = p.ssh_key.replace('~', &std::env::var("HOME").unwrap_or_default());
+            cmd.arg("--private-key").arg(&key);
+        }
+    }
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        cmd.output(),
+    ).await
+     .map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Ansible 타임아웃 (120초)".into()))?
+     .map_err(|e| e500(format!("ansible-playbook 실행 실패: {}\n(ansible-playbook 설치 여부를 확인하세요)", e)))?;
+
+    let stdout = String::from_utf8_lossy(&result.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&result.stderr).to_string();
+    let ansible_output = format!("{}{}", stdout, stderr);
+
+    if !result.status.success() {
+        return Err((StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Ansible 실패:\n{}", ansible_output)));
+    }
+
+    let mut per_node = Vec::new();
+    for node in &nodes {
+        let file = format!("{}/linstor_detect_{}.json", temp_dir, node.hostname);
+        match std::fs::read_to_string(&file) {
+            Ok(content) => {
+                let v: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
+                let has_ctrl = v["controller"].as_bool().unwrap_or(false);
+                let has_sat  = v["satellite"].as_bool().unwrap_or(false);
+                per_node.push((node.hostname.clone(), has_ctrl, has_sat));
+            }
+            Err(e) => tracing::warn!("노드 {} 감지 결과 읽기 실패: {}", node.hostname, e),
+        }
+    }
+
+    let backend = if per_node.iter().any(|(_, ctrl, sat)| *ctrl || *sat) {
+        "linstor"
+    } else {
+        "kernel-module"
+    };
+
+    let detected_at = {
+        let conn = state.db.lock().map_err(|_| e500("DB lock 실패".into()))?;
+        set_storage_backend(&conn, backend).map_err(|e| e500(e.to_string()))?;
+        get_storage_backend(&conn).map_err(|e| e500(e.to_string()))?.detected_at
+    };
+
+    Ok(Json(StorageBackendDetectResult {
+        backend: backend.to_string(),
+        detected_at,
+        per_node,
+        ansible_output,
+    }))
+}
+
+fn write_storage_backend_detect_playbook(temp_dir: &str, path: &str) -> anyhow::Result<()> {
+    let content = format!(r#"---
+- name: LINSTOR 설치 여부 감지 (PLAN.md D.1)
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: linstor-controller systemd 유닛 확인
+      ansible.builtin.stat:
+        path: /usr/lib/systemd/system/linstor-controller.service
+      register: _linstor_ctrl_stat
+
+    - name: linstor-satellite systemd 유닛 확인
+      ansible.builtin.stat:
+        path: /usr/lib/systemd/system/linstor-satellite.service
+      register: _linstor_sat_stat
+
+    - name: 감지 결과 로컬 저장
+      local_action:
+        module: copy
+        content: "{{{{ {{'controller': _linstor_ctrl_stat.stat.exists, 'satellite': _linstor_sat_stat.stat.exists}} | to_json }}}}"
+        dest: "{temp_dir}/linstor_detect_{{{{ inventory_hostname }}}}.json"
+        mode: '0600'
+"#, temp_dir = temp_dir);
+    std::fs::write(path, content)?;
+    Ok(())
 }
 
 // ─── 헬퍼: Ansible 인벤토리 생성 ─────────────────────────────────────────

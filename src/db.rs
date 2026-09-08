@@ -71,6 +71,15 @@ pub struct DbAnsibleProfile {
     pub updated_at: String,
 }
 
+/// 스토리지 백엔드 감지 결과 (PLAN.md D.1) — 클러스터 전체에 대해 하나만
+/// 저장하는 전역 설정 (사용자 결정: 노드별 혼재는 다루지 않는다).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbStorageBackend {
+    /// "kernel-module" | "linstor"
+    pub backend: String,
+    pub detected_at: String,
+}
+
 /// DB 초기화 (테이블 생성)
 pub fn init_db(path: &str) -> Result<Connection> {
     let conn = Connection::open(path)?;
@@ -209,7 +218,14 @@ pub fn init_db(path: &str) -> Result<Connection> {
              description   TEXT    NOT NULL DEFAULT '',
              drbd_resource TEXT    NOT NULL DEFAULT '',
              created_at    TEXT    NOT NULL DEFAULT ''
-         );",
+         );
+
+         CREATE TABLE IF NOT EXISTS storage_backend_config (
+             id          INTEGER NOT NULL DEFAULT 1 CHECK (id = 1),
+             backend     TEXT    NOT NULL DEFAULT 'kernel-module',
+             detected_at TEXT    NOT NULL DEFAULT ''
+         );
+         INSERT OR IGNORE INTO storage_backend_config (id) VALUES (1);",
     )?;
     Ok(conn)
 }
@@ -924,4 +940,23 @@ pub fn upsert_nft_target(conn: &Connection, t: &DbNftTarget) -> Result<i64> {
 pub fn delete_nft_target(conn: &Connection, id: i64) -> Result<usize> {
     conn.execute("DELETE FROM nft_target_rules WHERE target_id = ?1", params![id])?;
     Ok(conn.execute("DELETE FROM nft_targets WHERE id = ?1", params![id])?)
+}
+
+// ─── 스토리지 백엔드 감지 결과 (PLAN.md D.1) ────────────────────────────────
+
+pub fn get_storage_backend(conn: &Connection) -> Result<DbStorageBackend> {
+    conn.query_row(
+        "SELECT backend, detected_at FROM storage_backend_config WHERE id = 1",
+        [],
+        |row| Ok(DbStorageBackend { backend: row.get(0)?, detected_at: row.get(1)? }),
+    )
+}
+
+pub fn set_storage_backend(conn: &Connection, backend: &str) -> Result<()> {
+    let now = chrono::Local::now().to_rfc3339();
+    conn.execute(
+        "UPDATE storage_backend_config SET backend = ?1, detected_at = ?2 WHERE id = 1",
+        params![backend, now],
+    )?;
+    Ok(())
 }
