@@ -1,1 +1,4 @@
 /target/
+/icm.db
+/icm.db-shm
+/icm.db-wal
