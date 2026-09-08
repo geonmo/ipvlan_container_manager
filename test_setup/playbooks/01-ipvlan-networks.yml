@@ -1,0 +1,74 @@
+---
+# IPVLAN(public/private) Quadlet 네트워크 사전 설정
+#
+# playbooks_cmst2/container_playbooks/R00.ipvlan.yml 을 이 테스트 환경(3-node VM)에
+# 맞게 옮긴 것. ansible/playbooks/{deploy_pacemaker,deploy_drbd,deploy_quadlet}.yml 이
+# 다루지 않는 "IPVLAN 네트워크 생성" 부분을 채우기 위한 플레이북이다.
+#
+# 사용법:
+#   ansible-playbook 00-ipvlan-networks.yml
+
+- name: 컨테이너 클러스터 IPVLAN(public/private) 네트워크 사전 설정
+  hosts: all
+  become: true
+  tasks:
+    - name: ansible.utils.ipaddr 필터용 python3-netaddr 설치
+      ansible.builtin.dnf:
+        name: python3-netaddr
+        state: present
+
+    - name: Ensure quadlet directory exists
+      ansible.builtin.file:
+        path: "{{ quadlet_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Public 네트워크 인터페이스 찾기
+      ansible.builtin.set_fact:
+        public_interface: "{{ hostvars[inventory_hostname]['ansible_' + item]['device'] }}"
+      when:
+        - hostvars[inventory_hostname]['ansible_' + item] is defined
+        - hostvars[inventory_hostname]['ansible_' + item].ipv4 is defined
+        - hostvars[inventory_hostname]['ansible_' + item]['ipv4']['address'] is defined
+        - (hostvars[inventory_hostname]['ansible_' + item]['ipv4']['address'] | ansible.utils.ipaddr(public_subnet))
+      with_items: "{{ ansible_interfaces }}"
+
+    - name: public-ipvlan.network 생성
+      ansible.builtin.copy:
+        dest: "{{ quadlet_dir }}/public-ipvlan.network"
+        mode: "0644"
+        content: |
+          [Network]
+          Driver=ipvlan
+          Subnet={{ public_subnet }}
+          Options=parent={{ public_interface }}
+      notify: daemon-reload
+
+    - name: Private 네트워크 인터페이스 찾기
+      ansible.builtin.set_fact:
+        private_interface: "{{ hostvars[inventory_hostname]['ansible_' + item]['device'] }}"
+      when:
+        - hostvars[inventory_hostname]['ansible_' + item] is defined
+        - hostvars[inventory_hostname]['ansible_' + item].ipv4 is defined
+        - hostvars[inventory_hostname]['ansible_' + item]['ipv4']['address'] is defined
+        - (hostvars[inventory_hostname]['ansible_' + item]['ipv4']['address'] | ansible.utils.ipaddr(private_subnet))
+      with_items: "{{ ansible_interfaces }}"
+
+    - name: private-ipvlan.network 생성
+      ansible.builtin.copy:
+        dest: "{{ quadlet_dir }}/private-ipvlan.network"
+        mode: "0644"
+        content: |
+          [Network]
+          Driver=ipvlan
+          Subnet={{ private_subnet }}
+          IPv6=no
+          Options=parent={{ private_interface }}
+          Options=mode=l2
+          Internal=true
+      notify: daemon-reload
+
+  handlers:
+    - name: daemon-reload
+      ansible.builtin.command: systemctl daemon-reload
+      changed_when: true

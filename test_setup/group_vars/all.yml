@@ -1,0 +1,22 @@
+---
+# ipvlan_container_manager 테스트 환경(3-node VM) 공용 변수
+# 프로덕션(playbooks_cmst2)과 달리 SSH 키 인증 + 무비밀번호 sudo가 이미 구성돼 있으므로
+# 인증 관련 변수(vault, gsdcadmin 키 등)는 여기 포함하지 않는다.
+
+# --- Quadlet / Podman ---
+quadlet_dir: /etc/containers/systemd
+
+# --- IPVLAN 네트워크 (00-ipvlan-networks.yml) ---
+# node01~03 의 실제 인터페이스 구성(ip -br addr 확인 결과) 기준:
+#   eth0 172.19.0.0/20  DHCP  - 빌드/관리망 (사용 안 함)
+#   eth1 192.168.100.0/24    - /etc/hosts 에 등록된 노드 identity망 -> "public" 대역으로 매핑
+#   eth2 10.0.0.0/24         - 노드간 전용망(게이트웨이 없음) -> "private" 대역으로 매핑
+# 두 대역 모두 실제 라우터가 없는 host-only 성격의 망이라 Gateway/IPv6 설정은 생략했다.
+public_subnet: 192.168.100.0/24
+private_subnet: 10.0.0.0/24
+
+# --- Pacemaker (deploy_pacemaker.yml) ---
+# pcs/corosync 클러스터 이름과 hacluster 계정 비밀번호.
+# 테스트 전용 평문 비밀번호이며 실제 서비스 값과 무관하다(운영은 vault/hacluster.vault.yml 사용).
+cluster_name: test_cluster
+hacluster_password: "TestCluster!2026"
