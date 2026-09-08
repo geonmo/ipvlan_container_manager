@@ -104,6 +104,18 @@ all` 핸들러 연결, `/drbd/` 화면에 안내 문구 추가. 단위 테스트
 
 ### A.2 DRBD promotable clone — op timeout 세트가 monitor만 있고 나머지가 없음 + `clone-max` 하드코딩 버그
 
+**✅ 구현 완료 (2026-09-04)** — `DrbdPacemakerResource`에
+`promote_timeout`/`demote_timeout`/`start_timeout`/`stop_timeout` 필드
+추가(기본값 90s/90s/240s/100s), `generate_drbd_resource_cmds()`가
+demote/monitor(Promoted+Unpromoted)/notify/promote/reload/start/stop
+op를 전부 출력하도록 수정. `clone-max`는 `config.cluster.nodes.len()`
+기준으로 동적 계산(노드 목록이 비어 있으면 3으로 폴백)하도록
+`generate_pcs_script()`/`generate_drbd_resource_cmds()` 시그니처 변경.
+`routes/pacemaker.rs`의 `DrbdGroupInput`과 `templates/pacemaker/index.html`
+DRBD+FS 카드에 4개 op timeout 입력 필드 추가(예전 형식 localStorage
+데이터도 기본값으로 안전하게 채움). 단위 테스트 4개 통과
+(`cargo test pacemaker::`, 3-node 기준 clone-max=3 확인 포함).
+
 - 가이드 1.1절 필수 세트: `op demote/monitor/notify/promote/reload/start/stop`
   전부 명시, 특히 promote/demote 90~240s.
 - 현재 `generate_drbd_resource_cmds()` (`src/generators/pacemaker.rs:104-`)는
@@ -159,6 +171,19 @@ all` 핸들러 연결, `/drbd/` 화면에 안내 문구 추가. 단위 테스트
 
 ### A.3 생성된 pcs 스크립트에 멱등성 가드가 없음
 
+**✅ 구현 완료 (2026-09-07)** — `src/routes/pacemaker.rs::build_resources_play()`가
+`pcs resource config`/`pcs constraint --full`을 각각 딱 한 번만
+`run_once`+`delegate_to: "{{ ansible_play_batch | first }}"`로 캡처한 뒤,
+`push_guarded_resource_task()`/`push_guarded_constraint_task()`가 리소스/
+Order/Colocation/Location 생성 태스크마다 `when: existing_*.stdout is not
+search(...)` 가드를 붙인다. 사용자 입력(리소스/노드/클러스터 이름 등)에
+`'`나 `"`가 섞여도 YAML이 깨지지 않도록 `yaml_squote()`/`yaml_dquote()`
+헬퍼로 이스케이프(라이브 서버에 `cluster_name=ha"cluster`,
+`ipmi_password=it's"secret` 같은 값을 실제로 POST해서 생성된 플레이북을
+`python3 -c "import yaml; yaml.safe_load(...)"`로 파싱 검증). 단위 테스트
+`routes::pacemaker::tests::resources_play_precaptures_state_and_guards_each_item`,
+`order_and_colocation_constraints_are_individually_guarded`.
+
 - 가이드 6.3절이 요구하는 멱등성을, `R11.pacemaker_drbd_resources.yml`이
   **실제로 어떻게 구현했는지 정확한 패턴을 확인함** — 리소스마다 개별로
   `pcs resource config <id>`를 호출하는 게 **아니라**:
@@ -192,6 +217,18 @@ all` 핸들러 연결, `/drbd/` 화면에 안내 문구 추가. 단위 테스트
   래퍼가 이 패턴을 쓰고 있는지 구현 시작 시 먼저 확인).
 
 ### A.4 클러스터 부트스트랩(설치~cluster setup)이 생성되지 않음
+
+**✅ 구현 완료 (2026-09-07)** — `src/routes/pacemaker.rs::build_bootstrap_play()`가
+`cluster.nodes`가 비어 있지 않을 때만 1~7단계(저장소 활성화 → 패키지
+설치 → pcsd 시작/활성화 → hacluster 계정 생성(uid 189, no_log) → `pcs
+status` 사전 체크 → `pcs_status.rc != 0`일 때만 host auth/cluster
+setup/start/enable → 속성 설정)를 새 play로 생성. 대표 노드 선택은
+`groups['container']` 같은 리터럴 그룹명이 아니라 A.3과 동일하게 `{{
+ansible_play_batch | first }}` / `{{ ansible_play_batch | join(' ') }}`로
+통일(단위 테스트로 `groups['container']` 부재 확인). `hacluster_password`는
+`vars_prompt`(`private: yes`)로 받아 파일에 평문이 남지 않음. 참고용
+`generate_pcs_script()`는 그대로 두되 최상단에 "이 스크립트는 클러스터가
+이미 있다고 가정하며 멱등성이 없다" 주석 추가.
 
 - `generate_pcs_script()`는 `pcs property set stonith-enabled=...`부터
   시작 — **클러스터가 이미 만들어져 있다고 가정**한다.
@@ -268,6 +305,20 @@ all` 핸들러 연결, `/drbd/` 화면에 안내 문구 추가. 단위 테스트
 
 ### A.5 STONITH 리소스 생성 + versionlock 안전장치 누락
 
+**✅ 구현 완료 (2026-09-07)** — `models::pacemaker::StonithDevice { node,
+ipmi_ip, ipmi_user, ipmi_password, extra_opts }` 추가, `PacemakerConfig`에
+`stonith_devices: Vec<StonithDevice>` 필드 추가. `generate_pcs_script()`에
+참고용 STONITH 블록 추가(`sanitize_stonith_id()`로 `ip=`/`user=`/`password=`
+파라미터 키 사용, `[^A-Za-z0-9._-]→_` 이름 정규화). 실제 배포는
+`build_stonith_play()`가 STONITH 장치가 하나 이상 있을 때만 별도 play로
+생성 — `pcs stonith status`를 한 번 캡처해서 `stonith-ipmi-<node>` 문자열
+존재 여부로 가드. `build_bootstrap_play()`의 패키지 설치 직후 단계에
+`dnf-plugin-versionlock` 설치 + `dnf versionlock add pacemaker corosync
+pcs`를 즉시 추가(유지보수 시에만이 아니라 부트스트랩의 일부). 입력 폼
+UI(`templates/pacemaker/index.html`)에 "STONITH(펜싱) 장치" 아코디언
+섹션 추가 — 노드별 IPMI IP/사용자/비밀번호/추가옵션 입력, 선택된 클러스터
+노드 목록과 연동되는 드롭다운.
+
 - `stonith_enabled` 불리언만 있고 실제 STONITH 리소스 생성 명령이 없음.
   **`R02.service_pacemaker_stonith.yml`과 `R55.se_backend_stonith.yml`
   (두 클러스터에 동일 패턴)에서 정확한 명령 형태를 확인함**:
@@ -304,6 +355,16 @@ all` 핸들러 연결, `/drbd/` 화면에 안내 문구 추가. 단위 테스트
 
 ### A.6 서로 다른 DRBD clone 간 anchor/follower 결합이 모델링돼 있지 않음
 
+**✅ 구현 완료 (2026-09-07)** — 코드 변경 없이(모델은 이미 범용
+`ColocationConstraint`로 표현 가능하므로) `templates/pacemaker/index.html`의
+제약조건 아코디언에 "DRBD-DRBD anchor/follower 결합 빠른 추가" 위젯 추가:
+Anchor Clone/Follower Clone 두 드롭다운(등록된 DRBD 볼륨의 `clone_name`
+목록에서 자동 채워짐, `refreshCloneSelectors()`)과 "추가" 버튼이
+`rsc=follower, rsc_role=Promoted, with_rsc=anchor, with_rsc_role=Promoted,
+score=INFINITY` 순서로 고정된 `ColocationConstraint`를
+`colocation_constraints_json` 에디터에 append(`addAnchorFollowerConstraint()`).
+화면에 "이동시킬 땐 anchor 쪽을 옮기세요" 안내 문구 포함.
+
 - 가이드 2.2절/6.4절: 두 DRBD clone을 "항상 같은 노드에서 Promoted"로
   묶을 때 `Promoted A with Promoted B`는 **방향이 있다** (B=anchor,
   A=follower). anchor를 몰라도 되는 걸로 취급하면, 실제 운영에서
@@ -320,6 +381,18 @@ all` 핸들러 연결, `/drbd/` 화면에 안내 문구 추가. 단위 테스트
 
 ### A.7 롤링 유지보수(standby) 스크립트 생성 없음 — 선택 기능
 
+**✅ 구현 완료 (2026-09-07)** — `generate_maintenance_script(config:
+&PacemakerConfig) -> String`(`src/generators/pacemaker.rs`) 신규 생성기.
+`cluster.nodes`가 비어 있으면 빈 문자열 반환. 가이드 5.1절 13단계를
+노드별 bash 루프로 구현(대표 노드로 SSH해서 `pcs node standby`/
+`unstandby`, 각 노드로 직접 SSH해서 versionlock 해제/패치, `pcs cluster
+stop`/`start`, `dnf update -y`, 재부팅+대기). standby 직후/최종 확인 두
+지점은 `read -r -p` 사람 확인 대기(무인 자동화 아님 — STONITH 연쇄
+오탐 위험 때문에 의도적 설계). 가이드 8.4절의 알려진 공백(비-Pacemaker
+`Restart=always` Quadlet 컨테이너는 이 절차로 못 건드림) 주석 포함.
+결과 화면(`templates/pacemaker/result.html`)에 "pacemaker_maintenance.sh"
+다운로드/복사 카드 추가.
+
 - 가이드 5.1절 절차 (versionlock 해제 → standby → 리소스 이동 확인 →
   `pcs cluster stop` → 업데이트 → 재부팅 → `pcs cluster start` →
   unstandby → 확인, 실패 시 다음 노드로 넘어가지 않음) + parent repo
@@ -333,6 +406,11 @@ all` 핸들러 연결, `/drbd/` 화면에 안내 문구 추가. 단위 테스트
 
 ### A.8 Ansible 인벤토리 그룹 존재 검증 태스크 없음 — 선택 기능
 
+**✅ 구현 완료 (2026-09-07)** — `generate_pacemaker_ansible_playbook()`이
+생성하는 플레이북 최상단에 `ansible-inventory -i <inventory> --graph`로
+`hosts:` 값이 예상 노드 수만큼 resolve되는지 실행 전 확인하라는 주석
+추가(주석/문서화 수준 — 가이드가 요구하는 최소 반영).
+
 - 가이드 3.4절/6.5절: `hosts: <group>`이 인벤토리에 없으면 ansible이
   에러 없이 대상 0개로 조용히 끝난다 (실사고 7.3절).
 - **변경 대상**: `src/routes/pacemaker.rs`가 만드는 Ansible 플레이북
@@ -342,6 +420,11 @@ all` 핸들러 연결, `/drbd/` 화면에 안내 문구 추가. 단위 테스트
   가이드가 명시적으로 요구하는 항목이라 최소 주석/문서화는 반영.)
 
 ### A.9 클러스터 방화벽 포트(corosync/pcsd)를 생성된 Ansible에서 열지 않음
+
+**✅ 구현 완료 (2026-09-07)** — `build_bootstrap_play()`의 패키지 설치
+단계에 `ansible.posix.firewalld` 태스크로 `5404-5405/udp`(corosync),
+`2224/tcp`(pcsd)를 work zone에 permanent+enabled로 여는 태스크 추가
+(`src/generators/drbd.rs`의 DRBD 포트 오픈 태스크와 동일한 패턴).
 
 - **`R01.service_pacemaker_firewall.yml`(container 클러스터)과
   `R53.firewalld_pacemaker.yml`(se_backend 클러스터) — 역시 두 클러스터
@@ -382,6 +465,11 @@ pcsd 같은 **클러스터 인프라 자체의 포트**를 여는 것은 별개 
 
 ### B.1 established/DNS 응답 우회 규칙 누락
 
+**✅ 구현 완료 (2026-09-07)** — `generate_nft_policy()`의 체인 헤더 출력
+직후에 `tcp flags & (ack | rst) != 0 accept`/`udp sport 53 accept` 두 줄을
+항상 추가하도록 수정. 단위 테스트로 두 줄이 체인 헤더 바로 뒤에 오는지
+확인, `/nft/generate` 실제 호출로도 확인.
+
 실제 운영 중인 `~/playbooks_cmst2/container_playbooks/files/nft/ipvlan_l2.nft`
 (netdev ingress, `policy accept`)는 체인 맨 앞에
 
@@ -400,6 +488,17 @@ udp sport 53 accept
 운영 파일과 동일 동작이 되고 코드 변경도 최소화됨).
 
 ### B.2 [신규] 생성된 `.nft` 파일을 클러스터 전 노드에 동일하게 배포하는 Ansible이 없음
+
+**✅ 구현 완료 (2026-09-07)** — `generate_nft_ansible_playbook(policy,
+ansible_hosts, ansible_user, ansible_ssh_key)`를 `src/generators/nft.rs`에
+추가 (Quadlet/Pacemaker와 동일한 자유입력 `ansible_hosts` 관례, 기본값
+"all"). R99 패턴 그대로 `/etc/nftables/ipvlan_l2.nft` 배포(`backup: yes`)
++ `/etc/sysconfig/nftables.conf` include 보장 + nftables 재시작 핸들러.
+`/nft/` 폼에 Pacemaker와 동일한 Ansible 프로파일 선택 UI 추가,
+`result.html`의 기존 **하드코딩된 정적 Ansible 스니펫**(`hosts: all` 고정,
+R99와 다른 경로)을 실제 생성기 결과로 교체. 단위 테스트 3개 통과, 실제
+서버로 `/nft/generate` end-to-end 호출해서 `ansible_hosts` 반영과
+R99 경로 정확성까지 확인.
 
 - 서비스(pod)는 DRBD/Pacemaker failover로 클러스터의 임의 노드로 옮겨갈
   수 있다. 목적지 IP 기준 allow 규칙(`target_<name>_v4/v6`)은 **pod가
@@ -438,6 +537,27 @@ udp sport 53 accept
 ---
 
 ## C. Quadlet Container 유닛 — `[Install]` / `AddCapability=` 누락
+
+**✅ 구현 완료 (2026-09-07)** — `models::quadlet::QuadletContainer`에
+`wanted_by: Option<String>`, `add_capabilities: Vec<String>` 필드 추가.
+`generate_container_unit()`이 `AddCapability=`를 라벨/extra_args 근처에,
+`[Install]\nWantedBy=...`를 `[Service]` 블록 뒤에 출력(`wanted_by`가
+없으면 `[Install]` 섹션 자체를 생략). `templates/container/index.html`의
+"AutoUpdate / 서비스 설정" 카드에 두 입력 필드 추가하고
+`serializeContainerForm()`에 반영.
+
+구현 중 **이 기능과 무관한 실제 버그를 하나 발견해 함께 수정함**:
+`src/routes/container.rs::generate()`가 `containers_json`을 받을 때
+`podman_inspect_to_quadlet()`을 **먼저** 시도하고 있었는데, 이 함수는
+어떤 JSON 배열이 들어와도 (필드가 없으면 `"unknown"`/빈 문자열로
+기본값을 채워) 절대 에러를 내지 않아서, 폼 기반 UI가 실제로 보내는
+정상적인 `QuadletContainer` JSON 배열이 **매번** 빈 `unknown.container`로
+잘못 해석되고 있었다 (라이브 서버에 실제 폼 데이터를 POST해서 재현
+확인). `POST /container/from-inspect`(`from_inspect()`)가 이미 podman
+inspect 원본 JSON을 다루는 전용 엔드포인트이므로, `generate()`는 이제
+`containers_json`을 곧바로 `Vec<QuadletContainer>`로만 파싱하도록 수정—
+재현 테스트로 `ContainerName=`/`AddCapability=`/`[Install]` 모두 정상
+출력됨을 확인.
 
 - `generate_container_unit()` (`src/generators/quadlet.rs:193-321`)은
   `[Install]` 섹션을 만들지 않는다 (`generate_volume_unit()`/
@@ -716,22 +836,28 @@ udp sport 53 accept
 
 ## 구현 순서 제안
 
-1. **A.1 (fence-peer 핸들러) — 최우선.** 사용자가 실제로 겪은 문제와
-   직결되며, 기본값(`fencing=resource-only`)에서 이미 발생 중인 버그다.
-   `R09.drbd.yml`/`drbd_global_common.conf.j2`를 그대로 이식하면 됨.
-2. A.2 (op timeout + `clone-max` 버그 수정) — A.1과 같은 파일을 다루므로
-   이어서. `clone-max` 하드코딩은 3노드 클러스터에서 바로 터지는 버그라
-   우선순위가 높다.
-3. B.1, B.2 (nft bypass, 전 노드 배포 Ansible) — 같은 라우트/생성기
-   파일이라 함께 진행.
-4. A.3+A.4+A.5+A.9 (Ansible 래퍼 멱등성/부트스트랩/STONITH/방화벽) — 넷 다
-   `src/routes/pacemaker.rs`의 같은 Ansible 래퍼 생성 부분을 다시 쓰는
-   작업이라 한 번에 묶어서 진행하는 게 효율적 (R02/R11 구조를 그대로
-   이식).
-5. A.6 (anchor/follower 안내) — Pacemaker UI 확장, 위 4번과 독립적.
-6. C (Quadlet Install/AddCapability) — 우선순위 낮음, 여유 있을 때
-   (주 동기였던 사이드카 유즈케이스가 빠졌으므로).
-7. A.7, A.8 (유지보수 스크립트, 인벤토리 검증) — 선택 사항, 여유 있을 때.
+1. **A.1 (fence-peer 핸들러) — 최우선. ✅ 완료.** 사용자가 실제로 겪은
+   문제와 직결되며, 기본값(`fencing=resource-only`)에서 이미 발생 중인
+   버그였다. `R09.drbd.yml`/`drbd_global_common.conf.j2`를 그대로 이식.
+2. A.2 (op timeout + `clone-max` 버그 수정) — ✅ 완료. A.1과 같은 파일을
+   다루므로 이어서 진행. `clone-max` 하드코딩은 3노드 클러스터에서 바로
+   터지는 버그였다.
+3. B.1, B.2 (nft bypass, 전 노드 배포 Ansible) — ✅ 완료. 같은 라우트/
+   생성기 파일이라 함께 진행.
+4. A.3+A.4+A.5+A.9 (Ansible 래퍼 멱등성/부트스트랩/STONITH/방화벽) — ✅
+   완료. 넷 다 `src/routes/pacemaker.rs`의 같은 Ansible 래퍼 생성 부분을
+   다시 쓰는 작업이라 한 번에 묶어서 진행 (R02/R11 구조를 그대로 이식).
+   구현 중 발견한 실제 버그(YAML `when:`/`ansible.builtin.command:` 값에
+   사용자 입력의 `'`/`"`가 그대로 들어가 파싱이 깨지는 문제)를
+   `yaml_squote()`/`yaml_dquote()` 헬퍼로 수정 — 라이브 서버 POST +
+   `python3 yaml.safe_load`로 재현 및 수정 확인.
+5. A.6 (anchor/follower 안내) — ✅ 완료. Pacemaker UI 확장, 위 4번과
+   독립적.
+6. C (Quadlet Install/AddCapability) — ✅ 완료. 우선순위는 낮았지만
+   완료함. 구현 중 컨테이너 폼 제출 자체가 항상 실패하던 무관한
+   기존 버그(`podman_inspect_to_quadlet` 우선 시도 순서 오류)를
+   함께 발견해 수정.
+7. A.7 (유지보수 스크립트) — ✅ 완료. A.8(인벤토리 검증 주석)도 ✅ 완료.
 8. **D.1 (LINSTOR 설치 환경 감지)** — VM 테스트 클러스터가 LINSTOR로
    구성될 예정이므로 실제로는 우선순위가 낮지 않지만, "결정 필요" 항목
    (LINBIT EL9 공개 저장소 범위, 노드별 백엔드 혼재 허용 여부)이 먼저
