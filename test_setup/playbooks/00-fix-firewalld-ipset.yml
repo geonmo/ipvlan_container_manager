@@ -1,0 +1,69 @@
+---
+# firewalld "internal" 존 ipset(work4) 재구성 (테스트 환경 전용)
+#
+# 이 VM들은 사전 구성된 "internal" 존이 ipset:work4 소스(192.168.100.0/24, 172.16.0.0/12)를
+# 갖고 있어, 소스 IP 매치가 인터페이스 매치보다 우선한다. corosync 는 이제 private
+# 네트워크(10.0.0.0/24, eth2)로 통신하므로, "internal" 존이 가리키는 대역도
+# 192.168.100.0/24(public) 대신 10.0.0.0/24(private) 로 바꾼다.
+# 결과: 192.168.100.0/24(public) 트래픽은 기본 "public" 존을, 10.0.0.0/24(private)
+# 트래픽은 "internal" 존 규칙을 타게 된다.
+#
+# 주의(중요): 이 VM들은 ssh 서비스가 "public" 존이 아니라 "internal" 존에서만
+# 허용되고 있었다. 192.168.100.0/24 를 ipset 에서 먼저 빼버리면 그 순간부터
+# 192.168.100.0/24(= 우리가 ansible/ssh 관리에 쓰는 망) 트래픽이 ssh 미허용인
+# "public" 존을 타게 되어 즉시 SSH 접속이 끊긴다(실제로 겪은 사고). 그래서 이 플레이북은
+# 반드시 먼저 "public" 존에 ssh 를 허용해 두고 나서 ipset 을 교체한다.
+#
+# 사용법:
+#   ansible-playbook 00-fix-firewalld-ipset.yml
+
+- name: internal 존 ipset(work4) 대상 대역 교체
+  hosts: all
+  become: true
+  vars:
+    ipset_name: work4
+    old_entry: 192.168.100.0/24
+    new_entry: 10.0.0.0/24
+  tasks:
+    - name: "(선행) public 존에 ssh 허용 - ipset 교체로 인한 SSH 잠금 방지"
+      ansible.posix.firewalld:
+        zone: public
+        service: ssh
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: 기존 항목({{ old_entry }}) 조회
+      ansible.builtin.command: "firewall-cmd --permanent --ipset={{ ipset_name }} --query-entry={{ old_entry }}"
+      register: has_old
+      changed_when: false
+      failed_when: false
+
+    - name: 신규 항목({{ new_entry }}) 조회
+      ansible.builtin.command: "firewall-cmd --permanent --ipset={{ ipset_name }} --query-entry={{ new_entry }}"
+      register: has_new
+      changed_when: false
+      failed_when: false
+
+    - name: "{{ old_entry }} 제거"
+      ansible.builtin.command: "firewall-cmd --permanent --ipset={{ ipset_name }} --remove-entry={{ old_entry }}"
+      when: has_old.stdout == "yes"
+      register: removed
+
+    - name: "{{ new_entry }} 추가"
+      ansible.builtin.command: "firewall-cmd --permanent --ipset={{ ipset_name }} --add-entry={{ new_entry }}"
+      when: has_new.stdout == "no"
+      register: added
+
+    - name: firewalld 재적용
+      ansible.builtin.command: firewall-cmd --reload
+      when: (removed is changed) or (added is changed)
+
+    - name: 결과 확인
+      ansible.builtin.command: "firewall-cmd --zone=internal --list-all"
+      changed_when: false
+      register: internal_zone
+
+    - name: internal 존 상태 출력
+      ansible.builtin.debug:
+        var: internal_zone.stdout_lines

@@ -1,0 +1,90 @@
+---
+# Quadlet 유닛 파일 배포 Playbook
+# 사용법:
+#   ansible-playbook -i inventory.yml deploy_quadlet.yml \
+#     -e "quadlet_src_dir=/path/to/quadlet/files"
+
+- name: Quadlet 유닛 파일 배포
+  hosts: all
+  become: yes
+  vars:
+    quadlet_dest_dir: /etc/containers/systemd
+    quadlet_src_dir: "{{ playbook_dir }}/files/quadlet"
+
+  tasks:
+    - name: Podman 설치 확인
+      dnf:
+        name: podman
+        state: present
+
+    - name: Quadlet 디렉토리 생성
+      file:
+        path: "{{ quadlet_dest_dir }}"
+        state: directory
+        mode: "0755"
+        owner: root
+        group: root
+
+    - name: Quadlet .container 유닛 파일 배포
+      copy:
+        src: "{{ item }}"
+        dest: "{{ quadlet_dest_dir }}/{{ item | basename }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: yes
+      with_fileglob:
+        - "{{ quadlet_src_dir }}/*.container"
+      notify: daemon-reload
+
+    - name: Quadlet .pod 유닛 파일 배포
+      copy:
+        src: "{{ item }}"
+        dest: "{{ quadlet_dest_dir }}/{{ item | basename }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: yes
+      with_fileglob:
+        - "{{ quadlet_src_dir }}/*.pod"
+      notify: daemon-reload
+
+    - name: Quadlet .volume 유닛 파일 배포
+      copy:
+        src: "{{ item }}"
+        dest: "{{ quadlet_dest_dir }}/{{ item | basename }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: yes
+      with_fileglob:
+        - "{{ quadlet_src_dir }}/*.volume"
+      notify: daemon-reload
+
+    - name: Quadlet .network 유닛 파일 배포
+      copy:
+        src: "{{ item }}"
+        dest: "{{ quadlet_dest_dir }}/{{ item | basename }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: yes
+      with_fileglob:
+        - "{{ quadlet_src_dir }}/*.network"
+      notify: daemon-reload
+
+  handlers:
+    - name: daemon-reload
+      systemd:
+        daemon_reload: yes
+
+  post_tasks:
+    - name: 배포된 유닛 파일 확인
+      find:
+        paths: "{{ quadlet_dest_dir }}"
+        patterns: "*.container,*.pod,*.volume,*.network"
+      register: deployed_files
+
+    - name: 배포 결과 출력
+      debug:
+        msg: "배포된 파일: {{ deployed_files.files | map(attribute='path') | list }}"

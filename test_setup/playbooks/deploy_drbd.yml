@@ -1,0 +1,102 @@
+---
+# DRBD 설정 파일 배포 Playbook
+# 사용법:
+#   ansible-playbook -i inventory.yml deploy_drbd.yml \
+#     -e "res_filename=r0.res res_content='<파일내용>'"
+#
+# 또는 res 파일을 files/ 디렉토리에 저장 후:
+#   ansible-playbook -i inventory.yml deploy_drbd.yml \
+#     -e "res_filename=r0.res"
+
+- name: DRBD 리소스 파일 배포 및 초기 설정
+  hosts: all
+  become: yes
+  vars:
+    drbd_res_dir: /etc/drbd.d
+    res_filename: "r0.res"
+    elrepo_gpg_key: "https://www.elrepo.org/RPM-GPG-KEY-elrepo.org"
+
+  tasks:
+    - name: ELRepo GPG 키 등록
+      rpm_key:
+        key: "{{ elrepo_gpg_key }}"
+        state: present
+
+    - name: ELRepo 저장소 패키지 설치
+      dnf:
+        name: elrepo-release
+        state: present
+
+    - name: ELRepo 저장소 활성화
+      command: dnf config-manager --enable elrepo
+      changed_when: false
+
+    - name: DRBD 패키지 설치
+      dnf:
+        name:
+          - drbd9x-utils
+          - kmod-drbd9x
+        state: present
+
+    - name: DRBD 커널 모듈 로드
+      modprobe:
+        name: drbd
+        state: present
+
+    - name: drbd.d 디렉토리 확인
+      file:
+        path: "{{ drbd_res_dir }}"
+        state: directory
+        mode: "0755"
+
+    # res_content 변수로 직접 전달하는 경우
+    - name: DRBD .res 파일 배포 (인라인 콘텐츠)
+      copy:
+        content: "{{ res_content }}"
+        dest: "{{ drbd_res_dir }}/{{ res_filename }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: yes
+      when: res_content is defined
+
+    # 로컬 파일에서 배포하는 경우
+    - name: DRBD .res 파일 배포 (로컬 파일)
+      copy:
+        src: "{{ playbook_dir }}/files/{{ res_filename }}"
+        dest: "{{ drbd_res_dir }}/{{ res_filename }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: yes
+      when: res_content is not defined
+
+    - name: DRBD 설정 검증
+      command: "drbdadm dump {{ res_filename | splitext | first }}"
+      register: drbd_dump
+      changed_when: false
+      failed_when: drbd_dump.rc != 0
+
+    - name: DRBD 서비스 활성화 및 시작
+      systemd:
+        name: drbd
+        state: started
+        enabled: yes
+
+    - name: 방화벽 DRBD 포트 허용
+      firewalld:
+        port: 7789/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+      ignore_errors: yes  # firewalld 미설치 환경 무시
+
+    - name: DRBD 설정 완료 메시지
+      debug:
+        msg: |
+          DRBD 설정 완료:
+          - 리소스 파일: {{ drbd_res_dir }}/{{ res_filename }}
+          다음 단계:
+          1. 양쪽 노드에서 drbdadm create-md <resource>
+          2. systemctl start drbd
+          3. 첫 번째 노드에서 drbdadm -- --overwrite-data-of-peer primary <resource>

@@ -1,0 +1,104 @@
+---
+# Pacemaker 설정 배포 Playbook
+# 사용법:
+#   ansible-playbook -i inventory.yml deploy_pacemaker.yml \
+#     -e "pcs_script_path=/path/to/pacemaker_setup.sh"
+
+- name: Pacemaker 패키지 설치 및 서비스 구성
+  hosts: all
+  become: yes
+
+  tasks:
+    # AlmaLinux 9 는 기본적으로 crb / highavailability 저장소가 비활성 상태라
+    # pacemaker/pcs(및 의존 패키지 libknet1 등)를 찾지 못한다. (참고: playbooks_cmst2
+    # R02.service_pacemaker_setup.yml 도 동일하게 이 두 저장소를 활성화한다.)
+    - name: crb / highavailability 저장소 활성화
+      ansible.builtin.command: "dnf config-manager --set-enabled {{ item }}"
+      loop:
+        - crb
+        - highavailability
+      changed_when: true
+
+    - name: Pacemaker / Corosync / pcs 패키지 설치
+      dnf:
+        name:
+          - pacemaker
+          - pcs
+          - corosync
+          - fence-agents-all
+        state: present
+
+    - name: pcsd 서비스 활성화 및 시작
+      systemd:
+        name: pcsd
+        state: started
+        enabled: yes
+
+    - name: hacluster 사용자 비밀번호 설정
+      user:
+        name: hacluster
+        password: "{{ hacluster_password | password_hash('sha512') }}"
+      when: hacluster_password is defined
+      no_log: true
+
+    # 이 테스트 VM들은 사전 구성된 "internal" 존(ipset work4, 192.168.100.0/24 포함)이
+    # 소스 IP 기준으로 "public" 존보다 우선 매치된다. 그래서 기본 존(public)에만
+    # high-availability 서비스를 허용하면 노드간 corosync/pcsd 트래픽(eth1, 192.168.100.0/24)이
+    # 실제로는 internal 존 규칙(ssh/cockpit 등만 허용)에 막힌다. 두 존 모두에 허용해 둔다.
+    - name: 방화벽 pcs/corosync 포트 허용 (public, internal 존 모두)
+      firewalld:
+        zone: "{{ item.0 }}"
+        service: "{{ item.1 }}"
+        permanent: yes
+        state: enabled
+        immediate: yes
+      loop: "{{ ['public', 'internal'] | product(['high-availability']) | list }}"
+      ignore_errors: yes
+
+- name: Pacemaker 클러스터 설정 적용 (첫 번째 노드에서만 실행)
+  hosts: all
+  become: yes
+  run_once: true
+  vars:
+    pcs_script_path: "{{ playbook_dir }}/files/pacemaker_setup.sh"
+
+  tasks:
+    - name: pcs 설정 스크립트 복사
+      copy:
+        src: "{{ pcs_script_path }}"
+        dest: /tmp/pacemaker_setup.sh
+        mode: "0750"
+
+    - name: 클러스터 인증 (pcs host auth)
+      command: >
+        pcs host auth
+        {% for host in ansible_play_hosts %}{{ host }} {% endfor %}
+        -u hacluster -p {{ hacluster_password }}
+      run_once: true
+      when: hacluster_password is defined
+      no_log: true
+
+    - name: pcs 설정 스크립트 실행
+      command: /tmp/pacemaker_setup.sh
+      register: pcs_result
+
+    - name: pcs 설정 결과 출력
+      debug:
+        var: pcs_result.stdout_lines
+
+    - name: 임시 스크립트 삭제
+      file:
+        path: /tmp/pacemaker_setup.sh
+        state: absent
+
+  post_tasks:
+    - name: 클러스터 상태 확인
+      command: pcs status
+      register: pcs_status
+      changed_when: false
+      run_once: true
+
+    - name: 클러스터 상태 출력
+      debug:
+        var: pcs_status.stdout_lines
+      run_once: true

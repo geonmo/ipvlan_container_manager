@@ -1,0 +1,36 @@
+---
+# /etc/hosts 정리 (테스트 환경 전용)
+#
+# vagrant-hostmanager 가 관리하는 블록(192.168.100.0/24, 각 노드의 실제 FQDN)과는 별도로,
+# 각 VM 이 부팅 시 자기 자신의 FQDN을 127.0.1.1 에도 매핑해 둔다:
+#   127.0.1.1 node01.build.test node01
+#   ...(vagrant-hostmanager 블록)...
+#   192.168.100.3 node01.build.test
+#
+# glibc 리졸버는 첫 번째 매치를 반환하므로, 노드 자기 자신 입장에서는
+# 자신의 FQDN이 loopback(127.0.1.1)으로 해석되고 다른 노드 입장에서는 실제 IP로 해석되어
+# corosync 멤버십이 어긋난다(각 노드가 서로 다른 주소로 통신을 시도). 관리 대상은
+# 192.168.100.0/24 뿐이므로 127.0.1.1 줄만 제거한다. 127.0.0.1(localhost)은 그대로 둔다.
+#
+# 사용법:
+#   ansible-playbook 00-fix-etc-hosts.yml
+
+- name: /etc/hosts 에서 127.0.1.1 자기참조 항목 제거
+  hosts: all
+  become: true
+  tasks:
+    - name: 127.0.1.1 라인 제거 (127.0.0.1/localhost 는 유지)
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1\s'
+        state: absent
+        backup: yes
+
+    - name: 노드 자기 자신의 FQDN이 실제 IP로 해석되는지 확인
+      ansible.builtin.command: "getent hosts {{ ansible_fqdn }}"
+      changed_when: false
+      register: self_resolve
+
+    - name: 확인 결과 출력
+      ansible.builtin.debug:
+        var: self_resolve.stdout
