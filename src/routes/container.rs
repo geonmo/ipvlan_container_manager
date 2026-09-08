@@ -67,24 +67,23 @@ pub async fn generate(
 ) -> Html<String> {
     let mut config = QuadletConfig::new();
 
-    // 컨테이너 JSON 파싱 — podman inspect 형식 또는 QuadletContainer JSON 배열
+    // 컨테이너 JSON 파싱 — 폼 기반 UI(serializeContainerForm())가 보내는
+    // QuadletContainer JSON 배열. podman inspect 원본 JSON은 별도
+    // 엔드포인트(POST /container/from-inspect, `from_inspect()`)가 다룬다 —
+    // 여기서 podman inspect 파싱을 먼저 시도하면 안 된다: 어떤 JSON 배열이든
+    // (필드가 없으면 "unknown"/빈 문자열로 기본값 채워) 항상 성공해버려서,
+    // 정상적인 QuadletContainer 배열 입력이 매번 빈 "unknown.container"로
+    // 잘못 해석되는 실제 버그가 있었다.
     let containers: Vec<QuadletContainer> = if let Some(json_str) = &form.containers_json {
         if !json_str.trim().is_empty() {
-            // podman inspect → quadlet 변환 시도
-            match podman_inspect_to_quadlet(json_str) {
+            match serde_json::from_str::<Vec<QuadletContainer>>(json_str) {
                 Ok(c) => c,
-                Err(_) => {
-                    // 직접 QuadletContainer JSON 배열로 파싱 시도
-                    match serde_json::from_str::<Vec<QuadletContainer>>(json_str) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let mut ctx = Context::new();
-                            ctx.insert("error", &format!("JSON 파싱 오류: {}", e));
-                            let rendered = state.tera.render("container/result.html", &ctx)
-                                .unwrap_or_else(|e2| format!("<pre>Template error: {}</pre>", e2));
-                            return Html(rendered);
-                        }
-                    }
+                Err(e) => {
+                    let mut ctx = Context::new();
+                    ctx.insert("error", &format!("JSON 파싱 오류: {}", e));
+                    let rendered = state.tera.render("container/result.html", &ctx)
+                        .unwrap_or_else(|e2| format!("<pre>Template error: {}</pre>", e2));
+                    return Html(rendered);
                 }
             }
         } else {

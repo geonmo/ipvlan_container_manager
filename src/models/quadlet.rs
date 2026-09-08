@@ -84,6 +84,11 @@ pub struct QuadletContainer {
     pub remain_after_exit: Option<bool>,   // RemainAfterExit=
     #[serde(default)]
     pub timeout_stop_sec: Option<String>,  // TimeoutStopSec=
+    // [Install] / 권한 (PLAN.md C)
+    #[serde(default)]
+    pub wanted_by: Option<String>,         // [Install] WantedBy=
+    #[serde(default)]
+    pub add_capabilities: Vec<String>,     // AddCapability=
 }
 
 impl Default for QuadletContainer {
@@ -110,6 +115,8 @@ impl Default for QuadletContainer {
             service_type: None,
             remain_after_exit: None,
             timeout_stop_sec: None,
+            wanted_by: None,
+            add_capabilities: Vec::new(),
         }
     }
 }

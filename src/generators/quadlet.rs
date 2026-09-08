@@ -289,6 +289,11 @@ pub fn generate_container_unit(c: &QuadletContainer) -> String {
         out.push_str(&format!("Label={}\n", label));
     }
 
+    // 추가 capability (PLAN.md C — PodmanArgs= 우회 없이 네이티브 표현)
+    for cap in &c.add_capabilities {
+        out.push_str(&format!("AddCapability={}\n", cap));
+    }
+
     // 추가 podman 인수
     for arg in &c.extra_args {
         out.push_str(&format!("PodmanArgs={}\n", arg));
@@ -315,6 +320,15 @@ pub fn generate_container_unit(c: &QuadletContainer) -> String {
 
     if let Some(rae) = c.remain_after_exit {
         out.push_str(&format!("RemainAfterExit={}\n", if rae { "yes" } else { "no" }));
+    }
+
+    // [Install] (PLAN.md C — pod-생명주기 종속 oneshot/사이드카 컨테이너용)
+    if let Some(wanted_by) = &c.wanted_by {
+        if !wanted_by.is_empty() {
+            out.push('\n');
+            out.push_str("[Install]\n");
+            out.push_str(&format!("WantedBy={}\n", wanted_by));
+        }
     }
 
     out
@@ -429,4 +443,39 @@ pub fn podman_inspect_to_quadlet(inspect_json: &str) -> anyhow::Result<Vec<Quadl
     }
 
     Ok(containers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn container_unit_omits_install_and_capability_by_default() {
+        let c = QuadletContainer {
+            name: "myapp".to_string(),
+            image: "quay.io/myapp:latest".to_string(),
+            ..Default::default()
+        };
+        let unit = generate_container_unit(&c);
+        assert!(!unit.contains("[Install]"));
+        assert!(!unit.contains("AddCapability="));
+    }
+
+    #[test]
+    fn container_unit_emits_wanted_by_and_add_capability_when_set() {
+        let c = QuadletContainer {
+            name: "condor-cm-nft".to_string(),
+            image: "quay.io/condor-cm-nft:latest".to_string(),
+            wanted_by: Some("condor-cm.service".to_string()),
+            add_capabilities: vec!["NET_ADMIN".to_string()],
+            ..Default::default()
+        };
+        let unit = generate_container_unit(&c);
+        assert!(unit.contains("AddCapability=NET_ADMIN\n"));
+        assert!(unit.contains("[Install]\nWantedBy=condor-cm.service\n"));
+        // [Install]은 [Service] 블록 뒤에 와야 함
+        let service_pos = unit.find("[Service]").unwrap();
+        let install_pos = unit.find("[Install]").unwrap();
+        assert!(install_pos > service_pos);
+    }
 }

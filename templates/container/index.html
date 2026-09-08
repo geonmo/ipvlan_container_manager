@@ -170,6 +170,16 @@
                     <div class="form-text">oneshot 서비스에 유용</div>
                   </div>
                 </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">[Install] WantedBy</label>
+                  <input type="text" class="form-control" id="cWantedBy" placeholder="예: mypod.service, multi-user.target">
+                  <div class="form-text">pod-생명주기 종속 oneshot/사이드카 컨테이너에 사용 (비우면 [Install] 섹션 생략)</div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">AddCapability</label>
+                  <input type="text" class="form-control" id="cAddCapabilities" placeholder="예: NET_ADMIN NET_RAW (공백 구분)">
+                  <div class="form-text">--cap-add 우회 없이 네이티브 <code>AddCapability=</code>로 출력</div>
+                </div>
               </div>
             </div>
           </div>
@@ -447,6 +457,8 @@ function serializeContainerForm() {
   const service_type = document.getElementById('cServiceType').value || null;
   const timeout_stop = document.getElementById('cTimeoutStop').value.trim() || null;
   const remain       = document.getElementById('cRemainAfterExit').checked;
+  const wanted_by    = document.getElementById('cWantedBy').value.trim() || null;
+  const add_capabilities = document.getElementById('cAddCapabilities').value.trim().split(/\s+/).filter(Boolean);
 
   const container = {
     name,
@@ -470,6 +482,8 @@ function serializeContainerForm() {
     service_type,
     remain_after_exit: remain ? true : null,
     timeout_stop_sec: timeout_stop,
+    wanted_by,
+    add_capabilities,
   };
 
   document.getElementById('containersJson').value = JSON.stringify([container]);
