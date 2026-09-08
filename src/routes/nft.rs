@@ -8,7 +8,7 @@ use serde::Deserialize;
 use tera::Context;
 use crate::AppState;
 use crate::models::nft::{NftPolicy, NftSubnetGroup, NftServiceDef, NftTarget, NftGlobalRule};
-use crate::generators::nft::generate_nft_policy;
+use crate::generators::nft::{generate_nft_policy, generate_nft_ansible_playbook};
 use crate::db::{self, DbNftTarget, DbNftTargetRule, DbNftGlobalConfig};
 
 pub async fn index(State(state): State<AppState>) -> Html<String> {
@@ -30,6 +30,11 @@ pub struct NftGenerateForm {
     pub global_rules_json: Option<String>,
     /// JavaScript가 직렬화한 NftTarget JSON 배열
     pub targets_json:      String,
+
+    // Ansible (다른 탭과 동일한 관례 — ansible_hosts 자유 입력 문자열)
+    pub ansible_hosts:     Option<String>,
+    pub ansible_user:      Option<String>,
+    pub ansible_ssh_key:   Option<String>,
 }
 
 pub async fn generate(
@@ -144,6 +149,12 @@ pub async fn generate(
     };
 
     let content = generate_nft_policy(&policy);
+    let ansible_playbook = generate_nft_ansible_playbook(
+        &policy,
+        form.ansible_hosts.as_deref().unwrap_or(""),
+        form.ansible_user.as_deref().unwrap_or(""),
+        form.ansible_ssh_key.as_deref().unwrap_or(""),
+    );
 
     // 생성 후 대상 및 전역 설정 DB 저장
     {
@@ -175,9 +186,10 @@ pub async fn generate(
     }
 
     ctx.insert("result", &serde_json::json!({
-        "filename": policy.filename,
-        "content":  content,
-        "policy":   policy,
+        "filename":         policy.filename,
+        "content":          content,
+        "policy":           policy,
+        "ansible_playbook": ansible_playbook,
     }));
     ctx.insert("error", &serde_json::Value::Null);
 

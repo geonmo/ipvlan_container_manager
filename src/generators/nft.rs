@@ -121,6 +121,13 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
         policy.device_name
     ));
 
+    // established/DNS 응답 우회 (PLAN.md B.1). netdev ingress 훅은 호스트/
+    // 컨테이너가 먼저 시작한 아웃바운드 연결의 응답 패킷도 걸러내므로, 이
+    // 두 줄이 없으면 컨테이너의 아웃바운드 TCP/DNS 트래픽이 드롭될 수 있다
+    // (실제 운영 중인 files/nft/ipvlan_l2.nft과 동일 동작 — 항상 켠다).
+    out.push_str("        tcp flags & (ack | rst) != 0 accept\n");
+    out.push_str("        udp sport 53 accept\n");
+
     // 모든 대상 IP 취합 (ICMP/traceroute 인라인 리스트용)
     let all_v4: Vec<String> = policy.targets.iter()
         .flat_map(|t| t.ipv4_addrs.iter().cloned())
@@ -303,4 +310,134 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
     out.push_str("}\n");
 
     out
+}
+
+/// 클러스터 전 노드에 동일한 `.nft` 파일을 배포하는 Ansible 플레이북 생성
+/// (PLAN.md B.2).
+///
+/// 서비스(pod)는 DRBD/Pacemaker failover로 클러스터의 임의 노드로 옮겨갈 수
+/// 있으므로, 목적지 IP 기준 allow 규칙은 pod가 어느 노드에서 뜨든 그 노드의
+/// nft 필터에 이미 존재해야 한다 — 실제 운영 중인 `R99.nftables.yml`도
+/// 개별 노드가 아니라 클러스터 전체 노드 그룹에 동일 파일을 배포한다.
+///
+/// 시그니처는 `generate_quadlet_ansible_playbook()`(`src/routes/quadlet.rs`)
+/// 및 Pacemaker Ansible 래퍼(`src/routes/pacemaker.rs`)와 동일한 관례를
+/// 따른다 — `ansible_hosts`(기본 "all") 자유 입력 문자열 하나로 대상을
+/// 정한다 (DRBD처럼 노드별 데이터가 필요 없어 `AnsibleInventory`류의 구조체는
+/// 불필요).
+pub fn generate_nft_ansible_playbook(
+    policy: &NftPolicy,
+    ansible_hosts: &str,
+    ansible_user: &str,
+    ansible_ssh_key: &str,
+) -> String {
+    // 기존 DB 기본값(DbNftGlobalConfig::nft_file)과 동일한 배포 경로.
+    // R99.nftables.yml이 실제로 배포하는 경로와도 일치한다.
+    const NFT_DEST_PATH: &str = "/etc/nftables/ipvlan_l2.nft";
+
+    let hosts = if ansible_hosts.trim().is_empty() { "all" } else { ansible_hosts.trim() };
+    let user = if ansible_user.trim().is_empty() { "root" } else { ansible_user.trim() };
+    let key = if ansible_ssh_key.trim().is_empty() { "~/.ssh/id_rsa" } else { ansible_ssh_key.trim() };
+
+    let mut out = String::new();
+    out.push_str("---\n");
+    out.push_str("- name: nftables netdev ingress 필터 배포 (클러스터 전 노드 동일 적용)\n");
+    out.push_str(&format!("  hosts: {}\n", hosts));
+    out.push_str(&format!("  remote_user: {}\n", user));
+    out.push_str("  become: yes\n");
+    out.push_str("  vars:\n");
+    out.push_str(&format!("    ansible_ssh_private_key_file: {}\n", key));
+    out.push_str("  tasks:\n");
+
+    out.push_str(&format!("    - name: {} 배포\n", NFT_DEST_PATH));
+    out.push_str("      ansible.builtin.copy:\n");
+    out.push_str(&format!("        dest: {}\n", NFT_DEST_PATH));
+    out.push_str("        backup: yes\n");
+    out.push_str("        mode: '0600'\n");
+    out.push_str("        content: |\n");
+    for line in generate_nft_policy(policy).lines() {
+        out.push_str(&format!("          {}\n", line));
+    }
+    out.push_str("      notify: restart nftables service\n\n");
+
+    out.push_str("    - name: /etc/sysconfig/nftables.conf에 include 보장\n");
+    out.push_str("      ansible.builtin.lineinfile:\n");
+    out.push_str("        path: /etc/sysconfig/nftables.conf\n");
+    out.push_str(&format!("        line: 'include \"{}\"'\n", NFT_DEST_PATH));
+    out.push_str("        state: present\n");
+    out.push_str("        backup: yes\n");
+    out.push_str("        owner: root\n");
+    out.push_str("        group: root\n");
+    out.push_str("        mode: '0600'\n");
+    out.push_str("      notify: restart nftables service\n\n");
+
+    out.push_str("  handlers:\n");
+    out.push_str("    - name: restart nftables service\n");
+    out.push_str("      ansible.builtin.systemd:\n");
+    out.push_str("        name: nftables\n");
+    out.push_str("        state: restarted\n");
+
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_policy() -> NftPolicy {
+        NftPolicy {
+            filename: "filter_ingress.nft".to_string(),
+            table_name: "filter_ingress".to_string(),
+            device_name: "eth0".to_string(),
+            chain_name: "ingress_eth0".to_string(),
+            traceroute_start: 33434,
+            traceroute_end: 65535,
+            global_rules: Vec::new(),
+            targets: Vec::new(),
+            subnet_groups: Vec::new(),
+            services: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn established_and_dns_bypass_immediately_follow_chain_header() {
+        let out = generate_nft_policy(&sample_policy());
+        let header_pos = out
+            .find("type filter hook ingress")
+            .expect("chain header missing");
+        let ack_rst_pos = out
+            .find("tcp flags & (ack | rst) != 0 accept")
+            .expect("established bypass missing");
+        let dns_pos = out
+            .find("udp sport 53 accept")
+            .expect("dns bypass missing");
+        assert!(ack_rst_pos > header_pos);
+        assert!(dns_pos > ack_rst_pos);
+    }
+
+    #[test]
+    fn ansible_playbook_uses_given_hosts_user_key_and_r99_paths() {
+        let playbook = generate_nft_ansible_playbook(
+            &sample_policy(),
+            "container_service",
+            "deploy",
+            "~/.ssh/deploy_key",
+        );
+        assert!(playbook.contains("hosts: container_service"));
+        assert!(playbook.contains("remote_user: deploy"));
+        assert!(playbook.contains("ansible_ssh_private_key_file: ~/.ssh/deploy_key"));
+        assert!(playbook.contains("dest: /etc/nftables/ipvlan_l2.nft"));
+        assert!(playbook.contains("include \"/etc/nftables/ipvlan_l2.nft\""));
+        assert!(playbook.contains("backup: yes"));
+        assert!(playbook.contains("notify: restart nftables service"));
+        assert!(playbook.contains("name: restart nftables service"));
+    }
+
+    #[test]
+    fn ansible_playbook_falls_back_to_defaults_when_inputs_empty() {
+        let playbook = generate_nft_ansible_playbook(&sample_policy(), "", "", "");
+        assert!(playbook.contains("hosts: all"));
+        assert!(playbook.contains("remote_user: root"));
+        assert!(playbook.contains("ansible_ssh_private_key_file: ~/.ssh/id_rsa"));
+    }
 }

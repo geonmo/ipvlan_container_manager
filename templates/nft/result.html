@@ -146,55 +146,17 @@
     <!-- Ansible Playbook -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
-        <span><i class="bi bi-file-earmark-play-fill"></i> Ansible로 자동 배포</span>
+        <span><i class="bi bi-file-earmark-play-fill"></i> Ansible로 자동 배포 (클러스터 전 노드 동일 적용)</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansibleSnippet')">
           <i class="bi bi-clipboard"></i> 복사
         </button>
       </div>
       <div class="card-body p-0">
-        <textarea id="ansibleSnippet" class="code-editor" data-mode="yaml">---
-- name: nftables 방화벽 규칙 배포
-  hosts: all
-  become: true
-  tasks:
-    - name: nftables 설치 확인
-      package:
-        name: nftables
-        state: present
-
-    - name: nftables 설정 디렉토리 생성
-      file:
-        path: /etc/nftables
-        state: directory
-        mode: '0750'
-
-    - name: {{ result.filename }} 배포
-      copy:
-        dest: /etc/nftables/{{ result.filename }}
-        content: |
-{{ result.content | indent(width=10) }}
-        mode: '0640'
-      notify: reload nftables
-
-    - name: /etc/nftables.conf에 include 확인
-      lineinfile:
-        path: /etc/nftables.conf
-        line: 'include "/etc/nftables/{{ result.filename }}"'
-        create: yes
-
-    - name: nftables 서비스 활성화
-      systemd:
-        name: nftables
-        enabled: true
-        state: started
-
-  handlers:
-    - name: reload nftables
-      systemd:
-        name: nftables
-        state: reloaded</textarea>
+        <textarea id="ansibleSnippet" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
       </div>
       <div class="card-footer small text-muted">
+        서비스(pod)가 failover로 다른 노드로 옮겨갈 수 있으므로, <strong>개별 노드가 아니라
+        클러스터 전체 노드 그룹</strong>에 동일한 파일을 배포합니다.
         실행: <code>ansible-playbook -i inventory.yml deploy_nftables.yml</code>
       </div>
     </div>
