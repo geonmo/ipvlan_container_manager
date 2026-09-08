@@ -40,7 +40,23 @@ pub struct DrbdPacemakerResource {
     pub promotable: bool,
     pub on_fail: String,          // fence, block, stop, ignore, demote
     pub target_role_master_node: Option<String>, // preferred primary node
+    // op promote/demote/start/stop timeout (PLAN.md A.2 — R11.pacemaker_drbd_resources.yml
+    // 실측 프리셋 기준 기본값: promote/demote=90s, start=240s, stop=100s).
+    // notify/reload/monitor은 실측상 리소스마다 변하지 않아 생성기에서 상수로 고정한다.
+    #[serde(default = "default_drbd_promote_timeout")]
+    pub promote_timeout: String,
+    #[serde(default = "default_drbd_demote_timeout")]
+    pub demote_timeout: String,
+    #[serde(default = "default_drbd_start_timeout")]
+    pub start_timeout: String,
+    #[serde(default = "default_drbd_stop_timeout")]
+    pub stop_timeout: String,
 }
+
+fn default_drbd_promote_timeout() -> String { "90s".to_string() }
+fn default_drbd_demote_timeout() -> String { "90s".to_string() }
+fn default_drbd_start_timeout() -> String { "240s".to_string() }
+fn default_drbd_stop_timeout() -> String { "100s".to_string() }
 
 impl Default for DrbdPacemakerResource {
     fn default() -> Self {
@@ -52,6 +68,10 @@ impl Default for DrbdPacemakerResource {
             promotable: true,
             on_fail: "fence".to_string(),
             target_role_master_node: None,
+            promote_timeout: default_drbd_promote_timeout(),
+            demote_timeout: default_drbd_demote_timeout(),
+            start_timeout: default_drbd_start_timeout(),
+            stop_timeout: default_drbd_stop_timeout(),
         }
     }
 }
@@ -171,6 +191,22 @@ pub struct ResourceGroup {
     pub after_fs: Option<String>,
 }
 
+/// STONITH(fencing) 장치 — IPMI 기반 (PLAN.md A.5).
+/// R02.service_pacemaker_stonith.yml/R55.se_backend_stonith.yml 실측 패턴:
+/// `pcs stonith create stonith-ipmi-<node> fence_ipmilan pcmk_host_list=<node>
+/// ip=<ipmi_ip> user=<ipmi_user> password=<ipmi_password> lanplus=1
+/// power_wait=5 pcmk_reboot_timeout=300 pcmk_monitor_timeout=60
+/// pcmk_reboot_action=reboot` — 파라미터 키가 `ip=`이지 `ipaddr=`가 아님에 주의.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StonithDevice {
+    pub node: String,
+    pub ipmi_ip: String,
+    pub ipmi_user: String,
+    pub ipmi_password: String,
+    #[serde(default)]
+    pub extra_opts: Vec<String>,
+}
+
 /// Pacemaker 전체 설정
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PacemakerConfig {
@@ -182,4 +218,6 @@ pub struct PacemakerConfig {
     pub order_constraints: Vec<OrderConstraint>,
     pub colocation_constraints: Vec<ColocationConstraint>,
     pub location_constraints: Vec<LocationConstraint>,
+    #[serde(default)]
+    pub stonith_devices: Vec<StonithDevice>,
 }

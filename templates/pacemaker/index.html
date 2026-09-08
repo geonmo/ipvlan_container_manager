@@ -219,8 +219,35 @@
               </div>
               <div class="mb-3">
                 <label class="form-label fw-semibold">수동 Colocation 제약조건 (JSON, 선택)</label>
-                <textarea name="colocation_constraints_json" class="code-editor" data-mode="javascript"
+                <textarea id="colJson" name="colocation_constraints_json" class="code-editor" data-mode="javascript"
                           style="min-height:80px">[]</textarea>
+                <div class="border rounded p-2 mt-2 bg-light">
+                  <div class="small fw-semibold mb-2">
+                    <i class="bi bi-link-45deg"></i> DRBD-DRBD anchor/follower 결합 빠른 추가
+                  </div>
+                  <div class="row g-2 align-items-end">
+                    <div class="col-md-5">
+                      <label class="form-label small mb-1">Anchor Clone (기준 — 이동시킬 땐 이 쪽을 옮기세요)</label>
+                      <select class="form-select form-select-sm" id="anchorCloneSel"></select>
+                    </div>
+                    <div class="col-md-5">
+                      <label class="form-label small mb-1">Follower Clone (anchor를 따라감)</label>
+                      <select class="form-select form-select-sm" id="followerCloneSel"></select>
+                    </div>
+                    <div class="col-md-2">
+                      <button type="button" class="btn btn-outline-primary btn-sm w-100" onclick="addAnchorFollowerConstraint()">
+                        <i class="bi bi-plus-lg"></i> 추가
+                      </button>
+                    </div>
+                  </div>
+                  <div class="form-text mt-1">
+                    두 DRBD Promotable Clone을 항상 같은 노드에서 Promoted 상태로 묶습니다.
+                    관계에는 방향이 있습니다 — <code>Promoted follower with Promoted anchor</code>
+                    (반대로 생성하면 follower만 옮기려 할 때 promotion score가
+                    <code>-INFINITY</code>로 막히는 사고가 납니다). 노드를 옮길 때는
+                    항상 anchor 쪽을 옮기세요.
+                  </div>
+                </div>
               </div>
               <div class="mb-3">
                 <label class="form-label fw-semibold">Location 제약조건 (선호 노드, JSON, 선택)</label>
@@ -231,7 +258,38 @@
           </div>
         </div>
 
-        <!-- ⑥ Ansible 배포 설정 -->
+        <!-- ⑥ STONITH(펜싱) 장치 -->
+        <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
+          <h2 class="accordion-header" id="pmHeadStonith">
+            <button class="accordion-button collapsed" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#pmSecStonith" aria-expanded="false">
+              <i class="bi bi-lightning-charge-fill text-danger me-2"></i>
+              <span class="fw-semibold">STONITH(펜싱) 장치 — IPMI</span>
+              <span class="badge bg-danger ms-2" id="stonithBadge">0</span>
+            </button>
+          </h2>
+          <div id="pmSecStonith" class="accordion-collapse collapse">
+            <div class="accordion-body pt-3">
+              <input type="hidden" name="stonith_devices_json" id="stonithDevicesJson" value="[]">
+              <div class="d-flex gap-2 mb-3">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="addStonithDevice()">
+                  <i class="bi bi-plus-lg"></i> STONITH 장치 추가
+                </button>
+              </div>
+              <div id="stonithDeviceList"></div>
+              <div class="text-center mt-2 text-muted small" id="stonithDeviceEmpty">
+                노드별 IPMI(fence_ipmilan) 펜싱 장치를 추가하세요. 노드마다 하나씩 등록합니다.
+              </div>
+              <div class="mt-3 p-2 bg-light rounded small text-muted">
+                <code>pcs stonith create stonith-ipmi-&lt;node&gt; fence_ipmilan pcmk_host_list=&lt;node&gt;
+                ip=&lt;ipmi_ip&gt; user=&lt;ipmi_user&gt; password=&lt;ipmi_password&gt; ...</code> 패턴으로 생성됩니다.
+                위 ①에서 STONITH를 활성화한 경우에만 실제로 사용됩니다.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ⑦ Ansible 배포 설정 -->
         <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
           <h2 class="accordion-header" id="pmHeadAnsible">
             <button class="accordion-button collapsed" type="button"
@@ -323,6 +381,7 @@ function pmRenderSelected() {
   });
   document.getElementById('pmNodeCount').textContent = pmNodes.length;
   pmSyncJson();
+  renderStonithDevices();
 }
 
 function pmSyncJson() {
@@ -359,6 +418,10 @@ function addDrbdGroup(resName) {
     notify:                  true,
     on_fail:                 'fence',
     target_role_master_node: '',
+    promote_timeout:         '90s',
+    demote_timeout:          '90s',
+    start_timeout:           '240s',
+    stop_timeout:            '100s',
     fs: {
       resource_name:    r ? 'fs-' + r : '',
       device:           r ? '/dev/drbd/by-res/' + r + '/0' : '',
@@ -392,6 +455,13 @@ function renderDrbdGroups() {
   badge.textContent = drbdGroups.length;
 
   drbdGroups.forEach((g, idx) => {
+    // 예전 형식(op timeout 필드 도입 전)으로 localStorage에 저장된 데이터도
+    // 그대로 열릴 수 있어 기본값으로 채워준다.
+    g.promote_timeout = g.promote_timeout || '90s';
+    g.demote_timeout  = g.demote_timeout  || '90s';
+    g.start_timeout   = g.start_timeout   || '240s';
+    g.stop_timeout    = g.stop_timeout    || '100s';
+
     const onFailOpts = ['fence','block','stop','demote'].map(v =>
       `<option value="${v}"${g.on_fail===v?' selected':''}>${v}</option>`).join('');
 
@@ -451,6 +521,29 @@ function renderDrbdGroups() {
         </div>
       </div>
 
+      <div class="row g-2 mb-2">
+        <div class="col-md-3">
+          <label class="form-label small mb-1">op promote timeout</label>
+          <input type="text" class="form-control form-control-sm" value="${g.promote_timeout}"
+            oninput="drbdGroups[${idx}].promote_timeout=this.value; syncDrbdJson()">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small mb-1">op demote timeout</label>
+          <input type="text" class="form-control form-control-sm" value="${g.demote_timeout}"
+            oninput="drbdGroups[${idx}].demote_timeout=this.value; syncDrbdJson()">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small mb-1">op start timeout</label>
+          <input type="text" class="form-control form-control-sm" value="${g.start_timeout}"
+            oninput="drbdGroups[${idx}].start_timeout=this.value; syncDrbdJson()">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small mb-1">op stop timeout</label>
+          <input type="text" class="form-control form-control-sm" value="${g.stop_timeout}"
+            oninput="drbdGroups[${idx}].stop_timeout=this.value; syncDrbdJson()">
+        </div>
+      </div>
+
       <div class="border-top pt-2 mt-1">
         <div class="small fw-semibold text-warning mb-2">
           <i class="bi bi-hdd-fill"></i> Filesystem 마운트 (ocf:heartbeat:Filesystem)
@@ -485,6 +578,44 @@ function renderDrbdGroups() {
   });
 
   syncDrbdJson();
+  refreshCloneSelectors();
+}
+
+// ── A.6: anchor/follower DRBD-DRBD colocation 빠른 추가 ───────────────────
+function refreshCloneSelectors() {
+  const clones = drbdGroups.map(g => g.clone_name).filter(Boolean);
+  ['anchorCloneSel', 'followerCloneSel'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">-- 선택 --</option>' +
+      clones.map(c => `<option value="${c}">${c}</option>`).join('');
+    if (clones.includes(prev)) sel.value = prev;
+  });
+}
+
+function addAnchorFollowerConstraint() {
+  const anchor = document.getElementById('anchorCloneSel').value;
+  const follower = document.getElementById('followerCloneSel').value;
+  if (!anchor || !follower) { alert('Anchor Clone과 Follower Clone을 모두 선택하세요.'); return; }
+  if (anchor === follower) { alert('Anchor와 Follower는 서로 다른 clone이어야 합니다.'); return; }
+
+  const el = document.getElementById('colJson');
+  const raw = el._cmEditor ? el._cmEditor.getValue() : el.value;
+  let arr;
+  try { arr = JSON.parse(raw); if (!Array.isArray(arr)) arr = []; } catch (_) { arr = []; }
+
+  arr.push({
+    id: `col-${follower}-with-${anchor}`,
+    rsc: follower,
+    rsc_role: 'Promoted',
+    with_rsc: anchor,
+    with_rsc_role: 'Promoted',
+    score: 'INFINITY',
+  });
+
+  const updated = JSON.stringify(arr, null, 2);
+  if (el._cmEditor) el._cmEditor.setValue(updated); else el.value = updated;
 }
 
 function fillDrbdGroupFromRes(idx, resName) {
@@ -535,6 +666,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   pmInitProfile();
   await pmLoadDrbdResources();
   renderDrbdGroups();
+  renderStonithDevices();
+  refreshCloneSelectors();
   document.getElementById('pmPoolList_add').addEventListener('click', () => {
     document.querySelectorAll('#pmPoolList li.active').forEach(li => {
       pmNodes.push({ hostname: li.dataset.hostname, ip: li.dataset.ip });
@@ -576,8 +709,18 @@ function loadExample() {
   loadGrpExample();
   loadSvcExample();
 
-  // 그룹/Systemd 섹션도 펼치기
-  ['pmSecGrp','pmSecSvc'].forEach(id => {
+  document.getElementById('stonithEnabled').checked = true;
+  stonithDevices = pmNodes.map(n => ({
+    node: n.hostname,
+    ipmi_ip: '',
+    ipmi_user: 'admin',
+    ipmi_password: '',
+    extra_opts: [],
+  }));
+  renderStonithDevices();
+
+  // 그룹/Systemd/STONITH 섹션도 펼치기
+  ['pmSecGrp','pmSecSvc','pmSecStonith'].forEach(id => {
     const s = document.getElementById(id);
     if (!s.classList.contains('show')) new bootstrap.Collapse(s, { toggle: false }).show();
   });
@@ -621,6 +764,90 @@ function loadSvcExample() {
   const el = document.getElementById('svcJson');
   if (el._cmEditor) el._cmEditor.setValue(example);
   else el.value = example;
+}
+
+// ── STONITH(펜싱) 장치 빌더 ──────────────────────────────────────────────
+let stonithDevices = [];  // [{node, ipmi_ip, ipmi_user, ipmi_password, extra_opts:[]}]
+
+function addStonithDevice() {
+  stonithDevices.push({
+    node: pmNodes.length ? pmNodes[0].hostname : '',
+    ipmi_ip: '',
+    ipmi_user: 'admin',
+    ipmi_password: '',
+    extra_opts: [],
+  });
+  renderStonithDevices();
+  const sec = document.getElementById('pmSecStonith');
+  if (!sec.classList.contains('show')) {
+    new bootstrap.Collapse(sec, { toggle: false }).show();
+  }
+}
+
+function removeStonithDevice(idx) {
+  stonithDevices.splice(idx, 1);
+  renderStonithDevices();
+}
+
+function renderStonithDevices() {
+  const container = document.getElementById('stonithDeviceList');
+  const empty     = document.getElementById('stonithDeviceEmpty');
+  const badge     = document.getElementById('stonithBadge');
+  container.innerHTML = '';
+  empty.style.display = stonithDevices.length ? 'none' : '';
+  badge.textContent = stonithDevices.length;
+
+  stonithDevices.forEach((d, idx) => {
+    const nodeOpts = pmNodes.map(n =>
+      `<option value="${n.hostname}"${d.node===n.hostname?' selected':''}>${n.hostname}</option>`
+    ).join('');
+
+    const div = document.createElement('div');
+    div.className = 'border rounded p-3 mb-3 position-relative';
+    div.innerHTML = `
+      <div class="d-flex align-items-center mb-2 gap-2">
+        <span class="fw-bold text-danger"><i class="bi bi-lightning-charge-fill"></i> STONITH 장치 #${idx+1}</span>
+        <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="removeStonithDevice(${idx})">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
+      <div class="row g-2">
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">대상 노드</label>
+          <select class="form-select form-select-sm" onchange="stonithDevices[${idx}].node=this.value; syncStonithJson()">
+            <option value="">-- 선택 --</option>
+            ${nodeOpts}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">IPMI IP</label>
+          <input type="text" class="form-control form-control-sm" value="${d.ipmi_ip}"
+            oninput="stonithDevices[${idx}].ipmi_ip=this.value; syncStonithJson()">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">IPMI 사용자</label>
+          <input type="text" class="form-control form-control-sm" value="${d.ipmi_user}"
+            oninput="stonithDevices[${idx}].ipmi_user=this.value; syncStonithJson()">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label small fw-semibold mb-1">IPMI 비밀번호</label>
+          <input type="password" class="form-control form-control-sm" value="${d.ipmi_password}"
+            oninput="stonithDevices[${idx}].ipmi_password=this.value; syncStonithJson()">
+        </div>
+        <div class="col-12">
+          <label class="form-label small mb-1">추가 옵션 (공백으로 구분, 선택 — 예: <code>lanplus=1</code>)</label>
+          <input type="text" class="form-control form-control-sm" value="${(d.extra_opts||[]).join(' ')}"
+            oninput="stonithDevices[${idx}].extra_opts=this.value.split(/\\s+/).filter(Boolean); syncStonithJson()">
+        </div>
+      </div>`;
+    container.appendChild(div);
+  });
+
+  syncStonithJson();
+}
+
+function syncStonithJson() {
+  document.getElementById('stonithDevicesJson').value = JSON.stringify(stonithDevices);
 }
 
 // ── Ansible 프로파일 ────────────────────────────────────────────────────
