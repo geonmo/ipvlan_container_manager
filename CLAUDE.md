@@ -23,9 +23,9 @@ RUST_LOG=debug cargo run # Run with debug logging
 
 ## Architecture
 
-### UI Workflow (8 tabs)
+### UI Workflow (9 tabs)
 
-1. **노드 풀** (`/nodes/`) — cluster nodes, network pool, Ansible profiles (shared across all tabs)
+1. **노드 풀** (`/nodes/`) — cluster nodes, network pool, Ansible profiles (shared across all tabs); also shows the detected storage backend (kernel-module vs LINSTOR)
 2. **DRBD 설정** (`/drbd/`) → `.res` resource file + Ansible playbook
 3. **Volume 설정** (`/volume/`) → named volumes / DRBD-backed host paths
 4. **Pod 설정** (`/quadlet/`) → systemd `.container`/`.network`/`.pod`/`.volume` unit files
@@ -33,6 +33,7 @@ RUST_LOG=debug cargo run # Run with debug logging
 6. **방화벽** (`/nft/`) → nftables `netdev ingress` filter config
 7. **Pacemaker 설정** (`/pacemaker/`) → `pcs` bash script + Ansible playbook (Bootstrap accordion UI)
 8. **클러스터 현황** (`/cluster/`) → read-only pcsd topology viewer (Union-Find service grouping)
+9. **LINSTOR** (`/linstor/`, experimental) → inventory + Ansible playbook driving the official `linbit.linstor` collection (`cluster_init` role + `resource_group`/`resource` modules); a fully separate path from the DRBD kernel-module tab, no shared code
 
 ### Code Layout
 
@@ -77,6 +78,7 @@ Supporting modules:
 - Templates are loaded at startup from `templates/**/*.html` (not hot-reloaded in release builds).
 - Custom Tera filters `starts_with` and `ends_with` registered in `main.rs`.
 - `become` is a Rust reserved keyword — DB/API structs use `do_become` with `#[serde(rename = "become")]`.
+- **LINSTOR support (`/linstor/`, experimental)**: generates only an inventory + Ansible playbook driving LINBIT's official `linbit.linstor`/`linbit.common`/`linbit.drbd` collections (`cluster_init` role + `resource_group`/`resource` modules) — this app never assembles raw `linstor` CLI strings. Fully separate code path from the DRBD kernel-module tab (`src/models/generators/routes/linstor.rs`, `templates/linstor/`); zero shared logic, so it cannot regress the existing DRBD flow. Assumes RPMs are pre-built by a separate, out-of-repo pipeline (LINBIT's EL9 repos require a paid subscription) and already present in a local directory the generated playbook installs before handing off to `cluster_init` with `cluster_init_repo_access: none`.
 
 ### HTTP Routes
 
@@ -146,6 +148,13 @@ POST /api/nft/config            → Update global nft config
 POST /api/nft/scan              → Scan existing nftables file and sync to DB
 
 GET  /cluster/                  → Cluster topology viewer (read-only, fetches pcsd via JS)
+
+GET  /api/storage-backend        → Get detected storage backend (kernel-module | linstor)
+POST /api/storage-backend/detect → Detect via Ansible (stat linstor-controller/-satellite systemd units on all nodes)
+
+GET  /linstor/                  → LINSTOR deployment form (experimental)
+POST /linstor/generate          → Generate requirements.yml + inventory.yml + Ansible playbook
+                                   (drives the official linbit.linstor collection; no linstor CLI strings generated)
 ```
 
 ### SQLite Schema
@@ -166,6 +175,8 @@ nft_targets       (id, name, ipv4_addrs_json, ipv6_addrs_json, created_at)
 nft_target_rules  (id, target_id, service_name, subnet_group_name)
 nft_global_config (id, table_name, device_name, chain_name,
                    traceroute_start, traceroute_end, nft_file, updated_at)
+
+storage_backend_config (id=1 singleton, backend, detected_at) -- kernel-module | linstor, cluster-wide (no per-node mixing)
 ```
 
 ### Supporting Files

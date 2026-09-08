@@ -587,7 +587,7 @@ inspect 원본 JSON을 다루는 전용 엔드포인트이므로, `generate()`�
 
 ---
 
-## D. [신규 제안, 설계 스케치 단계] LINSTOR 백엔드 지원
+## D. LINSTOR 백엔드 지원 — D.1/D.2 ✅ 구현 완료 (2026-09-08), D.3는 범위 밖
 
 **배경**: 현재 이 앱은 순수 DRBD 커널모듈(`drbdadm` + 수동 `.res` 파일)만
 다룬다. 사용자가 LINSTOR(DRBD 위에서 스토리지 풀/리소스 그룹/노드 배치를
@@ -633,6 +633,24 @@ inspect 원본 JSON을 다루는 전용 엔드포인트이므로, `generate()`�
 
 ### D.1 설치 환경 감지 + 설정 저장
 
+**✅ 구현 완료 (2026-09-08)** — 노드별 혼재는 다루지 않기로 한 사용자
+결정에 따라 `nodes` 테이블 컬럼이 아니라 `nft_global_config`과 동일한
+싱글턴 로우 패턴으로 `storage_backend_config(id=1, backend, detected_at)`
+테이블을 추가했다 (`src/db.rs::get_storage_backend`/`set_storage_backend`).
+감지는 제안대로 `POST /api/collect-interfaces`의 Ansible 실행 패턴(임시
+인벤토리 + 플레이북 생성 → 실행 → 결과 파싱)을 그대로 재사용했고
+(`src/routes/nodes.rs::api_detect_storage_backend`), 판정 방법은
+`linbit.linstor` 공식 컬렉션의 `controller_install`/`satellite_install`
+role이 실제로 쓰는 것과 동일한 systemd 유닛 stat 확인
+(`/usr/lib/systemd/system/linstor-controller.service`/
+`linstor-satellite.service`)으로 통일했다 — CLI 존재 여부보다 이 방식이
+공식 role의 판정 기준과 정확히 일치한다. `GET /api/storage-backend`로
+저장된 값을 조회한다. `/nodes/` 화면에 배지 + "지금 다시 감지" 버튼 +
+노드별 상세(controller/satellite 유닛 존재 여부)를 추가했다.
+
+<details>
+<summary>원안 (구현 시 위와 같이 조정된 부분 포함, 기록용)</summary>
+
 - **재사용**: `src/scan.rs`의 기존 `startup_scan()` 패턴(서버 기동 시
   `tokio::spawn`으로 백그라운드 실행, `main.rs`에서 이미 호출 중)을 그대로
   확장 — DRBD/Quadlet/pcsd 스캔과 나란히 "스토리지 백엔드 감지" 단계
@@ -653,7 +671,43 @@ inspect 원본 JSON을 다루는 전용 엔드포인트이므로, `generate()`�
   권장).
 - `/nodes/` 화면에 감지된 백엔드를 배지로 표시.
 
+</details>
+
 ### D.2 DRBD 모델/생성기의 LINSTOR 확장
+
+**✅ 구현 완료 (2026-09-08)** — `src/models/linstor.rs`(`LinstorConfig`,
+`LinstorStoragePool`, `LinstorResourceGroup`, `LinstorResourceSpawn`),
+`src/generators/linstor.rs`(`generate_linstor_inventory()`,
+`generate_linstor_ansible_playbook()`, `generate_linstor_requirements_yml()`),
+`src/routes/linstor.rs`, 새 탭 `templates/linstor/`(index/result) — 아래
+"중요 발견"대로 완전히 별도 경로로 구현해 기존 DRBD/`/drbd/` 코드는
+전혀 건드리지 않았다. `ansible-linstor-collection` 실제 소스(README +
+`roles/cluster_init`, `roles/storage_pool/tasks/main.yml`)를 직접 확인해
+다음을 그대로 반영:
+- 인벤토리는 컬렉션이 요구하는 `linstor_controllers`/`linstor_satellites`/
+  `linstor_cluster` 그룹 구조를 그대로 생성(한 노드가 컨트롤러+새틀라이트
+  양쪽에 속하는 결합 노드도 지원). 스토리지 풀은 `storage_pool` role이
+  읽는 `linstor_storage_pools` 인벤토리 변수로 (필드명 `vg`/`vg_thinpool`/
+  `zpool`/`file_path`/`physical_devices`/`nodes` 그대로) 생성.
+- 플레이북은 3-play 구조: (1) `rpm_dir`(D.3 산출물)을 `linstor_cluster`
+  전체에 로컬 설치, (2) `cluster_init_repo_access: none`으로
+  `linbit.linstor.cluster_init` role 한 번 호출(README의 "Minimal
+  deployment" 예제 그대로 — install~cluster 등록까지 이 한 role이
+  전부 처리), (3, 선택) `resource_group`/`resource(mode: spawn)` 모듈로
+  실제 DRBD 볼륨 프로비저닝(`hosts: localhost` +
+  `LS_CONTROLLERS: "{{ lookup('linbit.linstor.controller_env') }}"`,
+  README의 "Using LINSTOR modules" 예제 패턴).
+- `requirements.yml`도 함께 생성 — 컬렉션이 아직 Galaxy 미게시라 git
+  소스 설치가 필요함을 README에서 확인해 반영.
+- 라이브 서버에 실제 폼 데이터를 POST해 세 산출물(requirements.yml/
+  inventory.yml/playbook)을 모두 `python3 yaml.safe_load`로 파싱 검증,
+  플레이북이 정확히 3-play이고 RPM 설치가 cluster_init보다 먼저 오는지,
+  인벤토리에 결합 노드가 양쪽 그룹에 올바르게 나오는지 확인.
+
+<details>
+<summary>원안 및 조사 근거 (구현 시 role 3개 개별 호출 대신 <code>cluster_init</code>
+편의 role 하나로 단순화 — README가 "일상적인 배포에는 cluster_init을
+권장"이라고 명시. 나머지는 원안대로 반영됨. 기록용)</summary>
 
 **✅ 중요 발견(2026-09) — 직접 CLI 명령을 생성할 필요가 없다.** LINBIT이
 공식 Ansible 컬렉션 `linbit.linstor`(+ 의존 컬렉션 `linbit.common`,
@@ -708,6 +762,12 @@ inspect 원본 JSON을 다루는 전용 엔드포인트이므로, `generate()`�
   - UI: `/drbd/` 탭에서 D.1의 감지 결과에 따라 "커널모듈 방식" 폼과
     "LINSTOR 방식" 폼을 분기 표시(탭 또는 라디오 선택).
 
+</details>
+
+(UI는 `/drbd/` 탭을 분기하는 대신 완전히 별도인 새 탭 `/linstor/`를
+추가했다 — 기존 DRBD 폼이 이미 복잡해 회귀 위험을 더 낮추는 선택.
+`/nodes/`에는 D.1 감지 배지만 두고 "LINSTOR 배포 탭" 링크로 연결.)
+
 ### D.3 (이 저장소 범위 밖 — 참고용 메모) LINSTOR 소스 빌드 파이프라인
 
 - 범위 확정 1번에 따라 **별도 저장소**(`gsdc-linbit-build`,
@@ -724,15 +784,17 @@ inspect 원본 JSON을 다루는 전용 엔드포인트이므로, `generate()`�
   (`createrepo_c`)까지는 필요 없고, `dnf install ./*.rpm` 로컬 설치로
   충분하다.
 
-**결정 필요(사용자 확인 필요, 구현 착수 전)**:
+**결정 필요 — 해결 상황**:
 - ~~LINBIT EL9 공개 저장소의 실제 포함 범위~~ → 조사 완료, 무료 저장소
   없음으로 확정 (위 범위 확정 2번 참고).
-- 클러스터 내 노드별 백엔드 혼재를 허용할지, 전역 설정 하나로 충분한지.
-- LINSTOR가 관리하는 `.res` 파일 경로/방식이 현재 A.1의 `global_common.conf`
-  배포 방식과 실제로 충돌하는지 (VM 테스트 클러스터에서 확인 가능하면
-  가장 확실함).
-- D.3(별도 빌드 파이프라인)의 산출물 형태(RPM vs tarball+설치스크립트) —
-  D.1의 설치 Ansible 태스크 설계에 직접 영향.
+- ~~클러스터 내 노드별 백엔드 혼재를 허용할지, 전역 설정 하나로 충분한지~~
+  → **사용자 결정(2026-09-08): 전역 설정 하나로 통일** (D.1 참고).
+- ~~D.3(별도 빌드 파이프라인)의 산출물 형태~~ → RPM으로 확정, D.2가 이를
+  전제로 구현됨.
+- **미해결 — VM 테스트 클러스터에서만 확인 가능**: LINSTOR가 관리하는
+  `.res` 파일 경로/방식이 현재 A.1의 `global_common.conf` 배포 방식과
+  실제로 충돌하는지. 개발 환경에서는 확정 불가 — result.html에도 이
+  검증 공백을 명시해뒀다.
 
 ---
 
@@ -795,11 +857,19 @@ inspect 원본 JSON을 다루는 전용 엔드포인트이므로, `generate()`�
   WantedBy=...`/`AddCapability=...` 라인이 정확히 나오는지 확인. 실제
   `systemctl daemon-reload` 후 `systemctl status <name>.service`로
   Install 섹션이 인식되는지도 확인.
-- **D (LINSTOR)**: 아직 설계 스케치 단계라 구체적 테스트 계획은 D.1/D.2의
-  "결정 필요" 항목이 정해진 뒤 채운다. D.1(감지)만 먼저 구현한다면, 최소
-  단위 테스트는 "linstor CLI가 있는 노드 → `storage_backend=linstor`",
-  "없는 노드 → `kernel-module`"로 감지 결과가 갈리는지 확인하는 수준부터
-  시작.
+- **D.1 (감지)**: ✅ 완료. 단위 테스트 대신 라이브 서버로 `GET
+  /api/storage-backend`가 기본값 `kernel-module`을 반환하는지 확인함
+  (Ansible 실행 자체는 실제 노드가 있어야 검증 가능 — 개발 환경에서는
+  불가, 생성된 감지 플레이북의 stat 경로가 공식 컬렉션 role과 동일한지
+  코드 대조로 대체 검증).
+- **D.2 (인벤토리/플레이북 생성기)**: ✅ 완료. 단위 테스트로 인벤토리에
+  `linstor_controllers`/`linstor_satellites`/`linstor_cluster` 그룹과
+  `linstor_storage_pools` 변수가 있는지, 플레이북이 RPM 설치 → `cluster_init`
+  순서를 지키는지, 리소스 그룹/리소스가 비어 있으면 3번째 play가
+  생략되는지 확인. 실동작(라이브 서버 POST) — 세 산출물 모두
+  `yaml.safe_load`로 파싱 검증 완료. **VM 클러스터에서만 확인 가능한
+  잔여 항목**: 실제 `cluster_init` 실행 성공 여부, LINSTOR가 관리하는
+  `.res` 경로와 A.1의 `global_common.conf` 배포 방식 충돌 여부.
 
 각 생성기 함수는 순수 함수(문자열 반환)이므로, 새 로직마다
 `src/generators/*.rs` 하단에 `#[cfg(test)] mod tests` 유닛 테스트를
@@ -858,9 +928,9 @@ inspect 원본 JSON을 다루는 전용 엔드포인트이므로, `generate()`�
    기존 버그(`podman_inspect_to_quadlet` 우선 시도 순서 오류)를
    함께 발견해 수정.
 7. A.7 (유지보수 스크립트) — ✅ 완료. A.8(인벤토리 검증 주석)도 ✅ 완료.
-8. **D.1 (LINSTOR 설치 환경 감지)** — VM 테스트 클러스터가 LINSTOR로
-   구성될 예정이므로 실제로는 우선순위가 낮지 않지만, "결정 필요" 항목
-   (LINBIT EL9 공개 저장소 범위, 노드별 백엔드 혼재 허용 여부)이 먼저
-   확인돼야 착수 가능. D.2(모델/생성기 확장)는 D.1 이후, 그리고 VM
-   클러스터에서 LINSTOR의 실제 `.res` 관리 방식을 확인한 뒤 설계를
-   구체화한다.
+8. **D.1(설치 환경 감지) + D.2(공식 컬렉션 기반 인벤토리/플레이북 생성)**
+   — ✅ 완료(2026-09-08). 사용자 확인 후(전역 설정으로 통일, D.1+D.2
+   함께 진행) 새 탭 `/linstor/`로 구현. 남은 미해결 항목(LINSTOR가
+   관리하는 `.res` 경로가 A.1의 `global_common.conf` 배포 방식과
+   충돌하는지)은 VM 테스트 클러스터에서만 확인 가능해 결과 화면에
+   알림으로 명시해뒀다 — 실제 배포 전 반드시 확인 필요.
