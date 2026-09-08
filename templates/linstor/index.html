@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}LINSTOR 배포 - HA Container Manager{% endblock %}
+{% block nav_linstor %}active{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <h2 class="fw-bold mb-1"><i class="bi bi-hdd-stack-fill"></i> LINSTOR 배포 <span class="badge bg-warning text-dark">실험적</span></h2>
+    <p class="text-muted mb-2">
+      LINBIT 공식 Ansible 컬렉션(<code>linbit.linstor</code>)을 이용해 LINSTOR 클러스터를
+      설치/초기화하고, 그 위에 DRBD 리소스를 프로비저닝하는 인벤토리 + 플레이북을 생성합니다.
+      이 앱이 <code>linstor</code> CLI 명령을 직접 조립하지 않고, 공식 컬렉션의 role/module을
+      그대로 호출합니다 (PLAN.md Section D 참고).
+    </p>
+    <div class="alert alert-warning small">
+      <i class="bi bi-exclamation-triangle-fill"></i>
+      RHEL/AlmaLinux9는 LINBIT 공식 저장소가 구독 고객 전용이라 무료 접근이 불가능합니다.
+      아래 <strong>RPM 디렉터리</strong>에는 별도 빌드 파이프라인(<code>gsdc-linbit-build</code>,
+      이 저장소 범위 밖)이 만든 <code>linstor-*.rpm</code> 파일들이 이미 있어야 합니다 —
+      생성된 플레이북이 이를 각 노드에 로컬 설치한 뒤 공식 컬렉션에 이어받깁니다.
+    </div>
+    <div class="d-flex align-items-center gap-2 mb-4">
+      <span class="small text-muted">현재 감지된 스토리지 백엔드:</span>
+      <span class="badge" id="linstorBackendBadge">확인 중...</span>
+      <a href="/nodes/" class="small">노드 풀에서 다시 감지</a>
+    </div>
+
+    <form action="/linstor/generate" method="post" id="linstorForm">
+
+      <!-- 노드 역할 배정 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-dark text-white fw-bold">
+          <i class="bi bi-diagram-2-fill"></i> 노드 역할 배정
+        </div>
+        <div class="card-body">
+          <input type="hidden" name="controller_nodes_json" id="controllerNodesJson" value="[]">
+          <input type="hidden" name="satellite_nodes_json" id="satelliteNodesJson" value="[]">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Controller 노드 <small class="text-muted">(linstor_controllers)</small></label>
+              <div id="controllerNodeList" class="border rounded p-2" style="min-height:80px"></div>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold">Satellite 노드 <small class="text-muted">(linstor_satellites)</small></label>
+              <div id="satelliteNodeList" class="border rounded p-2" style="min-height:80px"></div>
+            </div>
+          </div>
+          <div class="form-text mt-2">
+            한 노드가 Controller와 Satellite 양쪽에 동시에 속해도 됩니다(결합 노드) — 소규모
+            클러스터에서 흔한 구성입니다.
+          </div>
+        </div>
+      </div>
+
+      <!-- RPM 및 배포 옵션 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-secondary text-white fw-bold">
+          <i class="bi bi-box-seam"></i> RPM 및 배포 옵션
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label class="form-label fw-semibold">RPM 디렉터리 (제어 노드 로컬 경로)</label>
+              <input type="text" class="form-control" name="rpm_dir" placeholder="/opt/linstor-rpms" required>
+            </div>
+            <div class="col-md-4 d-flex align-items-end gap-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="deploy_storage" id="deployStorage" checked>
+                <label class="form-check-label" for="deployStorage">스토리지 풀 생성</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="ha_database" id="haDatabase">
+                <label class="form-check-label" for="haDatabase">HA DB 전환</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="token_auth" id="tokenAuth" checked>
+                <label class="form-check-label" for="tokenAuth">토큰 인증</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 스토리지 풀 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white fw-bold d-flex align-items-center">
+          <span><i class="bi bi-hdd-fill"></i> 스토리지 풀 (linstor_storage_pools)</span>
+          <button type="button" class="btn btn-sm btn-outline-light ms-auto" onclick="loadStoragePoolExample()">
+            <i class="bi bi-lightning-fill"></i> 예시
+          </button>
+        </div>
+        <div class="card-body p-0">
+          <textarea id="storagePoolsJson" name="storage_pools_json" class="code-editor"
+                    data-mode="javascript" style="min-height:160px">[]</textarea>
+          <div class="px-3 py-2 small text-muted bg-light border-top">
+            <code>pool_type</code>: lvm | lvmthin | zfs | zfsthin | file | filethin,
+            lvm/lvmthin은 <code>vg</code>(+lvmthin은 <code>vg_thinpool</code>),
+            zfs 계열은 <code>zpool</code>, <code>physical_devices</code>는 백엔드 디바이스 목록,
+            <code>nodes</code>는 이 풀을 적용할 satellite 노드 목록.
+          </div>
+        </div>
+      </div>
+
+      <!-- 리소스 그룹 / 리소스 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
+          <span><i class="bi bi-hdd-network-fill"></i> 리소스 그룹 / 리소스 (DRBD 볼륨)</span>
+          <button type="button" class="btn btn-sm btn-outline-light ms-auto" onclick="loadResourceExample()">
+            <i class="bi bi-lightning-fill"></i> 예시
+          </button>
+        </div>
+        <div class="card-body p-0">
+          <div class="px-3 pt-2 small text-muted">리소스 그룹 (place_count = 복제본 수)</div>
+          <textarea id="resourceGroupsJson" name="resource_groups_json" class="code-editor"
+                    data-mode="javascript" style="min-height:100px">[]</textarea>
+          <div class="px-3 pt-2 small text-muted">리소스 스폰 (그룹으로부터 실제 DRBD 볼륨 생성)</div>
+          <textarea id="resourcesJson" name="resources_json" class="code-editor"
+                    data-mode="javascript" style="min-height:100px">[]</textarea>
+        </div>
+      </div>
+
+      <!-- Ansible 배포 설정 -->
+      <div class="card shadow-sm mb-4">
+        <div class="card-header bg-warning text-dark fw-bold">
+          <i class="bi bi-send-fill"></i> Ansible 배포 설정
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Ansible 프로파일</label>
+              <select class="form-select" id="linstorProfileSel" onchange="linstorSyncProfile()">
+                <option value="">-- 직접 입력 --</option>
+              </select>
+            </div>
+          </div>
+          <div class="row g-3 mt-1" id="linstorProfileManual">
+            <div class="col-md-4">
+              <label class="form-label">SSH 사용자</label>
+              <input type="text" class="form-control" name="ansible_user" id="linstorAnsibleUser" value="root">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">SSH 개인키</label>
+              <input type="text" class="form-control" name="ansible_ssh_key" id="linstorAnsibleKey" value="~/.ssh/id_rsa">
+            </div>
+          </div>
+          <input type="hidden" id="linstorAnsibleUserHidden">
+          <input type="hidden" id="linstorAnsibleKeyHidden">
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-dark btn-lg">
+        <i class="bi bi-gear-fill"></i> 인벤토리 + 플레이북 생성
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let controllerNodes = [];
+let satelliteNodes = [];
+
+function renderNodeCheckList(containerId, selected, onToggle) {
+  const container = document.getElementById(containerId);
+  const pool = getNodePool();
+  if (!pool.length) {
+    container.innerHTML = '<div class="text-muted small">노드 풀이 비어 있습니다. <a href="/nodes/">노드 풀에서 추가</a></div>';
+    return;
+  }
+  container.innerHTML = pool.map(n => `
+    <div class="form-check">
+      <input class="form-check-input" type="checkbox" value="${n.hostname}"
+             id="${containerId}_${n.hostname}" ${selected.includes(n.hostname) ? 'checked' : ''}
+             onchange="${onToggle}('${n.hostname}', this.checked)">
+      <label class="form-check-label" for="${containerId}_${n.hostname}">
+        ${n.hostname} <small class="text-muted">${n.ip || ''}</small>
+      </label>
+    </div>`).join('');
+}
+
+function toggleControllerNode(hostname, checked) {
+  if (checked && !controllerNodes.includes(hostname)) controllerNodes.push(hostname);
+  if (!checked) controllerNodes = controllerNodes.filter(h => h !== hostname);
+  document.getElementById('controllerNodesJson').value = JSON.stringify(controllerNodes);
+}
+
+function toggleSatelliteNode(hostname, checked) {
+  if (checked && !satelliteNodes.includes(hostname)) satelliteNodes.push(hostname);
+  if (!checked) satelliteNodes = satelliteNodes.filter(h => h !== hostname);
+  document.getElementById('satelliteNodesJson').value = JSON.stringify(satelliteNodes);
+}
+
+function loadStoragePoolExample() {
+  const example = JSON.stringify([
+    {
+      "name": "sp-lvmthin",
+      "pool_type": "lvmthin",
+      "vg": "vg_linstor",
+      "vg_thinpool": "thinpool",
+      "physical_devices": ["/dev/sdb"],
+      "nodes": satelliteNodes
+    }
+  ], null, 2);
+  const el = document.getElementById('storagePoolsJson');
+  if (el._cmEditor) el._cmEditor.setValue(example); else el.value = example;
+}
+
+function loadResourceExample() {
+  const grpExample = JSON.stringify([
+    { "name": "rg-app", "storage_pool": "sp-lvmthin", "place_count": 3 }
+  ], null, 2);
+  const grpEl = document.getElementById('resourceGroupsJson');
+  if (grpEl._cmEditor) grpEl._cmEditor.setValue(grpExample); else grpEl.value = grpExample;
+
+  const resExample = JSON.stringify([
+    { "name": "res-app", "resource_group": "rg-app", "size": "100G" }
+  ], null, 2);
+  const resEl = document.getElementById('resourcesJson');
+  if (resEl._cmEditor) resEl._cmEditor.setValue(resExample); else resEl.value = resExample;
+}
+
+// ── Ansible 프로파일 ────────────────────────────────────────────────────
+function linstorInitProfile() {
+  const sel = document.getElementById('linstorProfileSel');
+  const active = getActiveProfileName();
+  const profiles = getProfilePool();
+  sel.innerHTML = '<option value="">-- 직접 입력 --</option>';
+  profiles.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    if (p.name === active) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  linstorSyncProfile();
+}
+
+function linstorSyncProfile() {
+  const sel = document.getElementById('linstorProfileSel');
+  const manual = document.getElementById('linstorProfileManual');
+  const name = sel.value;
+  if (!name) {
+    manual.style.display = '';
+    document.getElementById('linstorAnsibleUserHidden').name = '';
+    document.getElementById('linstorAnsibleKeyHidden').name = '';
+    document.getElementById('linstorAnsibleUser').name = 'ansible_user';
+    document.getElementById('linstorAnsibleKey').name = 'ansible_ssh_key';
+    return;
+  }
+  const profile = getProfilePool().find(p => p.name === name);
+  if (profile) {
+    manual.style.display = 'none';
+    document.getElementById('linstorAnsibleUser').name = '';
+    document.getElementById('linstorAnsibleKey').name = '';
+    document.getElementById('linstorAnsibleUserHidden').name = 'ansible_user';
+    document.getElementById('linstorAnsibleUserHidden').value = profile.ssh_user || 'root';
+    document.getElementById('linstorAnsibleKeyHidden').name = 'ansible_ssh_key';
+    document.getElementById('linstorAnsibleKeyHidden').value = profile.ssh_key || '~/.ssh/id_rsa';
+  }
+}
+
+async function loadLinstorBackendBadge() {
+  const badge = document.getElementById('linstorBackendBadge');
+  try {
+    const resp = await fetch('/api/storage-backend');
+    const data = await resp.json();
+    if (data.backend === 'linstor') {
+      badge.className = 'badge bg-info text-dark';
+      badge.textContent = 'LINSTOR';
+    } else {
+      badge.className = 'badge bg-secondary';
+      badge.textContent = '커널모듈 (DRBD)';
+    }
+  } catch (e) {
+    badge.className = 'badge bg-secondary';
+    badge.textContent = '알 수 없음';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  renderNodeCheckList('controllerNodeList', controllerNodes, 'toggleControllerNode');
+  renderNodeCheckList('satelliteNodeList', satelliteNodes, 'toggleSatelliteNode');
+  linstorInitProfile();
+  loadLinstorBackendBadge();
+});
+</script>
+{% endblock %}

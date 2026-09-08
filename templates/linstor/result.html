@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LINSTOR 배포 결과 - HA Container Manager</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/codemirror.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/theme/material-darker.min.css" rel="stylesheet">
+  <link href="/static/css/style.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm">
+  <div class="container-fluid">
+    <a class="navbar-brand fw-bold" href="/">
+      <i class="bi bi-hdd-network-fill text-warning"></i> HA Container Manager
+    </a>
+    <div class="ms-auto">
+      <a href="/linstor/" class="btn btn-outline-light btn-sm">
+        <i class="bi bi-arrow-left"></i> 다시 설정
+      </a>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid py-4">
+<div class="row justify-content-center">
+  <div class="col-lg-10">
+    <div class="d-flex align-items-center mb-4">
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> LINSTOR 배포 산출물 생성 완료</h2>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-secondary text-white d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-code-fill"></i> requirements.yml (ansible-galaxy)</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('reqYml')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="reqYml" class="code-editor" data-mode="yaml">{{ result.requirements_yml }}</textarea>
+      </div>
+      <div class="card-footer small text-muted">
+        실행: <code>ansible-galaxy collection install -r requirements.yml</code>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-warning text-dark d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> inventory.yml</span>
+        <button class="btn btn-sm btn-dark ms-auto" onclick="copyText('linstorInventory')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="linstorInventory" class="code-editor" data-mode="yaml">{{ result.inventory }}</textarea>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-success text-white d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-file-earmark-play-fill"></i> deploy_linstor.yml (Ansible Playbook)</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('linstorPlaybook')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="linstorPlaybook" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
+      </div>
+      <div class="card-footer small text-muted">
+        실행: <code>ansible-playbook -i inventory.yml deploy_linstor.yml</code>
+      </div>
+    </div>
+
+    <div class="alert alert-info small">
+      <i class="bi bi-info-circle-fill"></i>
+      이 앱은 개발 환경에서 실제 LINSTOR/pcs 클러스터에 접근할 수 없어 생성된 텍스트의
+      구문(YAML 파싱, 플레이북 구조)만 검증했습니다. 실제 클러스터 배포 동작은 별도 VM
+      테스트 클러스터에서 확인해야 합니다 (PLAN.md D 검증 계획 참고).
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+function copyText(id) {
+  const el = document.getElementById(id);
+  navigator.clipboard.writeText(el.value || el.textContent).then(() => {
+    alert('클립보드에 복사되었습니다.');
+  });
+}
+</script>
+</body>
+</html>
