@@ -629,6 +629,7 @@ fn linstor_fixture() -> LinstorConfig {
         deploy_storage: true,
         ha_database: false,
         token_auth: true,
+        pacemaker_managed: true,
     }
 }
 

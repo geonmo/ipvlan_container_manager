@@ -36,6 +36,7 @@ pub struct LinstorFormData {
     pub deploy_storage: Option<String>,
     pub ha_database: Option<String>,
     pub token_auth: Option<String>,
+    pub pacemaker_managed: Option<String>,
     pub ansible_user: Option<String>,
     pub ansible_ssh_key: Option<String>,
 }
@@ -74,6 +75,9 @@ pub async fn generate(
         deploy_storage: form.deploy_storage.as_deref() == Some("on"),
         ha_database: form.ha_database.as_deref() == Some("on"),
         token_auth: form.token_auth.as_deref() != Some("off"),
+        // 체크박스 미체크 시 필드 자체가 오지 않으므로, 폼이 왔는데 값이
+        // 없으면 꺼진 것으로 본다. 기본 UI 는 체크된 상태로 제공한다.
+        pacemaker_managed: form.pacemaker_managed.as_deref() == Some("on"),
     };
 
     let ansible_user = form.ansible_user.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| "root".to_string());

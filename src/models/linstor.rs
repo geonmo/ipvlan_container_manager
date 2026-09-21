@@ -73,4 +73,21 @@ pub struct LinstorConfig {
     /// cluster_init_token_auth — REST API 토큰 인증 요구
     #[serde(default = "default_true")]
     pub token_auth: bool,
+    /// 생성된 DRBD 리소스를 Pacemaker(`ocf:linbit:drbd`)가 관리할 것인가.
+    ///
+    /// 이 앱의 기본 전제다(Pacemaker 탭이 promotable clone을 만든다).
+    /// 켜면 플레이북이 아래 전제조건을 함께 배포한다 — 3노드 실클러스터에서
+    /// 이것들이 빠져 각각 다른 증상으로 실패하는 것을 확인했다:
+    ///
+    /// 1. `auto-promote no` — DRBD 9 기본값이 yes 이고 LINSTOR는 끄지 않는다.
+    ///    켜져 있으면 장치를 여는 것만으로 커널이 Primary로 올려서 승격
+    ///    시점을 통제해야 하는 Pacemaker와 어긋난다.
+    /// 2. `drbd-selinux` — SELinux Enforcing에서 RA는 drbd_t 도메인으로 도는데,
+    ///    이 정책 모듈이 없으면 drbdsetup이 커널과 통신할 netlink 소켓조차
+    ///    만들지 못한다.
+    /// 3. `/var/lib/linstor.d` 를 etc_t 로 라벨 — LINSTOR가 .res를 거기 쓰는데
+    ///    var_lib_t 라서 drbd_t 가 읽지 못한다. 증상이 "DRBD resource ... not
+    ///    found in configuration file /etc/drbd.conf." 라 원인과 동떨어져 보인다.
+    #[serde(default = "default_true")]
+    pub pacemaker_managed: bool,
 }

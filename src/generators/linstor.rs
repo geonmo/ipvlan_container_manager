@@ -160,6 +160,70 @@ pub fn generate_linstor_ansible_playbook(
     out.push_str("# 구독 고객 전용이라 이 앱은 이미 빌드된 RPM을 로컬 설치하는 것을\n");
     out.push_str("# 전제로 cluster_init_repo_access: none으로 role을 호출한다.\n\n");
 
+    // ── Play 0: Pacemaker 관리 전제조건 ────────────────────────────────
+    // 3노드 실클러스터 검증에서 이것들이 빠지면 각각 다른 증상으로 실패했다.
+    // Pacemaker가 리소스를 관리하지 않는 구성이면 생략한다.
+    if config.pacemaker_managed {
+        out.push_str("- name: Pacemaker 관리 전제조건 (DRBD 모듈 / SELinux)\n");
+        out.push_str("  hosts: linstor_cluster\n");
+        out.push_str(&format!("  remote_user: {}\n", ansible_user));
+        out.push_str("  become: yes\n");
+        out.push_str("  # ansible_facts['selinux'] 가 필요하다\n");
+        out.push_str("  gather_facts: yes\n");
+        out.push_str("  vars:\n");
+        out.push_str(&format!("    ansible_ssh_private_key_file: {}\n", ansible_ssh_key));
+        out.push_str("  tasks:\n");
+
+        // (a) DRBD 커널 모듈
+        out.push_str("    # linbit.drbd.drbd_install(satellite_install 의 meta 의존성)은\n");
+        out.push_str("    # /sys/module/drbd/version 으로 설치 여부를 판단하는데, 이 경로는\n");
+        out.push_str("    # 모듈이 **로드돼 있을 때만** 존재한다. 패키지만 깔려 있고 로드가\n");
+        out.push_str("    # 안 돼 있으면 role 이 LINBIT 자체 패키지명(kmod-drbd)을 설치하려다\n");
+        out.push_str("    # \"No package kmod-drbd available.\" 로 실패한다.\n");
+        out.push_str("    - name: 부팅 시 DRBD 모듈 자동 로드 설정\n");
+        out.push_str("      ansible.builtin.copy:\n");
+        out.push_str("        content: \"drbd\\n\"\n");
+        out.push_str("        dest: /etc/modules-load.d/drbd.conf\n");
+        out.push_str("        mode: '0644'\n\n");
+        out.push_str("    - name: DRBD 모듈 즉시 로드\n");
+        out.push_str("      community.general.modprobe:\n");
+        out.push_str("        name: drbd\n");
+        out.push_str("        state: present\n\n");
+
+        // (b) drbd-selinux
+        out.push_str("    # SELinux Enforcing 에서 ocf:linbit:drbd RA 는 drbd_t 도메인으로\n");
+        out.push_str("    # 실행된다. 이 정책 모듈이 없으면 drbdsetup 이 커널과 통신할\n");
+        out.push_str("    # netlink_generic_socket 조차 만들지 못해 RA 가 리소스를 찾지 못한다.\n");
+        out.push_str("    - name: drbd-selinux 설치 (SELinux 정책 모듈)\n");
+        out.push_str("      ansible.builtin.dnf:\n");
+        out.push_str("        name: drbd-selinux\n");
+        out.push_str("        state: present\n");
+        out.push_str("      when: ansible_facts['selinux']['status'] | default('disabled') != 'disabled'\n\n");
+
+        // (c) /var/lib/linstor.d 라벨
+        out.push_str("    # LINSTOR 는 .res 파일을 /var/lib/linstor.d/ 에 쓰는데 그건 var_lib_t\n");
+        out.push_str("    # 로 라벨된다. DRBD 정책은 /etc/drbd.d(etc_t)만 읽도록 돼 있어서\n");
+        out.push_str("    # drbd_t 가 읽지 못하고, 증상은 엉뚱하게 나온다:\n");
+        out.push_str("    #   avc: denied { read } comm=\"drbdadm\" scontext=drbd_t tcontext=var_lib_t\n");
+        out.push_str("    #   -> \"DRBD resource <name> not found in configuration file /etc/drbd.conf.\"\n");
+        out.push_str("    # 셸에서 root 로 drbdadm 을 치면 unconfined_t 라 잘 되기 때문에\n");
+        out.push_str("    # AVC 로그를 보지 않으면 원인을 찾기 어렵다.\n");
+        out.push_str("    - name: /var/lib/linstor.d 를 etc_t 로 라벨링\n");
+        out.push_str("      community.general.sefcontext:\n");
+        out.push_str("        target: '/var/lib/linstor\\.d(/.*)?'\n");
+        out.push_str("        setype: etc_t\n");
+        out.push_str("        state: present\n");
+        out.push_str("      when: ansible_facts['selinux']['status'] | default('disabled') != 'disabled'\n");
+        out.push_str("      register: _linstor_fcontext\n\n");
+        out.push_str("    - name: 기존 파일에 라벨 적용\n");
+        out.push_str("      ansible.builtin.command:\n");
+        out.push_str("        cmd: restorecon -RF /var/lib/linstor.d\n");
+        out.push_str("      when:\n");
+        out.push_str("        - ansible_facts['selinux']['status'] | default('disabled') != 'disabled'\n");
+        out.push_str("        - _linstor_fcontext is changed\n");
+        out.push_str("      changed_when: true\n\n");
+    }
+
     // ── Play 1: RPM 로컬 설치 ──────────────────────────────────────────
     out.push_str("- name: LINSTOR RPM 로컬 설치 (gsdc-linbit-build 산출물)\n");
     out.push_str("  hosts: linstor_cluster\n");
@@ -220,7 +284,15 @@ pub fn generate_linstor_ansible_playbook(
             out.push_str("      linbit.linstor.resource_group:\n");
             out.push_str(&format!("        name: {}\n", rg.name));
             out.push_str(&format!("        storage_pool: {}\n", rg.storage_pool));
-            out.push_str(&format!("        place_count: {}\n\n", rg.place_count));
+            out.push_str(&format!("        place_count: {}\n", rg.place_count));
+            if config.pacemaker_managed {
+                // Pacemaker 가 승격 시점을 통제하려면 커널의 자동 승격을 꺼야 한다.
+                // 리소스 그룹에 걸면 그 그룹에서 만들어진 기존 리소스까지 전파된다.
+                out.push_str("        drbd_options:\n");
+                out.push_str("          resource:\n");
+                out.push_str("            auto-promote: \"no\"\n");
+            }
+            out.push('\n');
         }
         for res in &config.resources {
             out.push_str(&format!("    - name: 리소스 스폰 ({})\n", res.name));
@@ -275,6 +347,7 @@ mod tests {
             deploy_storage: true,
             ha_database: false,
             token_auth: true,
+            pacemaker_managed: true,
         }
     }
 
@@ -327,6 +400,46 @@ mod tests {
         assert!(rpm_pos < init_pos);
         assert!(pb.contains("cluster_init_repo_access: none"));
         assert!(pb.contains("hosts: linstor_cluster"));
+    }
+
+    /// Pacemaker 가 ocf:linbit:drbd 로 리소스를 관리하려면 세 가지 전제조건이
+    /// 필요하다. 3노드 실클러스터에서 각각이 빠졌을 때 서로 다른 증상으로
+    /// 실패하는 것을 확인했고, 특히 SELinux 라벨 문제는 증상("resource not
+    /// found in configuration file")이 원인과 동떨어져 보여 찾기 어렵다.
+    #[test]
+    fn pacemaker_managed_emits_all_three_prerequisites() {
+        let pb = generate_linstor_ansible_playbook(&sample_config(), "deploy", "~/.ssh/id_rsa");
+
+        // 1. DRBD 커널 모듈 로드 (drbd_install 이 /sys/module/drbd/version 을 본다)
+        assert!(pb.contains("/etc/modules-load.d/drbd.conf"));
+        assert!(pb.contains("community.general.modprobe"));
+        // 2. SELinux 정책 모듈
+        assert!(pb.contains("name: drbd-selinux"));
+        // 3. LINSTOR .res 디렉터리 라벨
+        assert!(pb.contains("community.general.sefcontext"));
+        assert!(pb.contains("setype: etc_t"));
+        assert!(pb.contains("restorecon -RF /var/lib/linstor.d"));
+        // 4. 커널 자동 승격 비활성화
+        assert!(pb.contains("auto-promote: \"no\""));
+
+        // 전제조건 play 는 RPM 설치보다 앞서야 한다 (satellite_install 이
+        // drbd_install 을 meta 의존성으로 끌어오기 때문)
+        let prereq = pb.find("Pacemaker 관리 전제조건").expect("전제조건 play 없음");
+        let rpm = pb.find("LINSTOR RPM 로컬 설치").expect("RPM play 없음");
+        assert!(prereq < rpm, "전제조건 play 가 RPM 설치보다 앞에 와야 한다");
+    }
+
+    #[test]
+    fn pacemaker_managed_off_omits_prerequisites() {
+        let mut config = sample_config();
+        config.pacemaker_managed = false;
+        let pb = generate_linstor_ansible_playbook(&config, "deploy", "~/.ssh/id_rsa");
+
+        assert!(!pb.contains("Pacemaker 관리 전제조건"));
+        assert!(!pb.contains("drbd-selinux"));
+        assert!(!pb.contains("sefcontext"));
+        // LINSTOR 단독 운용이면 커널 자동 승격을 끄지 않는다
+        assert!(!pb.contains("auto-promote"));
     }
 
     #[test]

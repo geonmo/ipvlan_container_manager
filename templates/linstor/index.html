@@ -76,7 +76,28 @@
                 <input class="form-check-input" type="checkbox" name="token_auth" id="tokenAuth" checked>
                 <label class="form-check-label" for="tokenAuth">토큰 인증</label>
               </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="pacemaker_managed" id="pacemakerManaged" checked>
+                <label class="form-check-label" for="pacemakerManaged">Pacemaker 관리</label>
+              </div>
             </div>
+          </div>
+          <div class="alert alert-secondary py-2 px-3 small mt-2 mb-0">
+            <i class="bi bi-info-circle"></i>
+            <strong>Pacemaker 관리</strong>를 켜면 생성될 DRBD 리소스를
+            <a href="/pacemaker/" target="_blank">Pacemaker 탭</a>의
+            <code>ocf:linbit:drbd</code> promotable clone으로 관리한다는 전제로,
+            플레이북에 아래 전제조건이 함께 들어갑니다 (3노드 실클러스터에서
+            이것들이 빠지면 각각 다른 증상으로 실패하는 것을 확인했습니다):
+            <ul class="mb-0 mt-1">
+              <li><code>auto-promote no</code> — DRBD 기본값이 yes라 커널이 먼저 승격해
+                  Pacemaker의 승격 통제와 어긋납니다.</li>
+              <li><code>drbd-selinux</code> — 없으면 RA가 커널과 통신할 netlink 소켓조차
+                  만들지 못합니다.</li>
+              <li><code>/var/lib/linstor.d</code> → <code>etc_t</code> 라벨 — LINSTOR가 쓴
+                  <code>.res</code>를 RA가 읽지 못해
+                  <em>"DRBD resource ... not found in configuration file"</em>로 실패합니다.</li>
+            </ul>
           </div>
         </div>
       </div>
