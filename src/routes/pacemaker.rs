@@ -130,6 +130,10 @@ pub struct DrbdGroupInput {
     pub demote_timeout: Option<String>,
     pub start_timeout: Option<String>,
     pub stop_timeout: Option<String>,
+    #[serde(default)]
+    pub monitor_interval_promoted: Option<String>,
+    #[serde(default)]
+    pub monitor_interval_unpromoted: Option<String>,
     pub fs: Option<FsResourceInput>,    // 연결된 FS 리소스 (없으면 None)
 }
 
@@ -228,6 +232,14 @@ pub async fn generate(
                         stop_timeout: g.stop_timeout
                             .filter(|s| !s.trim().is_empty())
                             .unwrap_or_else(|| "100s".to_string()),
+                        // 두 monitor interval 은 서로 달라야 한다 — pcs 가
+                        // 같은 interval 의 monitor 중복 지정을 거부한다.
+                        monitor_interval_promoted: g.monitor_interval_promoted
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or_else(|| "29s".to_string()),
+                        monitor_interval_unpromoted: g.monitor_interval_unpromoted
+                            .filter(|s| !s.trim().is_empty())
+                            .unwrap_or_else(|| "31s".to_string()),
                     });
                     if let Some(fs) = g.fs {
                         if !fs.resource_name.is_empty() {

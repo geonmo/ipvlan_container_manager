@@ -37,6 +37,8 @@
 - name: DRBD 커널 모듈 로드 보장
   hosts: linstor_cluster
   become: true
+  # ansible_facts['selinux'] 가 필요하다 (drbd-selinux 설치 조건)
+  gather_facts: true
   tasks:
     # LINSTOR 새틀라이트는 DRBD 커널 모듈이 로드돼 있어야 동작한다. 또한
     # linbit.drbd.drbd_install role(satellite_install의 meta 의존성)은
@@ -59,6 +61,30 @@
       community.general.modprobe:
         name: drbd
         state: present
+
+    # SELinux Enforcing 환경에서 Pacemaker 의 ocf:linbit:drbd RA 는 drbd_t
+    # 도메인으로 실행된다. 이 정책 모듈이 없으면 drbdsetup 이 커널과 통신할
+    # netlink_generic_socket 조차 만들지 못해서, RA 가 리소스를 찾지 못하고
+    # "DRBD resource <name> not found in configuration file /etc/drbd.conf."
+    # 로 실패한다 (실측 AVC: denied { create } netlink_generic_socket,
+    # denied { dac_override }). 셸에서 root 로 drbdadm 을 치면 unconfined_t
+    # 라 잘 되기 때문에 원인을 찾기 어렵다.
+    #
+    # 앱의 DRBD 배포 플레이북(generators/drbd.rs)은 drbd_packages 에 이미
+    # 이 패키지를 넣지만, LINSTOR 경로에는 빠져 있었다.
+    - name: drbd-selinux 설치 (SELinux 정책 모듈)
+      ansible.builtin.dnf:
+        name: drbd-selinux
+        state: present
+        enablerepo: elrepo
+      when: ansible_facts['selinux']['status'] | default('disabled') != 'disabled'
+      register: _drbd_selinux
+
+    - name: SELinux 상태 확인
+      ansible.builtin.debug:
+        msg: >-
+          SELinux={{ ansible_facts['selinux']['status'] | default('unknown') }}
+          / drbd-selinux changed={{ _drbd_selinux.changed | default(false) }}
 
     - name: 로드된 DRBD 버전 확인
       ansible.builtin.slurp:
@@ -117,6 +143,50 @@
         permanent: true
         immediate: true
         state: enabled
+
+- name: SELinux — LINSTOR 가 쓴 .res 를 DRBD RA 가 읽을 수 있게 라벨링
+  hosts: linstor_satellites
+  become: true
+  gather_facts: true
+  tasks:
+    # Pacemaker 의 ocf:linbit:drbd RA 는 drbd_t 도메인에서 돈다. DRBD SELinux
+    # 정책은 /etc/drbd.d (etc_t) 를 읽도록 돼 있지만, LINSTOR 는 .res 파일을
+    # /var/lib/linstor.d/ 에 쓰고 그건 var_lib_t 로 라벨된다. 그래서 RA 가
+    # 리소스를 찾지 못하고 실패한다:
+    #   avc: denied { read } comm="drbdadm" name="<res>.res"
+    #        scontext=drbd_t tcontext=var_lib_t tclass=file
+    #   -> "DRBD resource <name> not found in configuration file /etc/drbd.conf."
+    #
+    # drbd-selinux 정책에는 /var/lib/linstor.d 규칙이 없다(LINSTOR 가 그
+    # 정책보다 나중에 나왔다). /etc/drbd.d 와 같은 etc_t 를 붙여 해결한다.
+    #
+    # 셸에서 root 로 drbdadm 을 치면 unconfined_t 라 잘 되기 때문에
+    # 원인을 찾기 어렵다 — 반드시 AVC 로그를 봐야 한다.
+    - name: SELinux 파일 컨텍스트 규칙 추가 (/var/lib/linstor.d -> etc_t)
+      community.general.sefcontext:
+        target: '/var/lib/linstor\.d(/.*)?'
+        setype: etc_t
+        state: present
+      when: ansible_facts['selinux']['status'] | default('disabled') != 'disabled'
+      register: _fcontext
+
+    - name: 기존 파일에 라벨 적용
+      ansible.builtin.command:
+        cmd: restorecon -RF /var/lib/linstor.d
+      when:
+        - ansible_facts['selinux']['status'] | default('disabled') != 'disabled'
+        - _fcontext is changed
+      changed_when: true
+
+    - name: 적용된 라벨 확인
+      ansible.builtin.command:
+        cmd: "ls -Zd /var/lib/linstor.d"
+      register: _lbl
+      changed_when: false
+
+    - name: 라벨 출력
+      ansible.builtin.debug:
+        msg: "{{ _lbl.stdout | trim }}"
 
 - name: LINSTOR RPM을 클러스터 전 노드에 배포
   hosts: linstor_cluster

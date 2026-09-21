@@ -51,12 +51,21 @@ pub struct DrbdPacemakerResource {
     pub start_timeout: String,
     #[serde(default = "default_drbd_stop_timeout")]
     pub stop_timeout: String,
+    // 역할별 monitor interval. pcs 는 역할이 달라도 같은 interval 의 monitor 를
+    // 두 번 지정하면 거부하므로 반드시 서로 달라야 한다(pcs 0.11.11 실측).
+    #[serde(default = "default_drbd_monitor_promoted")]
+    pub monitor_interval_promoted: String,
+    #[serde(default = "default_drbd_monitor_unpromoted")]
+    pub monitor_interval_unpromoted: String,
 }
 
 fn default_drbd_promote_timeout() -> String { "90s".to_string() }
 fn default_drbd_demote_timeout() -> String { "90s".to_string() }
 fn default_drbd_start_timeout() -> String { "240s".to_string() }
 fn default_drbd_stop_timeout() -> String { "100s".to_string() }
+// 서로 다르고 서로 배수가 아닌 값 — 두 monitor 가 매번 같은 시점에 겹치지 않게 한다.
+fn default_drbd_monitor_promoted() -> String { "29s".to_string() }
+fn default_drbd_monitor_unpromoted() -> String { "31s".to_string() }
 
 impl Default for DrbdPacemakerResource {
     fn default() -> Self {
@@ -72,6 +81,8 @@ impl Default for DrbdPacemakerResource {
             demote_timeout: default_drbd_demote_timeout(),
             start_timeout: default_drbd_start_timeout(),
             stop_timeout: default_drbd_stop_timeout(),
+            monitor_interval_promoted: default_drbd_monitor_promoted(),
+            monitor_interval_unpromoted: default_drbd_monitor_unpromoted(),
         }
     }
 }

@@ -174,22 +174,37 @@ pub(crate) fn generate_drbd_resource_cmds(drbd: &DrbdPacemakerResource, node_cou
         "    op demote  interval=0s timeout={t} \\",
         t = drbd.demote_timeout
     ));
-    // on-fail은 Promoted 역할 monitor에 붙인다. UI 드롭다운이 제공하는
-    // 값 집합(fence/block/stop/ignore/demote)이 정확히 이 op에서만 전부
-    // 유효하기 때문이다 — Pacemaker에서 `demote`는 promote 액션과
-    // `role=Promoted` 반복 monitor에만 허용된다. 또한 DRBD Primary 쪽
-    // 장애를 실제로 탐지하는 지점이 이 monitor라, fencing을 걸 자리도
-    // 여기다. 값이 비어 있으면 Pacemaker 기본값(restart)에 맡긴다.
+    // 역할별 monitor 두 개는 **서로 다른 interval** 이어야 한다.
+    // pcs(0.11.11 실측)는 역할이 달라도 같은 interval 의 monitor 를 두 번
+    // 지정하면 거부한다:
+    //   Error: multiple specification of the same operation with the same
+    //   interval: monitor with intervals 20s, 20s
+    // 예전에는 양쪽 다 20s 로 내보내서 생성된 pcs 스크립트가 아예 실행되지
+    // 않았다. LINBIT 예제 관행대로 서로 다른(그리고 서로 배수가 아닌)
+    // 값을 쓴다 — 두 monitor 가 매번 같은 시점에 겹치지 않게 한다.
+    //
+    // on-fail 은 Promoted 역할 monitor 에 붙인다. UI 드롭다운이 제공하는
+    // 값 집합(fence/block/stop/ignore/demote)이 정확히 이 op 에서만 전부
+    // 유효하기 때문이다 — Pacemaker 에서 `demote` 는 promote 액션과
+    // `role=Promoted` 반복 monitor 에만 허용된다. 값이 비어 있으면
+    // Pacemaker 기본값(restart)에 맡긴다.
     let on_fail = drbd.on_fail.trim();
     if on_fail.is_empty() {
-        cmds.push("    op monitor interval=20s role=Promoted \\".to_string());
+        cmds.push(format!(
+            "    op monitor interval={i} role=Promoted \\",
+            i = drbd.monitor_interval_promoted
+        ));
     } else {
         cmds.push(format!(
-            "    op monitor interval=20s role=Promoted on-fail={f} \\",
+            "    op monitor interval={i} role=Promoted on-fail={f} \\",
+            i = drbd.monitor_interval_promoted,
             f = on_fail
         ));
     }
-    cmds.push("    op monitor interval=20s role=Unpromoted \\".to_string());
+    cmds.push(format!(
+        "    op monitor interval={i} role=Unpromoted \\",
+        i = drbd.monitor_interval_unpromoted
+    ));
     cmds.push("    op notify  interval=0s timeout=90s \\".to_string());
     cmds.push(format!(
         "    op promote interval=0s timeout={t} \\",
@@ -682,8 +697,8 @@ mod tests {
         let script = generate_pcs_script(&config);
 
         assert!(script.contains("op demote  interval=0s timeout=120s"));
-        assert!(script.contains("op monitor interval=20s role=Promoted"));
-        assert!(script.contains("op monitor interval=20s role=Unpromoted"));
+        assert!(script.contains("op monitor interval=29s role=Promoted"));
+        assert!(script.contains("op monitor interval=31s role=Unpromoted"));
         assert!(script.contains("op notify  interval=0s timeout=90s"));
         assert!(script.contains("op promote interval=0s timeout=120s"));
         assert!(script.contains("op reload  interval=0s timeout=30s"));
@@ -727,16 +742,56 @@ mod tests {
         assert!(!config.order_constraints.iter().any(|o| o.then == "svc-app"));
     }
 
+    /// pcs(0.11.11 실측)는 역할이 달라도 **같은 interval 의 monitor 를 두 번**
+    /// 지정하면 명령 전체를 거부한다:
+    ///   Error: multiple specification of the same operation with the same
+    ///   interval: monitor with intervals 20s, 20s
+    /// 예전에는 양쪽 다 20s 였고, 그래서 생성된 pcs 스크립트가 실행 자체가
+    /// 되지 않았다.
+    #[test]
+    fn role_monitors_must_use_different_intervals() {
+        let script = generate_pcs_script(&config_with_nodes(3));
+
+        let intervals: Vec<&str> = script
+            .lines()
+            .filter(|l| l.contains("op monitor") && l.contains("role="))
+            .filter_map(|l| {
+                l.split("interval=")
+                    .nth(1)?
+                    .split_whitespace()
+                    .next()
+            })
+            .collect();
+
+        assert_eq!(intervals.len(), 2, "역할별 monitor 가 두 개여야 한다");
+        assert_ne!(
+            intervals[0], intervals[1],
+            "Promoted/Unpromoted monitor 의 interval 이 같으면 pcs 가 거부한다: {:?}",
+            intervals
+        );
+    }
+
+    /// 사용자가 폼에서 같은 값을 넣어도 생성물이 깨지지 않는지는 별개 문제다.
+    /// 최소한 기본값끼리는 절대 겹치지 않아야 한다.
+    #[test]
+    fn default_monitor_intervals_are_not_multiples_of_each_other() {
+        let d = DrbdPacemakerResource::default();
+        let p: u32 = d.monitor_interval_promoted.trim_end_matches('s').parse().unwrap();
+        let u: u32 = d.monitor_interval_unpromoted.trim_end_matches('s').parse().unwrap();
+        assert_ne!(p, u);
+        assert!(p % u != 0 && u % p != 0, "서로 배수면 주기적으로 겹친다: {}/{}", p, u);
+    }
+
     #[test]
     fn drbd_on_fail_is_attached_to_the_promoted_role_monitor() {
         let mut config = config_with_nodes(3);
         config.drbd_resources[0].on_fail = "fence".to_string();
         let script = generate_pcs_script(&config);
 
-        assert!(script.contains("op monitor interval=20s role=Promoted on-fail=fence"));
+        assert!(script.contains("op monitor interval=29s role=Promoted on-fail=fence"));
         // Unpromoted monitor에는 붙지 않는다 — `demote` 같은 값이 그쪽에서는
         // 유효하지 않아 pcs가 거부한다.
-        assert!(script.contains("op monitor interval=20s role=Unpromoted \\"));
+        assert!(script.contains("op monitor interval=31s role=Unpromoted \\"));
         assert!(!script.contains("role=Unpromoted on-fail"));
     }
 
@@ -746,7 +801,7 @@ mod tests {
         config.drbd_resources[0].on_fail = String::new();
         let script = generate_pcs_script(&config);
 
-        assert!(script.contains("op monitor interval=20s role=Promoted \\"));
+        assert!(script.contains("op monitor interval=29s role=Promoted \\"));
         assert!(!script.contains("on-fail="));
     }
 

@@ -1,0 +1,204 @@
+---
+# LINSTOR 리소스를 Pacemaker(ocf:linbit:drbd)로 관리할 때의 충돌 검증
+#
+# 실행:
+#   ansible-playbook -i inventory-linstor.yml playbooks/05-linstor-pacemaker-test.yml
+# 정리:
+#   ansible-playbook ... -e pm_test_cleanup=yes
+#
+# 배경 / 무엇을 확인하나
+# ----------------------
+# LINSTOR와 Pacemaker는 둘 다 DRBD 리소스의 상태를 바꾸려 든다.
+#
+#  - LINSTOR satellite: 리소스를 만들고 `drbdadm adjust` 로 올려 둔다.
+#    기본적으로 리소스는 이미 up(Secondary, UpToDate) 상태다.
+#  - ocf:linbit:drbd RA: start 에서 attach/adjust, promote 에서 primary,
+#    stop 에서 `drbdadm down` 까지 생명주기를 전부 소유한다고 가정한다.
+#
+# 가장 직접적인 충돌은 **auto-promote** 다. DRBD 9 기본값이 yes 이고
+# LINSTOR 는 이를 끄지 않는다(실측: drbdsetup show --show-defaults 에서
+# `auto-promote yes; # default`). auto-promote 가 켜져 있으면 장치를 여는
+# 것만으로 커널이 Primary 로 올려 버려서, 승격 시점을 통제해야 하는
+# Pacemaker 와 어긋난다.
+#
+# 이 플레이북은 다음을 순서대로 확인한다:
+#   1. 리소스 그룹에 auto-promote no 를 걸면 기존 리소스까지 전파되는지
+#   2. 그 상태에서 ocf:linbit:drbd promotable clone 이 정상 start/promote 되는지
+#   3. Pacemaker 가 승격한 뒤 LINSTOR 가 상태를 되돌리지 않는지
+#   4. 노드 이동(failover)이 동작하는지
+
+- name: 1) LINSTOR 쪽 준비 — auto-promote 끄기
+  hosts: linstor_controllers
+  become: true
+  gather_facts: false
+  vars:
+    pm_test_rg: rg-icmtest
+    pm_test_res: res-icmtest
+    pm_test_pool: pool-ssd
+  environment:
+    LS_CONTROLLERS: "{{ lookup('linbit.linstor.controller_env') }}"
+  tasks:
+    - name: 리소스 그룹에 auto-promote no 설정
+      linbit.linstor.resource_group:
+        name: "{{ pm_test_rg }}"
+        storage_pool: "{{ pm_test_pool }}"
+        place_count: 3
+        drbd_options:
+          resource:
+            auto-promote: "no"
+      register: _rg_opt
+
+    - name: 설정 결과
+      ansible.builtin.debug:
+        msg: "resource_group changed={{ _rg_opt.changed }}"
+
+- name: 2) auto-promote 가 실제 리소스에 반영됐는지 확인
+  hosts: linstor_satellites
+  become: true
+  gather_facts: false
+  vars:
+    pm_test_res: res-icmtest
+  tasks:
+    - name: 커널이 보는 auto-promote 값 조회
+      ansible.builtin.shell:
+        cmd: "drbdsetup show {{ pm_test_res }} --show-defaults | grep -E '^\\s*auto-promote\\s' || true"
+      register: _ap
+      changed_when: false
+      until: "'no' in _ap.stdout"
+      retries: 12
+      delay: 5
+
+    - name: auto-promote 상태 출력
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ _ap.stdout | trim }}"
+
+- name: 3) Pacemaker promotable clone 생성 (앱이 만드는 pcs 명령과 동일한 형태)
+  hosts: linstor_controllers
+  become: true
+  gather_facts: false
+  vars:
+    pm_test_res: res-icmtest
+    pm_rsc: drbd-res-icmtest
+    pm_clone: drbd-res-icmtest-clone
+  tasks:
+    - name: 기존 pcs 리소스 조회 (멱등 가드)
+      ansible.builtin.command:
+        cmd: pcs resource config
+      register: _pcs_cfg
+      changed_when: false
+
+    # 역할별 monitor 는 interval 이 서로 달라야 한다. pcs 는 CIB 연산 id 를
+    # `<이름>-interval-<interval>` 로 만들기 때문에 role 이 달라도 같은
+    # interval 이면 id 가 충돌한다 (pcs 0.11.11 실측):
+    #   Error: multiple specification of the same operation with the same
+    #   interval: monitor with intervals 20s, 20s
+    #
+    # 이 테스트 클러스터는 stonith-enabled=false 라 on-fail=fence 를 쓰지
+    # 않는다. fence 는 STONITH 가 켜져 있어야 의미가 있고, 꺼져 있으면
+    # Pacemaker 가 경고와 함께 stop 으로 격하시킨다.
+    - name: DRBD promotable clone 생성
+      ansible.builtin.shell:
+        cmd: |
+          pcs resource create {{ pm_rsc }} ocf:linbit:drbd \
+              drbd_resource={{ pm_test_res }} \
+              op demote  interval=0s timeout=90s \
+              op monitor interval=29s role=Promoted \
+              op monitor interval=31s role=Unpromoted \
+              op notify  interval=0s timeout=90s \
+              op promote interval=0s timeout=90s \
+              op reload  interval=0s timeout=30s \
+              op start   interval=0s timeout=240s \
+              op stop    interval=0s timeout=100s
+          pcs resource promotable {{ pm_rsc }} \
+              promoted-max=1 promoted-node-max=1 \
+              clone-max=3 clone-node-max=1 \
+              notify=true \
+              id={{ pm_clone }}
+      when: "'Resource: ' ~ pm_rsc ~ ' (' not in _pcs_cfg.stdout"
+      changed_when: true
+
+- name: 4) 동작 관찰
+  hosts: linstor_controllers
+  become: true
+  gather_facts: false
+  vars:
+    pm_clone: drbd-res-icmtest-clone
+    pm_test_res: res-icmtest
+  tasks:
+    - name: 클론이 Promoted 상태가 될 때까지 대기
+      ansible.builtin.command:
+        cmd: pcs status --full
+      register: _st
+      changed_when: false
+      until: _st.stdout is search('Promoted')
+      retries: 24
+      delay: 5
+      failed_when: false
+
+    - name: pcs status 출력
+      ansible.builtin.debug:
+        msg: "{{ _st.stdout_lines | select('search', pm_clone ~ '|Promoted|Unpromoted|Failed|Stopped') | list }}"
+
+    - name: 실패한 액션이 있는지 확인
+      ansible.builtin.command:
+        cmd: pcs status --full
+      register: _st2
+      changed_when: false
+
+    - name: Failed Resource Actions 유무
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Failed Resource Actions 있음 — 아래 확인 필요'
+             if _st2.stdout is search('Failed Resource Actions')
+             else 'Failed Resource Actions 없음' }}
+
+- name: 5) DRBD 실제 역할 확인 (Pacemaker 승격이 반영됐는지)
+  hosts: linstor_satellites
+  become: true
+  gather_facts: false
+  vars:
+    pm_test_res: res-icmtest
+  tasks:
+    - name: drbdadm role
+      ansible.builtin.command:
+        cmd: "drbdadm role {{ pm_test_res }}"
+      register: _role
+      changed_when: false
+      failed_when: false
+
+    - name: LINSTOR 가 보는 상태
+      ansible.builtin.command:
+        cmd: "linstor --controllers {{ hostvars[groups['linstor_controllers'][0]]['linstor_ip'] }} resource list -r {{ pm_test_res }}"
+      register: _ls
+      changed_when: false
+      delegate_to: "{{ groups['linstor_controllers'][0] }}"
+      run_once: true
+
+    - name: 역할 출력
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} role={{ _role.stdout | trim }}"
+
+    - name: LINSTOR 뷰 출력
+      ansible.builtin.debug:
+        msg: "{{ _ls.stdout_lines }}"
+      run_once: true
+
+- name: 6) 정리 (pm_test_cleanup=yes 일 때만)
+  hosts: linstor_controllers
+  become: true
+  gather_facts: false
+  vars:
+    pm_rsc: drbd-res-icmtest
+    pm_clone: drbd-res-icmtest-clone
+    pm_test_cleanup: "no"
+  tasks:
+    - name: 정리 안내
+      ansible.builtin.debug:
+        msg: "정리하려면 -e pm_test_cleanup=yes 로 다시 실행하라."
+      when: not (pm_test_cleanup | bool)
+
+    - name: Pacemaker 리소스 제거
+      ansible.builtin.shell:
+        cmd: "pcs resource delete {{ pm_clone }} || pcs resource delete {{ pm_rsc }} || true"
+      when: pm_test_cleanup | bool
+      changed_when: true
