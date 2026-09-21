@@ -1,0 +1,277 @@
+---
+# 3-node LINSTOR 클러스터 구성
+#
+# 실행:
+#   ansible-playbook -i inventory-linstor.yml playbooks/03-linstor-cluster.yml
+#
+# 전제 조건
+# ---------
+# 1. LINSTOR RPM이 제어 노드의 `linstor_rpm_dir`에 있어야 한다.
+#    LINBIT의 EL9 저장소는 유료 구독 고객 전용이라 자체 빌드 RPM을 쓴다:
+#      gh release download <tag> -R geonmo/gsdc-linbit-build -p '*.rpm' -D /opt/linstor-rpms
+#
+# 2. linbit 컬렉션 + EL용 local_packages 패치가 적용돼 있어야 한다.
+#    (패치 없이는 EL에서 쓸 수 있는 저장소 경로가 없다 — customer_repo는
+#     유료, public_repo는 Debian 계열만 지원)
+#      ansible-galaxy collection install -r requirements.yml
+#      cd ~/.ansible/collections/ansible_collections
+#      git apply -p1 <gsdc-linbit-build>/patches/linbit-el-local-packages.patch
+#
+# 네트워크 / 방화벽 존
+# -------------------
+#   eth1 192.168.100.x : LINSTOR 컨트롤러↔새틀라이트 제어 연결 (linstor_ip)
+#   eth2 10.0.0.x      : DRBD 복제 (replication_ip → PrefNic)
+#
+# 이 환경의 firewalld는 존이 둘 다 active다:
+#   internal : source ipset:work4 = 172.16.0.0/12, 10.0.0.0/24
+#   public   : interface eth0/eth1/eth2  (default zone)
+#
+# firewalld는 **source 매칭이 interface 매칭보다 우선**하므로
+#   10.0.0.x 발 트래픽(DRBD 복제)      -> internal 존
+#   192.168.100.x 발 트래픽(LINSTOR 제어) -> public 존
+# 으로 갈린다. 그런데 linbit 컬렉션의 방화벽 태스크는 zone을 지정하지 않아
+# 항상 default(public)에만 연다 — DRBD 포트가 엉뚱한 존에 열린다.
+# 그래서 컬렉션의 방화벽 처리는 끄고(*_firewall_rules: false) 아래
+# "방화벽 개방" play에서 존을 명시해 직접 연다.
+
+- name: DRBD 커널 모듈 로드 보장
+  hosts: linstor_cluster
+  become: true
+  tasks:
+    # LINSTOR 새틀라이트는 DRBD 커널 모듈이 로드돼 있어야 동작한다. 또한
+    # linbit.drbd.drbd_install role(satellite_install의 meta 의존성)은
+    # /sys/module/drbd/version 을 읽어 "이미 설치됨"을 판단하는데, 이 경로는
+    # 모듈이 **로드돼 있을 때만** 존재한다. 패키지(kmod-drbd9x)만 깔려 있고
+    # 로드가 안 돼 있으면 role이 LINBIT 자체 패키지명(kmod-drbd)을 설치하려다
+    # "No package kmod-drbd available."로 실패한다.
+    #
+    # 이 클러스터는 ELRepo의 kmod-drbd9x/drbd9x-utils를 쓰므로 설치는
+    # 이미 끝나 있고, 로드와 부팅 시 자동 로드만 보장하면 된다.
+    - name: 부팅 시 DRBD 모듈 자동 로드 설정
+      ansible.builtin.copy:
+        content: "drbd\n"
+        dest: /etc/modules-load.d/drbd.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: DRBD 모듈 즉시 로드
+      community.general.modprobe:
+        name: drbd
+        state: present
+
+    - name: 로드된 DRBD 버전 확인
+      ansible.builtin.slurp:
+        src: /sys/module/drbd/version
+      register: _drbd_ver
+
+    - name: DRBD 9 인지 확인
+      ansible.builtin.assert:
+        that: (_drbd_ver.content | b64decode | trim) is match('^9\.')
+        fail_msg: >-
+          DRBD {{ _drbd_ver.content | b64decode | trim }} 이 로드됐다.
+          LINSTOR는 DRBD 9가 필요하다.
+        success_msg: "DRBD {{ _drbd_ver.content | b64decode | trim }} 로드됨"
+
+- name: LINSTOR/DRBD 방화벽 개방 (존 명시)
+  hosts: linstor_cluster
+  become: true
+  vars:
+    # 제어 트래픽이 타는 존 (linstor_ip 대역 = 192.168.100.x)
+    linstor_control_zone: public
+    # DRBD 복제 트래픽이 타는 존 (replication_ip 대역 = 10.0.0.x, ipset work4)
+    linstor_replication_zone: internal
+  tasks:
+    - name: 존 배치가 예상과 같은지 확인
+      ansible.builtin.command:
+        cmd: firewall-cmd --get-active-zones
+      register: _zones
+      changed_when: false
+
+    - name: 두 존이 모두 active인지 확인
+      ansible.builtin.assert:
+        that:
+          - linstor_control_zone in _zones.stdout
+          - linstor_replication_zone in _zones.stdout
+        fail_msg: >-
+          예상한 존({{ linstor_control_zone }}, {{ linstor_replication_zone }})이
+          active가 아니다. 실제: {{ _zones.stdout_lines }}.
+          00-fix-firewalld-ipset.yml 이 적용됐는지 확인하라.
+        quiet: true
+
+    - name: LINSTOR 제어 포트 개방 (컨트롤러 REST/새틀라이트)
+      ansible.posix.firewalld:
+        zone: "{{ linstor_control_zone }}"
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - 3366-3367/tcp   # satellite
+        - 3370-3371/tcp   # controller (plain/https)
+
+    - name: DRBD 복제 포트 개방 (복제망이 타는 존)
+      ansible.posix.firewalld:
+        zone: "{{ linstor_replication_zone }}"
+        port: 7000-8000/tcp
+        permanent: true
+        immediate: true
+        state: enabled
+
+- name: LINSTOR RPM을 클러스터 전 노드에 배포
+  hosts: linstor_cluster
+  become: true
+  vars:
+    linstor_rpm_dir: /opt/linstor-rpms
+    linstor_rpm_dest: /opt/linstor-rpms
+  tasks:
+    - name: 제어 노드의 RPM 목록 확인
+      ansible.builtin.find:
+        paths: "{{ linstor_rpm_dir }}"
+        patterns: "*.rpm"
+        excludes: "*.src.rpm"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: _linstor_rpms
+
+    - name: RPM이 하나도 없으면 중단
+      ansible.builtin.assert:
+        that: _linstor_rpms.files | length > 0
+        fail_msg: >-
+          {{ linstor_rpm_dir }} 에 RPM이 없다. 먼저 릴리스 아티팩트를 받아라:
+          gh release download <tag> -R geonmo/gsdc-linbit-build -p '*.rpm'
+          -D {{ linstor_rpm_dir }}
+        quiet: true
+      run_once: true
+
+    - name: 대상 노드에 RPM 디렉토리 생성
+      ansible.builtin.file:
+        path: "{{ linstor_rpm_dest }}"
+        state: directory
+        mode: '0755'
+
+    - name: RPM 복사
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ linstor_rpm_dest }}/"
+        mode: '0644'
+      loop: "{{ _linstor_rpms.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: 복사된 RPM 경로 수집 (local_packages에 넘길 목록)
+      ansible.builtin.set_fact:
+        linstor_local_rpms: >-
+          {{ _linstor_rpms.files
+             | map(attribute='path') | map('basename')
+             | map('regex_replace', '^', linstor_rpm_dest ~ '/')
+             | list }}
+
+- name: LINSTOR 클러스터 설치 및 초기화
+  hosts: linstor_cluster
+  become: true
+  any_errors_fatal: true
+  vars:
+    # 자체 빌드 RPM을 로컬 경로에서 설치 (patches/linbit-el-local-packages.patch)
+    cluster_init_repo_access: local
+    local_packages_urls: "{{ linstor_local_rpms }}"
+
+    # 스토리지 풀은 cluster_init 안에서 만들지 않고 다음 play로 분리한다.
+    # 이유: 노드 등록 직후에는 컨트롤러가 새틀라이트 capability를 아직
+    # 못 받은 상태일 수 있고(새틀라이트 기동 완료 전에 캐싱됨), 그러면
+    # "The satellite does not support the device provider LVM_THIN"으로
+    # 풀 생성이 실패한다. 실제로 이 환경에서 재현됐다 — 새틀라이트 로그는
+    # "Checking support for LVM_THIN: supported"인데 컨트롤러 쪽 뷰는 '-'였다.
+    cluster_init_deploy_storage: false
+
+    # HA 데이터베이스는 컨트롤러 이중화용이다. 테스트 클러스터는 컨트롤러가
+    # 하나뿐이라 끈다 (role 자체도 조건 미달이면 자동으로 건너뛴다).
+    cluster_init_ha_database: false
+
+    # 토큰 인증은 REST API 접근에 토큰을 요구한다. 앱이 아직 토큰을 다루지
+    # 않으므로 테스트 단계에서는 끈다.
+    cluster_init_token_auth: false
+
+    cluster_init_linstor_gateway: false
+
+    # 컬렉션의 방화벽 태스크는 zone을 지정하지 않아 default(public)에만 연다.
+    # 이 환경은 존이 갈리므로 앞의 "방화벽 개방" play에서 직접 처리한다.
+    satellite_install_firewall_rules: false
+    controller_install_firewall_rules: false
+    drbd_install_firewall_rules: false
+
+    # local_packages가 RPM을 미리 설치하면 satellite_install/controller_install의
+    # 자체 설치 태스크가 changed가 아니게 되고, 그 결과 configure-*.yml이
+    # 통째로 건너뛰어진다(설정 파일 배포 포함). 강제 재설정으로 우회한다.
+    satellite_install_force_reconfigure: true
+    controller_install_force_reconfigure: true
+
+  tasks:
+    - name: cluster_init role 실행 (설치 ~ 노드 등록)
+      ansible.builtin.import_role:
+        name: linbit.linstor.cluster_init
+
+- name: 새틀라이트 capability 갱신 후 스토리지 풀 생성
+  hosts: linstor_cluster
+  become: true
+  any_errors_fatal: true
+  vars:
+    # thin provisioning: 3노드 모두 /dev/sdb(127G, 빈 디스크)를 LVM thin 풀로.
+    # storage_pool role이 physical_devices로 wipefs → PV → VG → thinpool까지
+    # 만들고, 마지막에 LINSTOR에 풀을 등록한다.
+    linstor_storage_pools:
+      - name: pool-ssd
+        type: lvmthin
+        vg: vg_linstor
+        vg_thinpool: thinpool
+        physical_devices:
+          - /dev/sdb
+        nodes:
+          - node01.build.test
+          - node02.build.test
+          - node03.build.test
+  tasks:
+    # 컨트롤러가 캐싱한 새틀라이트 capability를 강제로 다시 받아온다.
+    # 등록 직후에는 LVM/LVM_THIN/DRBD 지원이 '-'로 남아 있을 수 있다.
+    - name: 새틀라이트 재연결 (capability 재보고 유도)
+      ansible.builtin.command:
+        cmd: "linstor --controllers {{ _ctrl_ip }} node reconnect {{ inventory_hostname }}"
+      vars:
+        _ctrl_ip: "{{ hostvars[groups['linstor_controllers'][0]]['linstor_ip'] }}"
+      delegate_to: "{{ groups['linstor_controllers'][0] }}"
+      changed_when: true
+
+    # `linstor --machine-readable node info` 출력은 [[{node}, ...]] 구조이고
+    # 지원 provider는 각 노드의 storage_providers 배열에 들어 있다.
+    - name: 컨트롤러가 보는 노드 capability 조회
+      ansible.builtin.command:
+        cmd: "linstor --controllers {{ _ctrl_ip }} --machine-readable node info"
+      vars:
+        _ctrl_ip: "{{ hostvars[groups['linstor_controllers'][0]]['linstor_ip'] }}"
+      delegate_to: "{{ groups['linstor_controllers'][0] }}"
+      register: _node_info
+      until: >-
+        'LVM_THIN' in (
+          (_node_info.stdout | default('[[]]') | from_json)[0]
+          | selectattr('name', 'equalto', inventory_hostname)
+          | map(attribute='storage_providers') | flatten
+        )
+      retries: 12
+      delay: 5
+      changed_when: false
+
+    - name: 조회된 capability 출력
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          providers={{ (_node_info.stdout | from_json)[0]
+                       | selectattr('name', 'equalto', inventory_hostname)
+                       | map(attribute='storage_providers') | flatten | list }}
+          layers={{ (_node_info.stdout | from_json)[0]
+                    | selectattr('name', 'equalto', inventory_hostname)
+                    | map(attribute='resource_layers') | flatten | list }}
+
+    - name: 스토리지 풀 생성
+      ansible.builtin.import_role:
+        name: linbit.linstor.storage_pool

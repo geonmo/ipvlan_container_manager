@@ -1,0 +1,62 @@
+---
+# LINSTOR 클러스터 상태 초기화 (재구성 전에만 실행)
+#
+# 실행:
+#   ansible-playbook -i inventory-linstor.yml playbooks/03-linstor-reset.yml
+#
+# 왜 필요한가
+# -----------
+# 단독 노드로 시험 설치했거나 잘못된 주소로 등록한 노드가 남아 있으면
+# 3노드 구성과 충돌한다. 특히 LINSTOR 노드 이름은 등록 시점의 값으로
+# 고정되므로, 짧은 이름('node01')으로 등록해 둔 것과 cluster_init이 쓰는
+# FQDN('node01.build.test')은 서로 다른 노드로 취급된다.
+#
+# ⚠️ 이 플레이북은 등록된 노드와 그 위의 리소스 정의를 지운다. 실제
+# 데이터가 올라간 클러스터에는 실행하지 마라. 기본값은 안전을 위해
+# 아무것도 지우지 않으며, 명시적으로 확인 변수를 넘겨야 동작한다:
+#   ansible-playbook ... -e linstor_reset_confirm=yes
+
+- name: LINSTOR 등록 상태 초기화
+  hosts: linstor_controllers
+  become: true
+  gather_facts: false
+  vars:
+    linstor_reset_confirm: "no"
+  tasks:
+    - name: 확인 변수 없이 실행하면 중단
+      ansible.builtin.assert:
+        that: linstor_reset_confirm | bool
+        fail_msg: >-
+          이 플레이북은 등록된 LINSTOR 노드를 삭제한다.
+          의도한 것이 맞으면 -e linstor_reset_confirm=yes 를 붙여 실행하라.
+        quiet: true
+
+    - name: 컨트롤러가 떠 있는지 확인
+      ansible.builtin.systemd:
+        name: linstor-controller
+        state: started
+      register: _ctrl
+
+    - name: 컨트롤러 API 응답 대기
+      ansible.builtin.wait_for:
+        port: 3370
+        host: 127.0.0.1
+        timeout: 60
+
+    - name: 등록된 노드 조회
+      linbit.linstor.node_info:
+      register: _nodes
+      environment:
+        LS_CONTROLLERS: "{{ lookup('linbit.linstor.controller_env') }}"
+
+    - name: 등록된 노드 목록 출력
+      ansible.builtin.debug:
+        msg: "삭제 대상: {{ _nodes.nodes | default([]) | map(attribute='name') | list }}"
+
+    - name: 등록된 노드 전부 삭제
+      linbit.linstor.node:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ _nodes.nodes | default([]) | map(attribute='name') | list }}"
+      environment:
+        LS_CONTROLLERS: "{{ lookup('linbit.linstor.controller_env') }}"

@@ -1,0 +1,50 @@
+---
+# LINSTOR 전용 인벤토리 (03-linstor-cluster.yml)
+#
+# linbit.linstor 컬렉션이 요구하는 그룹 구조를 그대로 따른다
+# (README "Required inventory groups"):
+#   linstor_controllers / linstor_satellites / 둘을 합친 linstor_cluster
+#
+# node01은 컨트롤러 + 새틀라이트 겸용(결합 노드)이다. 테스트 클러스터라
+# 컨트롤러를 이중화하지 않는다 — 컨트롤러가 죽어도 이미 떠 있는 DRBD
+# 리소스의 I/O는 계속되고, 새 리소스 생성/변경만 막힌다.
+#
+# 주소 두 개를 분리해서 넘긴다 (cluster_membership role 규약):
+#   ansible_host / linstor_ip : eth1 192.168.100.x — /etc/hosts 기준 identity 망.
+#                               LINSTOR 컨트롤러↔새틀라이트 제어 연결에 쓴다.
+#   replication_ip            : eth2 10.0.0.x — 노드간 전용망.
+#                               role이 'replication' NIC으로 등록하고 노드
+#                               PrefNic으로 지정해 DRBD 복제 트래픽을 여기로 보낸다.
+#
+# 짧은 호스트명(node01)은 DNS가 무관한 주소로 해석하므로 FQDN만 쓴다.
+all:
+  children:
+    linstor_controllers:
+      hosts:
+        node01.build.test:
+    linstor_satellites:
+      hosts:
+        node01.build.test:
+        node02.build.test:
+        node03.build.test:
+    linstor_cluster:
+      children:
+        linstor_controllers: {}
+        linstor_satellites: {}
+  vars:
+    ansible_user: geonmo
+
+  # 노드별 주소 (그룹 멤버십은 위 children, 호스트 변수는 여기 한 곳에서만 정의)
+  hosts:
+    node01.build.test:
+      ansible_host: 192.168.100.3
+      linstor_ip: 192.168.100.3
+      replication_ip: 10.0.0.3
+    node02.build.test:
+      ansible_host: 192.168.100.4
+      linstor_ip: 192.168.100.4
+      replication_ip: 10.0.0.4
+    node03.build.test:
+      ansible_host: 192.168.100.5
+      linstor_ip: 192.168.100.5
+      replication_ip: 10.0.0.5
