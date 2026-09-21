@@ -29,6 +29,8 @@ pub struct AppState {
     pub db:          Arc<Mutex<rusqlite::Connection>>,
     pub temp_dir:    String,
     pub deploy_mode: String,
+    /// LINSTOR 컨트롤러 REST API URL (스토리지 백엔드가 linstor 일 때 사용)
+    pub linstor_url: String,
 }
 
 fn filter_starts_with(value: &Value, args: &HashMap<String, Value>) -> tera::Result<Value> {
@@ -63,6 +65,8 @@ struct Config {
     pcsd_url:    String,
     pcsd_user:   String,
     pcsd_pass:   String,
+    // [linstor]
+    linstor_url: String,
 }
 
 fn load_config() -> Config {
@@ -82,6 +86,7 @@ fn load_config() -> Config {
             pcsd_url:    "https://localhost:2224".to_string(),
             pcsd_user:   "hacluster".to_string(),
             pcsd_pass:   String::new(),
+            linstor_url: "http://localhost:3370".to_string(),
         };
     }
 
@@ -109,6 +114,9 @@ fn load_config() -> Config {
             .unwrap_or_else(|| "hacluster".to_string()),
         pcsd_pass: cfg.get("pacemaker", "pcsd_password")
             .unwrap_or_default(),
+        linstor_url: cfg.get("linstor", "controller_url")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "http://localhost:3370".to_string()),
     }
 }
 
@@ -167,6 +175,7 @@ async fn main() {
         db:          db.clone(),
         temp_dir:    config.temp_dir.clone(),
         deploy_mode: config.deploy_mode.clone(),
+        linstor_url: config.linstor_url.clone(),
     };
 
     // 백그라운드에서 시스템 스캔 수행

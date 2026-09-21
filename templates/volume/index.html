@@ -107,11 +107,33 @@ async function loadVolumes() {
   renderTable();
 }
 
+// /api/drbd/resources 응답 정규화.
+// 백엔드가 linstor 면 컨트롤러에서, 아니면 .res 스캔 결과에서 온다.
+// 응답은 {backend, resources, warning} 객체이며, warning 이 있으면 표시한다.
+function normalizeDrbdResp(data) {
+  if (Array.isArray(data)) return { resources: data, warning: null, backend: null };
+  return {
+    resources: data.resources || [],
+    warning:   data.warning || null,
+    backend:   data.backend || null,
+  };
+}
+
+// 리소스 라벨: kernel-module 은 VG, linstor 는 스토리지 풀을 보여준다.
+function drbdResourceLabel(r) {
+  const extra = r.storage_pool || r.lvm_vg || '';
+  return r.name + (extra ? ` (${extra})` : '');
+}
+
+let drbdResourcesWarning = null;
+
 async function loadDrbdResources() {
   try {
     const resp = await fetch('/api/drbd/resources');
-    drbdResources = await resp.json();
-  } catch (_) { drbdResources = []; }
+    const norm = normalizeDrbdResp(await resp.json());
+    drbdResources = norm.resources;
+    drbdResourcesWarning = norm.warning;
+  } catch (_) { drbdResources = []; drbdResourcesWarning = null; }
 }
 
 function renderTable() {
@@ -158,7 +180,7 @@ function openVolumeModal(vol) {
   drbdResources.forEach(r => {
     const opt = document.createElement('option');
     opt.value = r.name;
-    opt.textContent = r.name + (r.lvm_vg ? ` (VG: ${r.lvm_vg})` : '');
+    opt.textContent = drbdResourceLabel(r);
     if (vol?.drbd_resource === r.name) opt.selected = true;
     sel.appendChild(opt);
   });

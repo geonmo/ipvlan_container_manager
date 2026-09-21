@@ -121,6 +121,7 @@
                   <option value="">-- 등록된 리소스에서 추가 --</option>
                 </select>
               </div>
+              <div id="drbdResourceWarning" class="alert alert-warning py-2 px-3 small d-none"></div>
               <div id="drbdGroupList"></div>
               <div class="text-center mt-2 text-muted small" id="drbdGroupEmpty">
                 DRBD 볼륨을 추가하거나 위 드롭다운에서 선택하세요.
@@ -392,19 +393,47 @@ function pmSyncJson() {
 let pmDrbdResources = [];  // /api/drbd/resources 결과
 let drbdGroups = [];       // [{resource_name, drbd_resource_name, clone_name, notify, on_fail, target_role_master_node, fs:{...}}]
 
+// 리소스 라벨: kernel-module 백엔드는 LVM VG, linstor 백엔드는 스토리지 풀을 보여준다.
+function pmDrbdLabel(r) {
+  const extra = r.storage_pool || r.lvm_vg || '';
+  return r.name + (extra ? ' (' + extra + ')' : '');
+}
+
 async function pmLoadDrbdResources() {
+  let warning = null;
   try {
     const resp = await fetch('/api/drbd/resources');
-    pmDrbdResources = await resp.json();
+    const data = await resp.json();
+    // {backend, resources, warning} 객체. 구버전 배열 응답도 받아들인다.
+    if (Array.isArray(data)) {
+      pmDrbdResources = data;
+    } else {
+      pmDrbdResources = data.resources || [];
+      warning = data.warning || null;
+    }
   } catch (e) {
     pmDrbdResources = [];
+    warning = 'DRBD 리소스 목록을 불러오지 못했습니다: ' + e;
   }
+
+  // 조회 실패를 "리소스 없음"과 구분해서 보여준다 — 조용히 빈 드롭다운을
+  // 띄우면 사용자가 원인을 알 수 없다.
+  const warnEl = document.getElementById('drbdResourceWarning');
+  if (warnEl) {
+    if (warning) {
+      warnEl.textContent = warning;
+      warnEl.classList.remove('d-none');
+    } else {
+      warnEl.classList.add('d-none');
+    }
+  }
+
   // 빠른 추가 드롭다운 채우기
   const sel = document.getElementById('drbdQuickSel');
   pmDrbdResources.forEach(r => {
     const opt = document.createElement('option');
     opt.value = r.name;
-    opt.textContent = r.name + (r.lvm_vg ? ' (' + r.lvm_vg + ')' : '');
+    opt.textContent = pmDrbdLabel(r);
     sel.appendChild(opt);
   });
 }
@@ -476,7 +505,7 @@ function renderDrbdGroups() {
         <span class="fw-bold text-primary"><i class="bi bi-database-fill"></i> DRBD 볼륨 #${idx+1}</span>
         <select class="form-select form-select-sm w-auto" onchange="fillDrbdGroupFromRes(${idx}, this.value)">
           <option value="">-- 등록된 리소스 선택 --</option>
-          ${pmDrbdResources.map(r=>`<option value="${r.name}"${g.drbd_resource_name===r.name?' selected':''}>${r.name}${r.lvm_vg?' ('+r.lvm_vg+')':''}</option>`).join('')}
+          ${pmDrbdResources.map(r=>`<option value="${r.name}"${g.drbd_resource_name===r.name?' selected':''}>${pmDrbdLabel(r)}</option>`).join('')}
         </select>
         <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="removeDrbdGroup(${idx})">
           <i class="bi bi-trash"></i>

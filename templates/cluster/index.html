@@ -44,7 +44,9 @@ let knownDrbdNames = new Set();  // DB에 등록된 DRBD resource 이름 (r0, r1
 async function loadKnownDrbd() {
   try {
     const resp = await fetch('/api/drbd/resources');
-    const items = await resp.json();
+    const data = await resp.json();
+    // {backend, resources, warning} 객체. 구버전 배열 응답도 받아들인다.
+    const items = Array.isArray(data) ? data : (data.resources || []);
     knownDrbdNames = new Set(items.map(r => r.name.toLowerCase()));
   } catch(e) {
     knownDrbdNames = new Set();
