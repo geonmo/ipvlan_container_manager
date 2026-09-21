@@ -1,0 +1,270 @@
+---
+# LINSTOR 볼륨 생성 / 복제 동기화 / 삭제 검증
+#
+# 실행:
+#   ansible-playbook -i inventory-linstor.yml playbooks/04-linstor-volume-test.yml
+#
+# 정리(볼륨·리소스그룹 삭제)까지 하려면:
+#   ansible-playbook ... -e linstor_test_cleanup=yes
+#
+# 전제: 03-linstor-cluster.yml 로 3노드 클러스터 + thin 스토리지 풀이 구성돼 있어야 한다.
+#
+# 무엇을 확인하나
+# ---------------
+# 1. 생성   : resource_group(place_count=3) → resource(mode=spawn) 로 볼륨 생성
+# 2. 배치   : 3개 노드 전부에 디스크풀(diskful) 복제본이 놓였는지
+# 3. 동기화 : DRBD가 Connected + 전 노드 UpToDate 인지, 복제가 replication NIC
+#             (10.0.0.x)으로 흐르는지
+# 4. 데이터 : 실제로 파일을 써서 다른 노드에서 읽히는지 (진짜 복제 확인)
+# 5. 삭제   : 리소스/리소스그룹 제거 후 LVM thin 볼륨까지 정리되는지
+#
+# ⚠️ 테스트 전용 리소스 이름을 쓰며, 4단계에서 해당 볼륨을 mkfs 한다.
+#    이름이 겹치는 실제 리소스가 있는 클러스터에서 실행하지 마라.
+
+- name: LINSTOR 볼륨 생성
+  hosts: linstor_controllers
+  become: true
+  gather_facts: false
+  vars:
+    linstor_test_rg: rg-icmtest
+    linstor_test_res: res-icmtest
+    linstor_test_size: 1G
+    linstor_test_pool: pool-ssd
+  environment:
+    LS_CONTROLLERS: "{{ lookup('linbit.linstor.controller_env') }}"
+  tasks:
+    - name: 리소스 그룹 생성 (3중 복제)
+      linbit.linstor.resource_group:
+        name: "{{ linstor_test_rg }}"
+        storage_pool: "{{ linstor_test_pool }}"
+        place_count: 3
+      register: _rg
+
+    - name: 볼륨 spawn
+      linbit.linstor.resource:
+        name: "{{ linstor_test_res }}"
+        mode: spawn
+        resource_group: "{{ linstor_test_rg }}"
+        size: "{{ linstor_test_size }}"
+      register: _res
+
+    - name: 생성 결과
+      ansible.builtin.debug:
+        msg: >-
+          resource_group changed={{ _rg.changed }},
+          resource changed={{ _res.changed }}
+
+- name: 배치 및 동기화 확인
+  hosts: linstor_controllers
+  become: true
+  gather_facts: false
+  vars:
+    linstor_test_res: res-icmtest
+  environment:
+    LS_CONTROLLERS: "{{ lookup('linbit.linstor.controller_env') }}"
+  tasks:
+    # resource_info 는 노드별 항목이 아니라 리소스 1건을 돌려주고,
+    # 배치된 노드는 그 안의 nodes 배열에 들어 있다.
+    - name: 리소스가 3노드에 놓일 때까지 대기
+      linbit.linstor.resource_info:
+        name: "{{ linstor_test_res }}"
+      register: _ri
+      until: >-
+        (_ri.resources | default([]) | length) > 0
+        and ((_ri.resources[0].nodes | default([])) | length) >= 3
+      retries: 30
+      delay: 5
+
+    - name: 배치된 노드 목록
+      ansible.builtin.debug:
+        msg: >-
+          {{ linstor_test_res }} 배치: {{ _ri.resources[0].nodes }}
+          / flags: {{ _ri.resources[0].flags | default({}) }}
+
+- name: DRBD 동기화 상태 확인 (전 노드)
+  hosts: linstor_satellites
+  become: true
+  gather_facts: false
+  vars:
+    linstor_test_res: res-icmtest
+  tasks:
+    - name: drbdadm status (모든 노드 UpToDate 가 될 때까지 대기)
+      ansible.builtin.command:
+        cmd: "drbdadm status {{ linstor_test_res }}"
+      register: _drbd
+      changed_when: false
+      # 자기 자신 + 피어 2개 = UpToDate 3회. 초기 동기화가 끝나야 만족한다.
+      until: (_drbd.stdout | regex_findall('UpToDate') | length) >= 3
+      retries: 60
+      delay: 5
+
+    - name: 동기화 상태 출력
+      ansible.builtin.debug:
+        msg: "{{ _drbd.stdout_lines }}"
+
+    # drbdsetup show 의 connection/path 절에 실제 사용 중인 양단 주소가 나온다
+    # (_this_host / _remote_host). PrefNic 이 걸렸으면 replication 망이 보여야 한다.
+    - name: 복제 연결 주소 조회
+      ansible.builtin.shell:
+        cmd: "drbdsetup show {{ linstor_test_res }} | grep -E '_this_host|_remote_host' || true"
+      register: _addrs
+      changed_when: false
+
+    - name: 복제가 replication 망을 쓰는지 확인
+      ansible.builtin.assert:
+        that:
+          - _addrs.stdout | length > 0
+          - _addrs.stdout is search(linstor_replication_cidr_prefix)
+        fail_msg: >-
+          복제 연결이 replication 망({{ linstor_replication_cidr_prefix }}*)을
+          쓰지 않는다. 실제: {{ _addrs.stdout_lines }}
+        success_msg: "복제 경로: {{ _addrs.stdout_lines | unique | join(' ') }}"
+      vars:
+        # replication_ip 의 /24 프리픽스 (예: 10.0.0.4 -> "10.0.0.")
+        linstor_replication_cidr_prefix: "{{ replication_ip.split('.')[0:3] | join('.') }}."
+
+- name: 데이터 복제 검증 (쓰기 → 다른 노드에서 읽기)
+  hosts: linstor_controllers
+  become: true
+  gather_facts: false
+  vars:
+    linstor_test_res: res-icmtest
+    linstor_test_mnt: /mnt/icmtest
+    # 쓰기는 첫 새틀라이트, 읽기는 두 번째 새틀라이트에서 한다
+    _writer: "{{ groups['linstor_satellites'][0] }}"
+    _reader: "{{ groups['linstor_satellites'][1] }}"
+  tasks:
+    - name: 장치 경로 확인
+      ansible.builtin.stat:
+        path: "/dev/drbd/by-res/{{ linstor_test_res }}/0"
+      delegate_to: "{{ _writer }}"
+      register: _dev
+
+    - name: 장치가 없으면 중단
+      ansible.builtin.assert:
+        that: _dev.stat.exists
+        fail_msg: "/dev/drbd/by-res/{{ linstor_test_res }}/0 이 {{ _writer }} 에 없다"
+        quiet: true
+
+    - name: writer 에서 Primary 승격
+      ansible.builtin.command:
+        cmd: "drbdadm primary {{ linstor_test_res }}"
+      delegate_to: "{{ _writer }}"
+      changed_when: true
+
+    - name: 파일시스템 생성
+      community.general.filesystem:
+        fstype: xfs
+        dev: "/dev/drbd/by-res/{{ linstor_test_res }}/0"
+        force: true
+      delegate_to: "{{ _writer }}"
+
+    - name: writer 에 마운트
+      ansible.posix.mount:
+        path: "{{ linstor_test_mnt }}"
+        src: "/dev/drbd/by-res/{{ linstor_test_res }}/0"
+        fstype: xfs
+        state: mounted
+      delegate_to: "{{ _writer }}"
+
+    - name: 테스트 데이터 쓰기
+      ansible.builtin.copy:
+        content: "linstor-replication-check {{ ansible_date_time.iso8601 | default('now') }}\n"
+        dest: "{{ linstor_test_mnt }}/canary.txt"
+        mode: '0644'
+      delegate_to: "{{ _writer }}"
+
+    - name: 언마운트 (디스크까지 flush)
+      ansible.posix.mount:
+        path: "{{ linstor_test_mnt }}"
+        state: unmounted
+      delegate_to: "{{ _writer }}"
+
+    - name: writer 를 Secondary 로 강등
+      ansible.builtin.command:
+        cmd: "drbdadm secondary {{ linstor_test_res }}"
+      delegate_to: "{{ _writer }}"
+      changed_when: true
+
+    - name: reader 에서 Primary 승격
+      ansible.builtin.command:
+        cmd: "drbdadm primary {{ linstor_test_res }}"
+      delegate_to: "{{ _reader }}"
+      changed_when: true
+
+    - name: reader 에 마운트
+      ansible.posix.mount:
+        path: "{{ linstor_test_mnt }}"
+        src: "/dev/drbd/by-res/{{ linstor_test_res }}/0"
+        fstype: xfs
+        state: mounted
+      delegate_to: "{{ _reader }}"
+
+    - name: 다른 노드에서 데이터 읽기
+      ansible.builtin.slurp:
+        src: "{{ linstor_test_mnt }}/canary.txt"
+      delegate_to: "{{ _reader }}"
+      register: _canary
+
+    - name: 복제된 내용 확인
+      ansible.builtin.assert:
+        that: "'linstor-replication-check' in (_canary.content | b64decode)"
+        fail_msg: "{{ _reader }} 에서 읽은 내용이 다르다: {{ _canary.content | b64decode }}"
+        success_msg: >-
+          복제 확인 — {{ _writer }} 에서 쓴 내용을 {{ _reader }} 에서 읽음:
+          {{ (_canary.content | b64decode) | trim }}
+
+    - name: reader 정리 (언마운트 + Secondary)
+      ansible.posix.mount:
+        path: "{{ linstor_test_mnt }}"
+        state: absent
+      delegate_to: "{{ _reader }}"
+
+    - name: reader 를 Secondary 로 강등
+      ansible.builtin.command:
+        cmd: "drbdadm secondary {{ linstor_test_res }}"
+      delegate_to: "{{ _reader }}"
+      changed_when: true
+
+- name: 볼륨 삭제 (linstor_test_cleanup=yes 일 때만)
+  hosts: linstor_controllers
+  become: true
+  gather_facts: false
+  vars:
+    linstor_test_rg: rg-icmtest
+    linstor_test_res: res-icmtest
+    linstor_test_cleanup: "no"
+  environment:
+    LS_CONTROLLERS: "{{ lookup('linbit.linstor.controller_env') }}"
+  tasks:
+    - name: 정리 여부 안내
+      ansible.builtin.debug:
+        msg: >-
+          linstor_test_cleanup 이 켜져 있지 않아 리소스를 남겨 둔다.
+          삭제하려면 -e linstor_test_cleanup=yes 로 다시 실행하라.
+      when: not (linstor_test_cleanup | bool)
+
+    - name: 정리 수행
+      when: linstor_test_cleanup | bool
+      block:
+        - name: 리소스 삭제
+          linbit.linstor.resource:
+            name: "{{ linstor_test_res }}"
+            state: absent
+
+        - name: 리소스 그룹 삭제
+          linbit.linstor.resource_group:
+            name: "{{ linstor_test_rg }}"
+            state: absent
+
+        - name: 리소스가 사라졌는지 확인
+          linbit.linstor.resource_info:
+            name: "{{ linstor_test_res }}"
+          register: _after
+          failed_when: false
+
+        - name: 삭제 결과
+          ansible.builtin.debug:
+            msg: >-
+              남은 복제본 수:
+              {{ _after.resources | default([]) | length }}
