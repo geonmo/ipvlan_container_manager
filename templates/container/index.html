@@ -552,7 +552,9 @@ function cRenderSelected() {
 }
 
 function cSyncHosts() {
-  document.getElementById('containerHosts').value = cNodes.map(n => n.hostname).join('\n');
+  // Ansible 호스트 패턴은 쉼표 구분이다. 줄바꿈으로 join하면 생성된
+  // 플레이북의 `hosts: node1\nnode2` 가 YAML 문법 오류가 된다.
+  document.getElementById('containerHosts').value = cNodes.map(n => n.hostname).join(',');
 }
 
 // ── 초기화 ────────────────────────────────────────────────────

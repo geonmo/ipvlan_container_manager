@@ -174,7 +174,21 @@ pub(crate) fn generate_drbd_resource_cmds(drbd: &DrbdPacemakerResource, node_cou
         "    op demote  interval=0s timeout={t} \\",
         t = drbd.demote_timeout
     ));
-    cmds.push("    op monitor interval=20s role=Promoted \\".to_string());
+    // on-fail은 Promoted 역할 monitor에 붙인다. UI 드롭다운이 제공하는
+    // 값 집합(fence/block/stop/ignore/demote)이 정확히 이 op에서만 전부
+    // 유효하기 때문이다 — Pacemaker에서 `demote`는 promote 액션과
+    // `role=Promoted` 반복 monitor에만 허용된다. 또한 DRBD Primary 쪽
+    // 장애를 실제로 탐지하는 지점이 이 monitor라, fencing을 걸 자리도
+    // 여기다. 값이 비어 있으면 Pacemaker 기본값(restart)에 맡긴다.
+    let on_fail = drbd.on_fail.trim();
+    if on_fail.is_empty() {
+        cmds.push("    op monitor interval=20s role=Promoted \\".to_string());
+    } else {
+        cmds.push(format!(
+            "    op monitor interval=20s role=Promoted on-fail={f} \\",
+            f = on_fail
+        ));
+    }
     cmds.push("    op monitor interval=20s role=Unpromoted \\".to_string());
     cmds.push("    op notify  interval=0s timeout=90s \\".to_string());
     cmds.push(format!(
@@ -675,6 +689,65 @@ mod tests {
         assert!(script.contains("op reload  interval=0s timeout=30s"));
         assert!(script.contains("op start   interval=0s timeout=240s"));
         assert!(script.contains("op stop    interval=0s timeout=180s"));
+    }
+
+    /// UI가 받는 on_fail 값이 pcs 명령에 실제로 나타나야 한다.
+    /// (이전에는 폼 → 모델까지만 전달되고 생성기가 통째로 무시했다.)
+    /// UI는 FS 없는 DRBD 그룹에서 `after_fs: ""`를 보낸다. 라우터가 이걸
+    /// None으로 정규화하지 않으면 여기 필터가 `Some(fs_name)`에도
+    /// `is_none()`에도 걸리지 않아, **그룹 대신 그룹 멤버 개별 리소스**에
+    /// colocation INFINITY가 붙는다 (그룹이 쪼개진다).
+    #[test]
+    fn group_without_after_fs_is_constrained_as_a_group_not_as_members() {
+        let mut config = config_with_nodes(3);
+        config.fs_resources.push(FsResource {
+            resource_name: "fs-r0".to_string(),
+            drbd_clone_name: config.drbd_resources[0].clone_name.clone(),
+            ..FsResource::default()
+        });
+        config.systemd_resources.push(SystemdResource {
+            resource_name: "svc-app".to_string(),
+            systemd_unit: "myapp.service".to_string(),
+            ..SystemdResource::default()
+        });
+        config.resource_groups.push(ResourceGroup {
+            group_name: "grp-app".to_string(),
+            members: vec!["svc-app".to_string()],
+            after_fs: None, // 라우터가 "" → None 으로 정규화한 결과
+        });
+
+        generate_default_constraints(&mut config);
+
+        assert!(config
+            .colocation_constraints
+            .iter()
+            .any(|c| c.rsc == "grp-app" && c.with_rsc == "fs-r0"));
+        // 그룹 멤버에 직접 제약조건이 붙으면 안 된다.
+        assert!(!config.colocation_constraints.iter().any(|c| c.rsc == "svc-app"));
+        assert!(!config.order_constraints.iter().any(|o| o.then == "svc-app"));
+    }
+
+    #[test]
+    fn drbd_on_fail_is_attached_to_the_promoted_role_monitor() {
+        let mut config = config_with_nodes(3);
+        config.drbd_resources[0].on_fail = "fence".to_string();
+        let script = generate_pcs_script(&config);
+
+        assert!(script.contains("op monitor interval=20s role=Promoted on-fail=fence"));
+        // Unpromoted monitor에는 붙지 않는다 — `demote` 같은 값이 그쪽에서는
+        // 유효하지 않아 pcs가 거부한다.
+        assert!(script.contains("op monitor interval=20s role=Unpromoted \\"));
+        assert!(!script.contains("role=Unpromoted on-fail"));
+    }
+
+    #[test]
+    fn drbd_on_fail_is_omitted_when_unset_so_pacemaker_default_applies() {
+        let mut config = config_with_nodes(3);
+        config.drbd_resources[0].on_fail = String::new();
+        let script = generate_pcs_script(&config);
+
+        assert!(script.contains("op monitor interval=20s role=Promoted \\"));
+        assert!(!script.contains("on-fail="));
     }
 
     #[test]

@@ -101,7 +101,10 @@ pub struct DrbdDiskOptions {
 impl Default for DrbdDiskOptions {
     fn default() -> Self {
         Self {
-            on_io_error: "passthrough".to_string(),
+            // DRBD 9 허용값은 pass_on | call-local-io-error | detach 뿐이다
+            // (drbdadm 9.34 실측). 저장소의 참조 템플릿
+            // ansible/playbooks/templates/drbd_resource.res.j2도 detach를 쓴다.
+            on_io_error: "detach".to_string(),
             fencing: "resource-only".to_string(),
         }
     }

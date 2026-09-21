@@ -39,6 +39,34 @@ fn yaml_dquote(s: &str) -> String {
     format!("\"{}\"", yaml_dquote_inner(s))
 }
 
+/// Jinja의 `is search(...)` 테스트는 인자를 **정규식**으로 넘긴다
+/// (`re.search`). 따라서 `pcs` 출력에서 찾을 리터럴 문자열을 그대로 쓰면
+/// 안 된다 — 예를 들어 `"Resource: drbd-r0 ("`는 괄호가 닫히지 않아
+/// `re.error: missing ), unterminated subpattern`으로 플레이북이 첫
+/// 태스크에서 죽는 실제 버그가 있었다.
+///
+/// 메타문자를 백슬래시 대신 **문자 클래스**(`(` → `[(]`)로 감싼다:
+/// 이 패턴은 YAML 작은따옴표 스칼라와 Jinja 문자열 리터럴을 차례로
+/// 통과하는데, 백슬래시는 그 과정에서 한 번 더 해석될 수 있어 불안정하다.
+/// 문자 클래스는 백슬래시가 전혀 없어 어느 단계에서도 변형되지 않는다.
+fn regex_literal(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        match c {
+            '.' | '^' | '$' | '|' | '?' | '*' | '+' | '(' | ')' | '[' | ']' | '{' | '}' => {
+                out.push('[');
+                out.push(c);
+                out.push(']');
+            }
+            // 백슬래시는 문자 클래스로도 이스케이프 없이 표현할 수 없다.
+            // pacemaker 리소스/노드 id에 쓸 수 없는 문자라 그냥 버린다.
+            '\\' => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 pub async fn index(State(state): State<AppState>) -> Html<String> {
     let ctx = Context::new();
     let rendered = state.tera.render("pacemaker/index.html", &ctx)
@@ -260,7 +288,12 @@ pub async fn generate(
                         config.resource_groups.push(ResourceGroup {
                             group_name: input.group_name,
                             members: input.members,
-                            after_fs: input.after_fs,
+                            // UI가 FS 없는 DRBD 그룹에서 빈 문자열을 보낸다.
+                            // 그대로 두면 generate_default_constraints의
+                            // `Some(fs_name) | None` 매칭에 둘 다 걸리지 않아
+                            // 그룹 대신 **그룹 멤버 개별 리소스**에
+                            // colocation INFINITY가 붙는다 (그룹이 쪼개진다).
+                            after_fs: input.after_fs.filter(|s| !s.trim().is_empty()),
                         });
                     }
                 }
@@ -343,7 +376,7 @@ pub async fn generate(
 /// A.8: 대상 hosts가 실제 인벤토리에 resolve되는지는 이 앱이 직접 검증할
 /// 방법이 없어(Ansible 실행은 사용자 쪽 인벤토리에 달림), 파일 상단에
 /// `ansible-inventory --graph` 사전 점검 안내만 주석으로 남긴다.
-fn generate_pacemaker_ansible_playbook(
+pub(crate) fn generate_pacemaker_ansible_playbook(
     form: &PacemakerFormData,
     config: &PacemakerConfig,
 ) -> String {
@@ -584,7 +617,10 @@ fn build_stonith_play(config: &PacemakerConfig, hosts: &str, user: &str, key: &s
         out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
         out.push_str(&format!(
             "      when: {}\n",
-            yaml_squote(&format!("existing_stonith.stdout is not search(\"{}\")", id))
+            yaml_squote(&format!(
+                "existing_stonith.stdout is not search(\"{}\")",
+                regex_literal(&id),
+            ))
         ));
         out.push_str("      no_log: true\n\n");
     }
@@ -678,7 +714,10 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     for ord in &config.order_constraints {
         let pattern = format!(
             "{} resource '{}' then {} resource '{}'",
-            ord.first_action, ord.first, ord.then_action, ord.then
+            regex_literal(&ord.first_action),
+            regex_literal(&ord.first),
+            regex_literal(&ord.then_action),
+            regex_literal(&ord.then),
         );
         push_guarded_constraint_task(
             &mut out,
@@ -692,13 +731,24 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
         // R11 실측 패턴은 항상 역할(Started/Promoted)을 명시하는 경우만
         // 확인됨 — 역할이 없는 경우의 정확한 pcs 출력 포맷은 검증 못 함
         // (주석 참고).
-        let rsc_role_prefix = col.rsc_role.as_deref().map(|r| format!("{} ", r)).unwrap_or_default();
+        let rsc_role_prefix = col
+            .rsc_role
+            .as_deref()
+            .map(|r| format!("{} ", regex_literal(r)))
+            .unwrap_or_default();
         let pattern = match col.with_rsc_role.as_deref() {
             Some(role) => format!(
                 "{}resource '{}' with {} resource '{}'",
-                rsc_role_prefix, col.rsc, role, col.with_rsc
+                rsc_role_prefix,
+                regex_literal(&col.rsc),
+                regex_literal(role),
+                regex_literal(&col.with_rsc),
             ),
-            None => format!("resource '{}' with resource '{}'", col.rsc, col.with_rsc),
+            None => format!(
+                "resource '{}' with resource '{}'",
+                regex_literal(&col.rsc),
+                regex_literal(&col.with_rsc),
+            ),
         };
         push_guarded_constraint_task(
             &mut out,
@@ -709,7 +759,11 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     }
 
     for loc in &config.location_constraints {
-        let pattern = format!("resource '{}' prefers node '{}'", loc.rsc, loc.node);
+        let pattern = format!(
+            "resource '{}' prefers node '{}'",
+            regex_literal(&loc.rsc),
+            regex_literal(&loc.node),
+        );
         push_guarded_constraint_task(
             &mut out,
             &format!("Location 제약조건 ({} → {})", loc.rsc, loc.node),
@@ -740,7 +794,10 @@ fn push_guarded_resource_task(out: &mut String, name: &str, cmd_lines: &[String]
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
     out.push_str(&format!(
         "      when: {}\n",
-        yaml_squote(&format!("existing_resource_config.stdout is not search(\"Resource: {} (\")", resource_id))
+        yaml_squote(&format!(
+            "existing_resource_config.stdout is not search(\"Resource: {} [(]\")",
+            regex_literal(resource_id),
+        ))
     ));
     out.push_str("      changed_when: true\n\n");
 }
@@ -977,9 +1034,97 @@ mod tests {
         assert!(playbook.contains("register: existing_resource_config"));
         assert!(playbook.contains("pcs constraint --full"));
         assert!(playbook.contains("register: existing_constraints"));
+        // 괄호는 반드시 문자 클래스로 나가야 한다. 리터럴 `(`로 나가면
+        // Jinja의 search()가 정규식으로 해석하다 터진다.
         assert!(playbook.contains(
-            "when: 'existing_resource_config.stdout is not search(\"Resource: drbd-r0 (\")'"
+            "when: 'existing_resource_config.stdout is not search(\"Resource: drbd-r0 [(]\")'"
         ));
+    }
+
+    /// 가드 문자열이 Jinja `search()`에 그대로 넘어가므로 **정규식으로
+    /// 유효해야 한다**. 예전에는 `"Resource: drbd-r0 ("`를 그대로 내보내
+    /// `re.error: missing ), unterminated subpattern`으로 생성된 플레이북이
+    /// 첫 리소스 태스크에서 죽었다.
+    #[test]
+    fn resource_guard_pattern_is_a_valid_regex_not_a_bare_paren() {
+        let form = sample_form();
+        let mut config = config_with_nodes(3);
+        config.drbd_resources.push(DrbdPacemakerResource {
+            resource_name: "drbd-r0".to_string(),
+            ..DrbdPacemakerResource::default()
+        });
+        let playbook = generate_pacemaker_ansible_playbook(&form, &config);
+
+        // 닫히지 않은 괄호가 패턴 안에 남아 있으면 안 된다.
+        assert!(!playbook.contains("search(\"Resource: drbd-r0 (\")"));
+        for line in playbook.lines().filter(|l| l.contains("is not search(")) {
+            let pattern = line
+                .split_once("is not search(\"")
+                .and_then(|(_, rest)| rest.split_once("\")"))
+                .map(|(p, _)| p)
+                .unwrap_or_else(|| panic!("가드 패턴을 추출할 수 없음: {}", line));
+            assert!(
+                parens_balanced_outside_character_classes(pattern),
+                "정규식 괄호 짝이 맞지 않음 (re.error로 플레이북이 죽는다): {}",
+                pattern
+            );
+        }
+    }
+
+    /// 문자 클래스(`[...]`) 안의 괄호는 리터럴이므로 세지 않는다.
+    /// 클래스 밖 괄호의 짝이 맞지 않으면 `re.compile`이 실패한다.
+    fn parens_balanced_outside_character_classes(pattern: &str) -> bool {
+        let mut depth: i32 = 0;
+        let mut in_class = false;
+        let mut class_start = true;
+        for c in pattern.chars() {
+            if in_class {
+                // 클래스 바로 첫 글자인 `]`는 리터럴 `]`이다 (Python re 규칙).
+                if c == ']' && !class_start {
+                    in_class = false;
+                }
+                class_start = false;
+                continue;
+            }
+            match c {
+                '[' => {
+                    in_class = true;
+                    class_start = true;
+                }
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        depth == 0 && !in_class
+    }
+
+    #[test]
+    fn regex_literal_wraps_metacharacters_in_character_classes() {
+        // 백슬래시를 쓰지 않아야 한다 — YAML 작은따옴표 + Jinja 문자열
+        // 리터럴을 연달아 통과하면서 변형될 수 있기 때문.
+        assert_eq!(regex_literal("drbd-r0-clone"), "drbd-r0-clone");
+        assert_eq!(regex_literal("fs.r0"), "fs[.]r0");
+        assert_eq!(regex_literal("a(b)c"), "a[(]b[)]c");
+        assert!(!regex_literal("a(b)c").contains('\\'));
+    }
+
+    /// 리소스 이름에 정규식 메타문자가 들어가도 패턴이 깨지지 않아야 한다.
+    #[test]
+    fn resource_id_metacharacters_are_escaped_in_guard() {
+        let form = sample_form();
+        let mut config = config_with_nodes(3);
+        config.drbd_resources.push(DrbdPacemakerResource {
+            resource_name: "drbd.r0".to_string(),
+            ..DrbdPacemakerResource::default()
+        });
+        let playbook = generate_pacemaker_ansible_playbook(&form, &config);
+        assert!(playbook.contains("search(\"Resource: drbd[.]r0 [(]\")"));
     }
 
     #[test]
@@ -1011,5 +1156,5 @@ mod tests {
             "when: 'existing_constraints.stdout is not search(\"resource ''fs-r0'' with Promoted resource ''drbd-r0-clone''\")'"
         ));
     }
-}
 
+}

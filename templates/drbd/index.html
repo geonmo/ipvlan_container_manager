@@ -136,7 +136,9 @@
                   <label class="form-label">after-sb-1pri</label>
                   <select class="form-select form-select-sm" name="after_sb_1pri" id="afterSb1pri">
                     <option value="discard-secondary" selected>discard-secondary</option>
-                    <option value="call-pri-lost">call-pri-lost</option>
+                    <option value="consensus">consensus</option>
+                    <option value="call-pri-lost-after-sb">call-pri-lost-after-sb</option>
+                    <option value="violently-as0p">violently-as0p</option>
                     <option value="disconnect">disconnect</option>
                   </select>
                 </div>
@@ -153,9 +155,9 @@
                 <div class="mb-2">
                   <label class="form-label">on-io-error</label>
                   <select class="form-select form-select-sm" name="on_io_error" id="onIoError">
-                    <option value="passthrough" selected>passthrough</option>
-                    <option value="detach">detach</option>
-                    <option value="panic">panic</option>
+                    <option value="detach" selected>detach (권장)</option>
+                    <option value="pass_on">pass_on</option>
+                    <option value="call-local-io-error">call-local-io-error</option>
                   </select>
                 </div>
                 <div class="mb-2">
@@ -182,10 +184,17 @@
                   <label class="form-label">degr-wfc-timeout (초)</label>
                   <input type="number" class="form-control form-control-sm" name="degr_wfc_timeout" id="degrWfcTimeout" value="60">
                 </div>
-                <div class="mb-2">
-                  <label class="form-label">become-primary-on</label>
-                  <input type="text" class="form-control form-control-sm" name="become_primary_on" id="becomePrimaryOn"
-                         placeholder="비워두면 미설정">
+                <div class="form-text">
+                  두 값은 부팅 시 drbd init 스크립트의 피어 대기 시간만 바꿉니다.
+                  Pacemaker가 리소스를 올리는 경로에는 영향이 없습니다.
+                </div>
+                <div class="alert alert-secondary py-2 px-3 small mt-2 mb-0">
+                  <i class="bi bi-info-circle"></i>
+                  <code>become-primary-on</code>은 DRBD 9에서 제거된 키워드라
+                  <code>drbdadm</code>이 조용히 무시합니다. Primary 승격은
+                  Pacemaker promotable clone이 결정하므로, 선호 노드는
+                  <a href="/pacemaker/" target="_blank">Pacemaker 설정</a>의
+                  location 제약조건에서 지정하세요.
                 </div>
               </div>
             </div>
@@ -383,7 +392,6 @@ function saveFormToStorage() {
       fencing:            document.getElementById('fencing').value,
       wfc_timeout:        document.getElementById('wfcTimeout').value,
       degr_wfc_timeout:   document.getElementById('degrWfcTimeout').value,
-      become_primary_on:  document.getElementById('becomePrimaryOn').value,
       ansible_user:       document.querySelector('[name="ansible_user"]').value,
       ansible_ssh_key:    document.querySelector('[name="ansible_ssh_key"]').value,
       ansible_become:     document.getElementById('ansibleBecome').checked,
@@ -415,8 +423,6 @@ function loadFormFromStorage() {
         document.getElementById('wfcTimeout').value = s.wfc_timeout;
       if (s.degr_wfc_timeout !== undefined)
         document.getElementById('degrWfcTimeout').value = s.degr_wfc_timeout;
-      if (s.become_primary_on !== undefined)
-        document.getElementById('becomePrimaryOn').value = s.become_primary_on;
       if (s.ansible_user)
         document.querySelector('[name="ansible_user"]').value = s.ansible_user;
       if (s.ansible_ssh_key)
@@ -562,7 +568,6 @@ function loadScanned(name) {
       const s = JSON.parse(r.startup_options_json);
       document.getElementById('wfcTimeout').value      = s.wfc_timeout ?? 15;
       document.getElementById('degrWfcTimeout').value  = s.degr_wfc_timeout ?? 60;
-      document.getElementById('becomePrimaryOn').value = s.become_primary_on ?? '';
     } catch(_) {}
   }
 

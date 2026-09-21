@@ -395,7 +395,7 @@ pub async fn save(
         "after_sb_2pri": form.after_sb_2pri.as_deref().unwrap_or("disconnect"),
     });
     let disk = serde_json::json!({
-        "on_io_error": form.on_io_error.as_deref().unwrap_or("passthrough"),
+        "on_io_error": form.on_io_error.as_deref().unwrap_or("detach"),
         "fencing":     form.fencing.as_deref().unwrap_or("resource-only"),
     });
     let startup = serde_json::json!({

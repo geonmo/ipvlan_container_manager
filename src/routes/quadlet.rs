@@ -224,27 +224,42 @@ fn sanitize_var(name: &str) -> String {
         .collect()
 }
 
+/// 폼에서 받은 Ansible 호스트 패턴을 정규화한다.
+///
+/// 두 가지를 방어한다:
+/// 1. HTML 폼은 빈 입력을 `Some("")`로 보내므로 `unwrap_or("all")`만으로는
+///    기본값이 적용되지 않는다 → `hosts: ` (빈 값) 플레이북이 만들어진다.
+/// 2. 노드 선택 UI가 여러 호스트를 줄바꿈으로 넘기면 `hosts: node1\nnode2`가
+///    되어 YAML 자체가 깨진다. Ansible 호스트 패턴은 쉼표 구분이다.
+fn normalize_ansible_hosts(raw: Option<&str>) -> String {
+    let parts: Vec<&str> = raw
+        .unwrap_or("")
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|s| !s.is_empty())
+        .collect();
+    if parts.is_empty() {
+        "all".to_string()
+    } else {
+        parts.join(",")
+    }
+}
+
+/// 빈 문자열(HTML 폼의 미입력)일 때 기본값으로 떨어지도록 하는 헬퍼.
+fn or_default(raw: Option<&str>, default: &str) -> String {
+    raw.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(default)
+        .to_string()
+}
+
 pub fn generate_quadlet_ansible_playbook(
     config: &QuadletConfig,
     files: &[(String, String)],
     form: &QuadletFullForm,
 ) -> String {
-    let hosts = form
-        .ansible_hosts
-        .as_deref()
-        .unwrap_or("all")
-        .trim()
-        .to_string();
-    let user = form
-        .ansible_user
-        .as_deref()
-        .unwrap_or("root")
-        .to_string();
-    let key = form
-        .ansible_ssh_key
-        .as_deref()
-        .unwrap_or("~/.ssh/id_rsa")
-        .to_string();
+    let hosts = normalize_ansible_hosts(form.ansible_hosts.as_deref());
+    let user = or_default(form.ansible_user.as_deref(), "root");
+    let key = or_default(form.ansible_ssh_key.as_deref(), "~/.ssh/id_rsa");
 
     // 인터페이스 자동감지가 필요한 네트워크 파일 처리
     let mut iface_detect_tasks: Vec<String> = Vec::new();
@@ -308,4 +323,118 @@ pub fn generate_quadlet_ansible_playbook(
         key,
         tasks.join("\n\n")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::quadlet::QuadletContainer;
+
+    fn empty_form() -> QuadletFullForm {
+        QuadletFullForm {
+            net_driver: None,
+            net_interface: None,
+            net_subnet: None,
+            net_gateway: None,
+            net_subnet6: None,
+            net_gateway6: None,
+            net_ipvlan_mode: None,
+            pod_name: None,
+            pod_description: None,
+            pod_hostname: None,
+            pod_shm_size: None,
+            pod_networks_json: None,
+            ansible_hosts: None,
+            ansible_user: None,
+            ansible_ssh_key: None,
+        }
+    }
+
+    fn sample_config() -> QuadletConfig {
+        let mut config = QuadletConfig::new();
+        config.containers.push(QuadletContainer {
+            name: "myapp".to_string(),
+            image: "quay.io/myapp:latest".to_string(),
+            ..Default::default()
+        });
+        config
+    }
+
+    fn playbook_with_hosts(raw: Option<&str>) -> String {
+        let mut form = empty_form();
+        form.ansible_hosts = raw.map(str::to_string);
+        let config = sample_config();
+        let files = crate::generators::quadlet::generate_all_units(&config);
+        generate_quadlet_ansible_playbook(&config, &files, &form)
+    }
+
+    #[test]
+    fn normalize_hosts_falls_back_to_all_when_missing_or_blank() {
+        // HTML 폼은 미입력 필드를 Some("")로 보내므로 None뿐 아니라
+        // 빈 문자열/공백도 기본값으로 떨어져야 한다.
+        assert_eq!(normalize_ansible_hosts(None), "all");
+        assert_eq!(normalize_ansible_hosts(Some("")), "all");
+        assert_eq!(normalize_ansible_hosts(Some("   ")), "all");
+        assert_eq!(normalize_ansible_hosts(Some("\n")), "all");
+    }
+
+    #[test]
+    fn normalize_hosts_converts_newline_separated_list_to_comma_pattern() {
+        // 노드 선택 UI가 줄바꿈으로 넘기던 값도 안전하게 받아낸다.
+        assert_eq!(normalize_ansible_hosts(Some("node1\nnode2\nnode3")), "node1,node2,node3");
+        assert_eq!(normalize_ansible_hosts(Some("node1,node2")), "node1,node2");
+        assert_eq!(normalize_ansible_hosts(Some(" node1 , node2 ")), "node1,node2");
+        assert_eq!(normalize_ansible_hosts(Some("container_service")), "container_service");
+    }
+
+    /// 예전에는 `hosts: node1\nnode2` 가 그대로 나가 생성된 플레이북 YAML이
+    /// 깨졌다 (`could not find expected ':'`).
+    #[test]
+    fn playbook_hosts_line_is_always_single_line() {
+        let playbook = playbook_with_hosts(Some("node1\nnode2\nnode3"));
+        assert!(playbook.contains("  hosts: node1,node2,node3\n"));
+        assert_eq!(
+            playbook.lines().filter(|l| l.starts_with("  hosts:")).count(),
+            1
+        );
+        // 호스트 이름이 들여쓰기 없는 맨 앞 줄로 새어 나오면 안 된다.
+        assert!(!playbook.lines().any(|l| l == "node2"));
+    }
+
+    #[test]
+    fn playbook_falls_back_to_all_when_no_node_selected() {
+        let playbook = playbook_with_hosts(Some(""));
+        assert!(playbook.contains("  hosts: all\n"));
+        assert!(!playbook.contains("  hosts: \n"));
+    }
+
+    #[test]
+    fn playbook_user_and_key_fall_back_when_form_sends_empty_strings() {
+        let mut form = empty_form();
+        form.ansible_hosts = Some(String::new());
+        form.ansible_user = Some(String::new());
+        form.ansible_ssh_key = Some("   ".to_string());
+        let config = sample_config();
+        let files = crate::generators::quadlet::generate_all_units(&config);
+        let playbook = generate_quadlet_ansible_playbook(&config, &files, &form);
+
+        assert!(playbook.contains("  remote_user: root\n"));
+        assert!(playbook.contains("    ansible_ssh_private_key_file: ~/.ssh/id_rsa\n"));
+    }
+
+    /// 생성물이 실제로 Ansible에 먹히려면 우선 YAML로 파싱돼야 한다.
+    #[test]
+    fn generated_playbook_is_valid_yaml() {
+        for hosts in [None, Some(""), Some("node1\nnode2"), Some("node1,node2")] {
+            let playbook = playbook_with_hosts(hosts);
+            let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(&playbook);
+            assert!(
+                parsed.is_ok(),
+                "hosts={:?} 일 때 YAML 파싱 실패: {:?}\n---\n{}",
+                hosts,
+                parsed.err(),
+                playbook
+            );
+        }
+    }
 }

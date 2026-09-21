@@ -67,6 +67,21 @@ fn storage_pool_yaml(pool: &crate::models::linstor::LinstorStoragePool) -> Strin
     out
 }
 
+/// 노드 풀의 IP를 `ansible_host` 값으로 바꾼다.
+///
+/// 노드 풀의 `ip` 컬럼은 기본값이 빈 문자열이라 `HashMap::get`이
+/// `Some("")`을 돌려줄 수 있다. 그대로 쓰면 `ansible_host: ` (빈 값)이
+/// 되어 인벤토리가 깨지므로, 비어 있으면 hostname으로 되돌린다
+/// (`routes/nodes.rs`의 write_ansible_inventory와 동일한 규칙).
+fn resolve_ansible_host(node_ips: &std::collections::HashMap<String, String>, node: &str) -> String {
+    node_ips
+        .get(node)
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(node)
+        .to_string()
+}
+
 /// LINSTOR 전용 Ansible 인벤토리 (YAML) 생성.
 ///
 /// `ansible-linstor-collection` README의 "Required inventory groups"를
@@ -88,7 +103,7 @@ pub fn generate_linstor_inventory(
     out.push_str("      hosts:\n");
     for node in &config.controller_nodes {
         out.push_str(&format!("        {}:\n", node));
-        let ip = node_ips.get(node).cloned().unwrap_or_else(|| node.clone());
+        let ip = resolve_ansible_host(node_ips, node);
         out.push_str(&format!("          ansible_host: {}\n", ip));
     }
 
@@ -96,7 +111,7 @@ pub fn generate_linstor_inventory(
     out.push_str("      hosts:\n");
     for node in &config.satellite_nodes {
         out.push_str(&format!("        {}:\n", node));
-        let ip = node_ips.get(node).cloned().unwrap_or_else(|| node.clone());
+        let ip = resolve_ansible_host(node_ips, node);
         out.push_str(&format!("          ansible_host: {}\n", ip));
     }
 
@@ -277,6 +292,29 @@ mod tests {
         assert!(inv.contains("linstor_cluster:"));
         assert!(inv.contains("linstor_storage_pools:"));
         assert!(inv.contains("vg_thinpool: thinpool"));
+    }
+
+    /// 노드 풀의 `ip` 컬럼은 기본값이 빈 문자열이라 HashMap이 Some("")를
+    /// 돌려줄 수 있다. 그대로 쓰면 `ansible_host: ` (빈 값)이 되어
+    /// 인벤토리가 깨진다.
+    #[test]
+    fn inventory_falls_back_to_hostname_when_pool_ip_is_blank() {
+        let config = sample_config();
+        let mut ips = HashMap::new();
+        ips.insert("node1".to_string(), String::new()); // 빈 IP
+        ips.insert("node2".to_string(), "   ".to_string()); // 공백만
+        ips.insert("node3".to_string(), "192.168.1.13".to_string());
+
+        let inv = generate_linstor_inventory(&config, &ips, "deploy", "~/.ssh/id_rsa");
+
+        assert!(inv.contains("ansible_host: node1"));
+        assert!(inv.contains("ansible_host: node2"));
+        assert!(inv.contains("ansible_host: 192.168.1.13"));
+        // 값이 빈 ansible_host 줄이 있으면 안 된다.
+        assert!(!inv.lines().any(|l| l.trim() == "ansible_host:"));
+
+        let parsed: Result<serde_yaml::Value, _> = serde_yaml::from_str(&inv);
+        assert!(parsed.is_ok(), "인벤토리 YAML 파싱 실패: {:?}", parsed.err());
     }
 
     #[test]

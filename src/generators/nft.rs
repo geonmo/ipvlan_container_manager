@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::models::nft::{NftPolicy, NftSubnetGroup, NftServiceDef};
 
 /// 서비스/그룹 이름을 nft set 이름으로 사용할 수 있게 정규화
@@ -6,6 +8,38 @@ fn sanitize_set_name(name: &str) -> String {
         .chars()
         .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
         .collect()
+}
+
+/// 원본 이름 → **유일한** nft set 이름 매핑을 만든다.
+///
+/// `sanitize_set_name`은 대소문자와 구분자를 뭉개므로 서로 다른 대상이
+/// 같은 set 이름으로 충돌할 수 있다(`web-1` / `web_1` / `WEB_1`).
+/// nftables는 이걸 에러로 막지 않고 **두 set 정의를 조용히 병합**한다
+/// (nft 1.0.9 실측). 그러면 한쪽 대상에만 열어주려던 포트가 다른 대상
+/// IP에도 그대로 허용돼 방화벽 규칙이 새어 나간다. 충돌하는 쪽에
+/// `_2`, `_3` … 접미사를 붙여 미리 갈라 놓는다.
+fn build_set_name_map<'a>(names: impl Iterator<Item = &'a str>) -> HashMap<&'a str, String> {
+    let mut used: HashSet<String> = HashSet::new();
+    let mut map: HashMap<&'a str, String> = HashMap::new();
+    for name in names {
+        if map.contains_key(name) {
+            continue; // 같은 이름이 두 번 나온 경우 — 같은 set을 가리켜야 한다
+        }
+        let base = sanitize_set_name(name);
+        let mut candidate = base.clone();
+        let mut n = 2;
+        while !used.insert(candidate.clone()) {
+            candidate = format!("{}_{}", base, n);
+            n += 1;
+        }
+        map.insert(name, candidate);
+    }
+    map
+}
+
+/// 매핑에 없는 이름(정책에 정의되지 않은 참조)은 정규화 결과로 되돌린다.
+fn set_name<'a>(map: &HashMap<&'a str, String>, name: &str) -> String {
+    map.get(name).cloned().unwrap_or_else(|| sanitize_set_name(name))
 }
 
 /// 포트 목록 → nft 포트 표현식
@@ -32,13 +66,18 @@ fn format_inline_ips(ips: &[String]) -> String {
 pub fn generate_nft_policy(policy: &NftPolicy) -> String {
     let mut out = String::new();
 
+    // set 이름 충돌 방지 매핑 (정의와 참조가 반드시 같은 이름을 쓰도록
+    // 한 번만 계산해서 아래 전체에서 공유한다).
+    let target_names = build_set_name_map(policy.targets.iter().map(|t| t.name.as_str()));
+    let group_names = build_set_name_map(policy.subnet_groups.iter().map(|g| g.name.as_str()));
+
     // ── 테이블 헤더 ──────────────────────────────────────────────────────
     out.push_str(&format!("table netdev {} {{\n", policy.table_name));
 
     // ── 1. 대상 IP set (target_<name>_v4/v6) ────────────────────────────
     out.push_str("    # --- 1. 대상 Pod/컨테이너 IP 그룹 (Targets) ---\n");
     for target in &policy.targets {
-        let tname = sanitize_set_name(&target.name);
+        let tname = set_name(&target_names, &target.name);
         if !target.ipv4_addrs.is_empty() {
             out.push_str(&format!(
                 "    set target_{}_v4 {{ type ipv4_addr; elements = {{ {} }} }}\n",
@@ -70,7 +109,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
     if !used_groups.is_empty() {
         out.push_str("\n    # --- 2. 서브넷 그룹 (Subnet Groups) ---\n");
         for grp in &used_groups {
-            let gname = sanitize_set_name(&grp.name);
+            let gname = set_name(&group_names, &grp.name);
             if !grp.cidrs_v4.is_empty() {
                 out.push_str(&format!(
                     "    set sg_{}_v4 {{\n        type ipv4_addr; flags interval\n        elements = {{ {} }}\n    }}\n",
@@ -185,7 +224,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
         .collect();
 
     for target in &policy.targets {
-        let tname = sanitize_set_name(&target.name);
+        let tname = set_name(&target_names, &target.name);
         out.push_str(&format!("\n        # {}\n", target.name.to_uppercase()));
 
         for rule in &target.rules {
@@ -206,7 +245,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
                         // 소스 필터 있는 경우 — 그룹에 v4 CIDR이 있을 때만
                         let grp = policy.subnet_groups.iter().find(|g| g.name == gname);
                         if grp.map(|g| !g.cidrs_v4.is_empty()).unwrap_or(false) {
-                            let sname = sanitize_set_name(gname);
+                            let sname = set_name(&group_names, gname);
                             out.push_str(&format!(
                                 "        ip daddr @target_{}_v4 ip saddr @sg_{}_v4 ip protocol tcp tcp dport {} accept\n",
                                 tname, sname, port_expr
@@ -224,7 +263,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
                     if let Some(gname) = subnet_group_name {
                         let grp = policy.subnet_groups.iter().find(|g| g.name == gname);
                         if grp.map(|g| !g.cidrs_v6.is_empty()).unwrap_or(false) {
-                            let sname = sanitize_set_name(gname);
+                            let sname = set_name(&group_names, gname);
                             out.push_str(&format!(
                                 "        ip6 daddr @target_{}_v6 ip6 saddr @sg_{}_v6 ip6 nexthdr tcp tcp dport {} accept\n",
                                 tname, sname, port_expr
@@ -247,7 +286,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
                     if let Some(gname) = subnet_group_name {
                         let grp = policy.subnet_groups.iter().find(|g| g.name == gname);
                         if grp.map(|g| !g.cidrs_v4.is_empty()).unwrap_or(false) {
-                            let sname = sanitize_set_name(gname);
+                            let sname = set_name(&group_names, gname);
                             out.push_str(&format!(
                                 "        ip daddr @target_{}_v4 ip saddr @sg_{}_v4 ip protocol udp udp dport {} accept\n",
                                 tname, sname, port_expr
@@ -265,7 +304,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
                     if let Some(gname) = subnet_group_name {
                         let grp = policy.subnet_groups.iter().find(|g| g.name == gname);
                         if grp.map(|g| !g.cidrs_v6.is_empty()).unwrap_or(false) {
-                            let sname = sanitize_set_name(gname);
+                            let sname = set_name(&group_names, gname);
                             out.push_str(&format!(
                                 "        ip6 daddr @target_{}_v6 ip6 saddr @sg_{}_v6 ip6 nexthdr udp udp dport {} accept\n",
                                 tname, sname, port_expr
@@ -288,8 +327,11 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
         out.push_str("        # 대상별 개별 차단 로그\n");
         out.push_str("        # ==================================================\n");
         for target in &policy.targets {
-            let tname     = sanitize_set_name(&target.name);
-            let log_label = target.name.to_uppercase().replace(['-', '.'], "_");
+            let tname     = set_name(&target_names, &target.name);
+            // 로그 prefix도 유일한 set 이름에서 파생시킨다 — 충돌하는
+            // 두 대상이 같은 prefix로 찍히면 드롭 원인을 구분할 수 없다.
+            // 소문자+`-`/`.` 조합의 일반적인 이름에서는 기존과 동일한 결과다.
+            let log_label = tname.to_uppercase();
             if !target.ipv4_addrs.is_empty() {
                 out.push_str(&format!(
                     "        ip daddr @target_{}_v4 counter log prefix \"NFT_{}_V4_DROP: \" drop\n",
@@ -397,6 +439,65 @@ mod tests {
             subnet_groups: Vec::new(),
             services: Vec::new(),
         }
+    }
+
+    use crate::models::nft::{NftTarget, NftTargetRule};
+
+    /// `sanitize_set_name`이 대소문자/구분자를 뭉개서 서로 다른 대상이
+    /// 같은 set 이름을 갖게 되면, nftables는 에러 없이 **두 set을 병합**한다
+    /// (nft 1.0.9 실측). 그러면 한쪽에만 열어주려던 포트가 다른 대상 IP에도
+    /// 허용돼 방화벽 규칙이 새어 나간다.
+    #[test]
+    fn colliding_target_names_get_distinct_set_names() {
+        let mut policy = sample_policy();
+        policy.services.push(NftServiceDef {
+            id: 0,
+            name: "ssh".to_string(),
+            description: String::new(),
+            tcp_ports: vec!["22".to_string()],
+            udp_ports: vec![],
+        });
+        for (name, ip) in [("web-1", "10.0.0.1"), ("web_1", "10.0.0.2"), ("WEB.1", "10.0.0.3")] {
+            policy.targets.push(NftTarget {
+                name: name.to_string(),
+                ipv4_addrs: vec![ip.to_string()],
+                ipv6_addrs: vec![],
+                rules: vec![NftTargetRule {
+                    service_name: "ssh".to_string(),
+                    subnet_group: None,
+                }],
+            });
+        }
+
+        let out = generate_nft_policy(&policy);
+
+        // 세 대상이 서로 다른 set으로 정의돼야 한다.
+        assert!(out.contains("set target_web_1_v4 { type ipv4_addr; elements = { 10.0.0.1 } }"));
+        assert!(out.contains("set target_web_1_2_v4 { type ipv4_addr; elements = { 10.0.0.2 } }"));
+        assert!(out.contains("set target_web_1_3_v4 { type ipv4_addr; elements = { 10.0.0.3 } }"));
+        // 같은 set 이름이 두 번 정의되면 안 된다.
+        assert_eq!(out.matches("set target_web_1_v4 {").count(), 1);
+        // 규칙도 각자의 set을 참조해야 한다.
+        for s in ["@target_web_1_v4", "@target_web_1_2_v4", "@target_web_1_3_v4"] {
+            assert!(out.contains(&format!("ip daddr {} ip protocol tcp tcp dport 22 accept", s)));
+        }
+    }
+
+    #[test]
+    fn distinct_target_names_keep_their_plain_set_names() {
+        let mut policy = sample_policy();
+        for (name, ip) in [("web", "10.0.0.1"), ("db", "10.0.0.2")] {
+            policy.targets.push(NftTarget {
+                name: name.to_string(),
+                ipv4_addrs: vec![ip.to_string()],
+                ipv6_addrs: vec![],
+                rules: vec![],
+            });
+        }
+        let out = generate_nft_policy(&policy);
+        assert!(out.contains("set target_web_v4"));
+        assert!(out.contains("set target_db_v4"));
+        assert!(!out.contains("_2_v4"));
     }
 
     #[test]
