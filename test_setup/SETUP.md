@@ -184,6 +184,9 @@ ansible-playbook playbooks/01-ipvlan-networks.yml
 
 # 4) Pacemaker 클러스터 부트스트랩 (corosync는 private 망 192.0.2.0/24로 통신)
 ansible-playbook playbooks/deploy_pacemaker.yml
+
+# 5) ipvlan_container_manager 웹 UI 빌드 (관리 호스트에서 로컬 실행, rust/cargo 설치 포함)
+ansible-playbook playbooks/02-build-webui.yml
 ```
 
 이후 DRBD/Quadlet 리소스는 `ipvlan_container_manager` 웹 UI(`/drbd/`, `/quadlet/`,

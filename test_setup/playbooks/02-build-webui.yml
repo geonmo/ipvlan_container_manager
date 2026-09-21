@@ -1,0 +1,32 @@
+---
+# ipvlan_container_manager 웹 UI(Rust) 빌드 (관리 호스트 전용)
+#
+# 이 웹 앱은 클러스터 노드(node01~03)가 아니라 별도의 관리/빌드 호스트에서 실행하는
+# 설정 생성기다. AlmaLinux 9 계열은 dnf 기본 저장소(appstream)에 rust/cargo 패키지가
+# 있으므로 rustup 없이 바로 설치한다(rust 패키지가 gcc 등 빌드 의존성을 자동으로 끌어옴).
+#
+# 사용법:
+#   ansible-playbook playbooks/02-build-webui.yml
+
+- name: ipvlan_container_manager 웹 UI 빌드
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    icm_repo_dir: "{{ playbook_dir }}/../.."
+
+  tasks:
+    - name: rust/cargo 패키지 설치
+      ansible.builtin.dnf:
+        name:
+          - rust
+          - cargo
+        state: present
+
+    - name: cargo build --release 실행
+      ansible.builtin.command: cargo build --release
+      args:
+        chdir: "{{ icm_repo_dir }}"
+      become: false
+      register: icm_build
+      changed_when: "'Compiling ipvlan_container_manager' in icm_build.stderr or 'Finished' in icm_build.stderr"
