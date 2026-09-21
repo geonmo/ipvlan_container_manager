@@ -5,6 +5,11 @@ mod db;
 mod scan;
 mod nft_scanner;
 
+/// 생성된 산출물을 실제 배포 도구(drbdadm/nft/ansible/quadlet)로 검증하는
+/// 통합 테스트. 도구가 없는 환경에서는 각 테스트가 [SKIP]을 찍고 지나간다.
+#[cfg(test)]
+mod external_validation;
+
 use axum::{
     routing::{get, post, delete},
     Router,
