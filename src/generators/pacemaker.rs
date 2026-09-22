@@ -345,23 +345,31 @@ pub(crate) fn generate_order_constraint(ord: &OrderConstraint) -> String {
 }
 
 pub(crate) fn generate_colocation_constraint(col: &ColocationConstraint) -> String {
+    // pcs 문법은 역할이 **리소스 id 앞에** 온다:
+    //   colocation add [<role>] <source> with [<role>] <target> [score] [options]
+    //
+    // 예전에는 `... with <target> role=Promoted` 처럼 뒤에 붙였는데, pcs 는
+    // 그걸 옵션으로 받아 스키마에 맞지 않는 CIB 를 만들고 거부한다
+    // (실측: "Error: Unable to update cib / Update does not conform to the
+    // configured schema"). 그 결과 콜로케이션이 통째로 빠져서 Filesystem 이
+    // DRBD Primary 가 아닌 노드에서 시작하려다 마운트 실패까지 이어졌다.
     let rsc_role = col
         .rsc_role
         .as_deref()
-        .map(|r| format!(" role={}", r))
+        .map(|r| format!("{} ", r))
         .unwrap_or_default();
     let with_role = col
         .with_rsc_role
         .as_deref()
-        .map(|r| format!(" role={}", r))
+        .map(|r| format!("{} ", r))
         .unwrap_or_default();
 
     format!(
-        "pcs constraint colocation add {rsc}{rsc_role} with {with}{with_role} score={score} id={id}",
-        rsc = col.rsc,
+        "pcs constraint colocation add {rsc_role}{rsc} with {with_role}{with} score={score} id={id}",
         rsc_role = rsc_role,
-        with = col.with_rsc,
+        rsc = col.rsc,
         with_role = with_role,
+        with = col.with_rsc,
         score = col.score,
         id = col.id,
     )
@@ -777,6 +785,62 @@ mod tests {
     /// on-fail=fence 는 STONITH 가 켜져 있어야 의미가 있다. pcs 는 이 조합을
     /// 거부하지 않고 Pacemaker 가 런타임에 조용히 stop 으로 격하시키므로,
     /// 생성물에 경고를 남기지 않으면 사용자가 알 방법이 없다.
+    /// pcs 는 콜로케이션의 역할을 **리소스 id 앞에** 받는다:
+    ///   colocation add [<role>] <source> with [<role>] <target>
+    /// 뒤에 `role=` 로 붙이면 옵션으로 해석돼 스키마에 맞지 않는 CIB 가 되고
+    /// pcs 가 거부한다(실측). 그러면 콜로케이션이 빠져 Filesystem 이 DRBD
+    /// Primary 가 아닌 노드에서 시작하려다 마운트 실패로 이어진다.
+    #[test]
+    fn colocation_role_comes_before_the_resource_id() {
+        let cmd = generate_colocation_constraint(&ColocationConstraint {
+            id: "col-1".to_string(),
+            rsc: "fs-r0".to_string(),
+            rsc_role: None,
+            with_rsc: "drbd-r0-clone".to_string(),
+            with_rsc_role: Some("Promoted".to_string()),
+            score: "INFINITY".to_string(),
+        });
+
+        assert_eq!(
+            cmd,
+            "pcs constraint colocation add fs-r0 with Promoted drbd-r0-clone score=INFINITY id=col-1"
+        );
+        // 옵션 형태로 나가면 안 된다
+        assert!(!cmd.contains("role="));
+    }
+
+    #[test]
+    fn colocation_supports_role_on_both_sides() {
+        let cmd = generate_colocation_constraint(&ColocationConstraint {
+            id: "col-2".to_string(),
+            rsc: "a".to_string(),
+            rsc_role: Some("Started".to_string()),
+            with_rsc: "b".to_string(),
+            with_rsc_role: Some("Promoted".to_string()),
+            score: "INFINITY".to_string(),
+        });
+        assert_eq!(
+            cmd,
+            "pcs constraint colocation add Started a with Promoted b score=INFINITY id=col-2"
+        );
+    }
+
+    #[test]
+    fn colocation_without_roles_is_unchanged() {
+        let cmd = generate_colocation_constraint(&ColocationConstraint {
+            id: "col-3".to_string(),
+            rsc: "a".to_string(),
+            rsc_role: None,
+            with_rsc: "b".to_string(),
+            with_rsc_role: None,
+            score: "INFINITY".to_string(),
+        });
+        assert_eq!(
+            cmd,
+            "pcs constraint colocation add a with b score=INFINITY id=col-3"
+        );
+    }
+
     #[test]
     fn warns_when_on_fail_fence_without_stonith() {
         let mut config = config_with_nodes(3);
