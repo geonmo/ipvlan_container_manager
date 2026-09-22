@@ -1,0 +1,755 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% EPJ Web of Conferences -- proceedings draft
+%
+% DRAFT v3 -- trimmed for the 8-page limit.
+% Items marked  %% TODO  need a decision or data before submission.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+\documentclass{webofc}
+\usepackage[varg]{txfonts}   % Web of Conferences font
+%
+\begin{document}
+%
+\title{Binding DRBD promotion to containerised services:
+       generating verified Pacemaker configurations for
+       minimally-staffed scientific computing sites}
+%
+%% TODO author block: confirm spelling, order and any co-authors.
+\author{\firstname{Geonmo} \lastname{Ryu}\inst{1}\fnsep\thanks{\email{geonmo@kisti.re.kr}}
+        % \and \firstname{Second} \lastname{Author}\inst{1}
+}
+
+\institute{Korea Institute of Science and Technology Information (KISTI),
+           Daejeon, Republic of Korea}
+
+\abstract{%
+  Small scientific computing sites run a handful of stateful grid
+  services on a handful of machines, administered by one or two people
+  for whom cluster operation is one duty among several. Such sites need
+  real high availability but cannot absorb the operational surface of a
+  general-purpose orchestrator. Our design follows from three
+  constraints: a small team argues for the availability layer the
+  operating-system vendor supports directly, so we use Pacemaker and
+  Corosync rather than a separate control plane; containerised services
+  argue for Podman Quadlet, which turns container definitions into
+  ordinary systemd units that Pacemaker manages without an adapter; and
+  the absence of external shared storage -- no NFS server, no SAN --
+  makes DRBD replication between the cluster nodes the means by which a
+  service finds its configuration and state on whichever node currently
+  runs it. The hard part of this stack is the chain of Pacemaker
+  resource, operation and constraint definitions that binds DRBD
+  promotion to the start of the dependent containers, because its
+  failure modes are silent: several configurations are accepted by every
+  tool and are nevertheless wrong. We describe that chain in detail, and
+  the tool we built to generate it -- \emph{IPVLAN Container Manager},
+  which emits DRBD resource files, Quadlet units, \texttt{pcs} setup and
+  teardown scripts, nftables ingress policy and the deploying Ansible
+  playbooks, while adding no runtime component to the cluster. We report
+  the validation strategy adopted after unit tests were found to accept
+  artefacts that the real tools reject, and experience from the
+  production three-node deployment of the CMS Tier-2 site
+  T2\_KR\_KISTI.
+}
+%
+\maketitle
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Introduction}
+\label{sec:intro}
+
+High availability is usually discussed in terms of scale. In practice a
+large number of scientific computing sites are constrained by something
+else: the number of people available to operate the system. A CMS
+Tier-2 centre, a campus analysis facility or a regional data centre
+typically runs a small set of services that must not be down for long --
+a storage front-end, a compute-element gateway, an information and
+accounting publisher -- on three to seven machines, administered by one
+or two staff members with other responsibilities.
+
+For that population the dominant cost of an HA deployment is not
+hardware but the amount of operational knowledge that must stay resident
+in a very small team and remain recoverable after an interruption of
+weeks. Kubernetes and comparable platforms~\cite{kubernetes} solve
+availability by introducing a control plane that is itself a distributed
+system to be kept alive, upgraded on its own cadence and debugged
+through its own abstractions; a small team can adopt that, but it then
+owns a second operational problem larger than the first. Conversely,
+managing containers by hand through systemd units or command-line
+invocations is error-prone and verbose, and provides no central place in
+which the availability logic lives.
+
+\subsection{Three constraints and the choices they force}
+\label{sec:choices}
+
+\paragraph{A small team implies a vendor-supported availability layer.}
+When the operating team is small, the most valuable property of a
+component is not its feature set but the existence of someone else's
+documentation, errata and support contract. On Red Hat Enterprise
+Linux~9 and its derivatives that component is Pacemaker with
+Corosync~\cite{pacemaker,corosync,rhelha}: shipped in a supported
+channel, documented by the vendor, and with failure modes described in
+material the administrator can reach without reading source code.
+Maturity is precisely what a site with no platform team should be
+buying, so we build on Pacemaker rather than introduce a second control
+plane.
+
+\paragraph{Containerised services imply a runtime that systemd -- and
+therefore Pacemaker -- already understands.}
+The services these sites run are increasingly distributed as containers,
+so the availability layer must manage containers rather than packages.
+Podman with Quadlet resolves this without an
+adapter~\cite{podman,quadlet}: Quadlet translates declarative unit files
+into systemd service units at generator time, after which a container is
+an ordinary systemd service. Pacemaker manages systemd units natively,
+so no container-specific resource agent, no daemon and no second
+lifecycle manager is required.
+
+\paragraph{No external shared storage implies replication between the
+nodes themselves.}
+A classical Pacemaker service assumes the data a failing-over service
+needs is reachable from every node, typically on an NFS server or a SAN.
+The sites we target do not have that, and adding it would introduce a
+new single point of failure to be made highly available in turn. What
+these services must carry across a failover is not bulk data but their
+configuration and state -- the front-end's configuration tree, the
+compute element's job spool, the accounting publisher's cached records:
+a small, write-sensitive working set. DRBD~\cite{drbd9} replicates it
+synchronously between the cluster nodes themselves and exposes a single
+virtual block device, so the service finds an identical configuration
+and state directory on whichever node currently runs it, with no storage
+appliance involved.
+
+A fourth characteristic shapes the networking rather than the
+availability design. Data-intensive workloads are sensitive to the
+overhead of container networking: a bridge-and-NAT path or a VXLAN
+overlay adds per-packet work and an address space that does not exist
+outside the host. With the in-kernel IPVLAN driver~\cite{ipvlan} in L2
+mode a container attaches directly to a physical NIC and holds an
+address on the physical subnet, so it is an ordinary host on the LAN as
+far as clients, firewalls and monitoring are concerned, and it keeps
+that address when restarted on another node.
+
+\subsection{The remaining problem, and our contribution}
+
+Each of the four components is individually documented and individually
+comprehensible. The difficulty lies in the \emph{seams} between them. A
+working three-node service requires a DRBD resource file, an LVM layout,
+a Quadlet unit set, a promotable clone definition, a filesystem
+resource, an ordering constraint, a colocation constraint with the
+correct role on the correct side, a fencing device, and a firewall
+policy identical on every node so that a failover does not silently lose
+connectivity. Each is a small amount of text; keeping all of them
+mutually consistent, and consistent after a change, is where the time
+goes -- and it is exactly the work that does not survive being
+interrupted.
+
+Our contributions are: a detailed account of the DRBD-to-Pacemaker
+promotion chain, including the definitions required for correct failover
+and the specific ways in which plausible-looking definitions fail
+silently (Sect.~\ref{sec:promote}); a generator-based tool that emits
+that chain together with the rest of the stack, and the policy --
+adopted during development -- that every change to cluster state is
+expressed as a generated Ansible playbook rather than a direct command
+(Sect.~\ref{sec:design}); a validation strategy in which generated
+artefacts are checked by the real deployment tools with negative
+controls, and the defects this uncovered that substring unit tests had
+accepted (Sect.~\ref{sec:validation}); and experience from the
+production deployment at the CMS Tier-2 site T2\_KR\_KISTI
+(Sect.~\ref{sec:deployment}).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{The DRBD--Pacemaker promotion chain}
+\label{sec:promote}
+
+\subsection{What promotion has to guarantee}
+
+For a containerised service whose configuration and state live on a
+replicated device, a correct failover must satisfy four properties at
+once:
+
+\begin{enumerate}
+\item \textbf{Exclusivity.} At most one node holds the DRBD device in
+      the primary role at any time. Two primaries with a mounted
+      non-cluster filesystem means divergent state.
+\item \textbf{Ordering.} The filesystem is mounted only after promotion
+      completes, and the containers start only after the mount succeeds.
+      On relocation the reverse must hold: containers stop, filesystem
+      unmounts, device demotes.
+\item \textbf{Co-location.} The mount and the containers run on the node
+      holding the promoted instance, not merely on \emph{some} node.
+\item \textbf{Observability of failure.} If promotion fails or the
+      promoted instance becomes unhealthy, the cluster must take a
+      defined action, and that action must be the one the administrator
+      configured.
+\end{enumerate}
+
+Properties 1--3 are expressed with resource and constraint definitions;
+property 4 depends on an interaction between the resource's
+\texttt{on-fail} setting and cluster-wide fencing configuration, and is
+the least obvious of the four.
+
+\subsection{Primitive and promotable clone}
+
+DRBD is registered with the LINBIT-provided OCF agent and then converted
+into a promotable clone, as in Listing~\ref{lst:drbd}.
+
+\begin{figure}[h]
+\begin{footnotesize}
+\begin{verbatim}
+pcs resource create drbd-r0 ocf:linbit:drbd \
+    drbd_resource=r0 \
+    op demote  interval=0s  timeout=90s \
+    op monitor interval=29s role=Promoted \
+               on-fail=fence \
+    op monitor interval=31s role=Unpromoted \
+    op notify  interval=0s  timeout=90s \
+    op promote interval=0s  timeout=90s \
+    op reload  interval=0s  timeout=30s \
+    op start   interval=0s  timeout=240s \
+    op stop    interval=0s  timeout=100s
+pcs resource promotable drbd-r0 \
+    promoted-max=1 promoted-node-max=1 \
+    clone-max=3 clone-node-max=1 \
+    notify=true id=drbd-r0-clone
+\end{verbatim}
+\end{footnotesize}
+\caption{Generated DRBD promotable clone definition. The full operation
+set is emitted explicitly rather than left to agent defaults, and the
+two role-scoped monitors carry deliberately different intervals; see
+Sect.~\ref{sec:monitor}.}
+\label{lst:drbd}
+\end{figure}
+
+\texttt{promoted-max=1} with \texttt{promoted-node-max=1} enforces
+exclusivity (property~1), and \texttt{notify=true} is required by the
+DRBD agent, which uses clone notifications to coordinate role changes
+among peers. The operation set is written out in full because the
+agent's defaults differ from the values the DRBD documentation
+recommends for a Pacemaker-managed resource, and a partially specified
+set is indistinguishable, on inspection of the CIB, from a deliberately
+chosen one.
+
+\subsection{Role-scoped monitors and the interval collision}
+\label{sec:monitor}
+
+A promotable DRBD clone needs two recurring monitors, one per role,
+because the health criteria differ: a promoted instance must be primary
+and connected, an unpromoted instance must be secondary and in sync. The
+obvious encoding is two monitors with the same interval and different
+\texttt{role} attributes.
+
+That encoding is rejected. \texttt{pcs} (observed with version 0.11.11)
+refuses the resource creation with
+
+\begin{footnotesize}
+\begin{verbatim}
+Error: multiple specification of the same
+operation with the same interval:
+monitor with intervals 20s, 20s
+\end{verbatim}
+\end{footnotesize}
+
+\noindent
+because the operation identity it constructs does not include the role.
+An earlier version of our generator emitted \texttt{20s} for both, so
+the generated script failed at its first resource creation and --
+because it runs under \texttt{set -euo pipefail} -- stopped there,
+leaving the cluster partially configured. The tool now emits distinct
+intervals and, following LINBIT's own examples, chooses values that are
+not multiples of one another (\texttt{29s} and \texttt{31s} by default)
+so the two monitors do not repeatedly coincide. A regression test
+asserts both that two role-scoped monitors are present and that their
+default intervals are mutually non-divisible.
+
+The placement of \texttt{on-fail} is a related subtlety. It is attached
+to the \emph{promoted}-role monitor only, because the set of values the
+interface offers (\texttt{fence}, \texttt{block}, \texttt{stop},
+\texttt{ignore}, \texttt{demote}) is fully valid only there: Pacemaker
+accepts \texttt{demote} only for the \texttt{promote} action and for
+recurring monitors with \texttt{role=Promoted}. Attaching the same value
+to the unpromoted monitor produces a definition that \texttt{pcs}
+rejects for some user choices and accepts for others -- input-dependent
+breakage, which is unpleasant to diagnose in the field.
+
+\subsection{The ordering and colocation chain}
+
+With the clone defined, the dependent resources are chained. For a
+service with one DRBD volume, a filesystem and a container group, the
+tool generates:
+
+\begin{footnotesize}
+\begin{verbatim}
+pcs constraint order promote drbd-r0-clone \
+    then start fs-r0 kind=Mandatory \
+    id=ord-fs-r0-after-drbd-r0-clone
+pcs constraint colocation add fs-r0 \
+    with Promoted drbd-r0-clone \
+    score=INFINITY \
+    id=col-fs-r0-with-drbd-r0-clone
+pcs constraint order start fs-r0 \
+    then start grp-myapp kind=Mandatory \
+    id=ord-grp-myapp-after-fs-r0
+pcs constraint colocation add grp-myapp \
+    with fs-r0 score=INFINITY \
+    id=col-grp-myapp-with-fs-r0
+\end{verbatim}
+\end{footnotesize}
+
+The ordering constraints give property~2 and the colocation constraints
+property~3. Pacemaker derives the reverse order on relocation
+automatically, so stop, unmount and demote occur in the correct sequence
+without a second set of constraints. Two details of this chain were
+wrong in earlier versions and are worth recording.
+
+\paragraph{Role position in the colocation syntax.}
+The role qualifier in \texttt{pcs constraint colocation add} belongs
+\emph{before} the resource identifier it qualifies, i.e.\
+\texttt{... with Promoted drbd-r0-clone}. Our generator originally
+emitted \texttt{... with drbd-r0-clone role=Promoted}, which reads
+naturally and which the command-line parser accepts as an option. The
+resulting CIB update does not validate:
+
+\begin{footnotesize}
+\begin{verbatim}
+Error: Unable to update cib
+Update does not conform to the configured schema
+\end{verbatim}
+\end{footnotesize}
+
+\noindent
+Under \texttt{set -euo pipefail} this aborts the run. In an earlier,
+non-guarded version the colocation was simply absent, and the filesystem
+resource was then free to start on a node that did not hold the promoted
+DRBD instance, where the mount failed. The visible symptom was a
+filesystem resource failure several steps removed from the cause.
+
+\paragraph{The group, not its members, is the colocation target.}
+When a service groups a pod with its containers, the constraints must
+attach to the group. The interface submits \texttt{after\_fs: ""} for a
+DRBD volume with no filesystem; if the route handler does not normalise
+that empty string to a null value, the generator's filter matches
+neither the "has a filesystem" branch nor the "has none" branch, and
+colocation with \texttt{INFINITY} is emitted against each group member
+individually. Pacemaker then treats the members as independently placed
+resources, defeating the purpose of the group. The normalisation now
+happens in the route handler, and a test asserts that constraints never
+name a group member directly.
+
+\subsection{Clone count must follow the node count}
+
+\texttt{clone-max} bounds the number of clone instances Pacemaker will
+instantiate. With a value hardcoded to~2 -- adequate for the two-node
+case the tool was first written for -- a three-node cluster never places
+a DRBD instance on its third node. The cluster reports no error: the
+configuration is valid, the service is available, and the third node is
+simply never a failover candidate. The tool now derives
+\texttt{clone-max} from the number of nodes selected in the cluster
+section, and when the node list has not yet been filled in falls back to
+three -- the default target size -- rather than to a value that would
+silently exclude nodes.
+
+\subsection{Fencing: two switches that must agree}
+
+Property~4 depends on two independent settings that are easy to
+configure inconsistently.
+
+The first is the resource-level \texttt{on-fail} attribute. If
+\texttt{on-fail=fence} is set while the cluster property
+\texttt{stonith-enabled} is \texttt{false}, \texttt{pcs} accepts the
+configuration and returns success; Pacemaker then downgrades the action
+to \texttt{stop} at runtime, silently. The administrator has selected
+fencing, no error is reported anywhere, and no fencing occurs. Because
+the combination is realistic -- fencing is commonly disabled while a
+test cluster is built -- the generator detects it and emits an explicit
+warning block into the generated script naming the affected resources.
+STONITH itself is configured as \texttt{fence\_ipmilan} devices, one per
+node, which is what prevents the split-brain scenario that property~1
+rules out at the resource level.
+
+The second is DRBD's own fencing policy. Setting
+\texttt{fencing resource-only} instructs DRBD to consult the cluster
+before allowing promotion, through a \emph{fence-peer handler}. If the
+handler is not configured, a promotion attempted while the peer is
+unreachable does not fail quickly: it blocks until the Pacemaker
+operation timeout expires and is then reported as a failure, which in
+turn triggers the resource's failure handling. The generator therefore
+deploys \texttt{crm-fence-peer.9.sh} in
+\texttt{/etc/drbd.d/global\_common.conf} whenever \texttt{resource-only}
+fencing is selected, and the interface states the dependency at the
+point where the policy is chosen.
+
+\subsection{Multiple volumes: colocation has a direction}
+
+A service may depend on more than one DRBD volume, in which case the
+volumes must be promoted on the same node. This requires a colocation
+between two promotable clones, and the relation is \emph{directed}: one
+clone is the anchor and the other follows it, as
+\texttt{Promoted follower with Promoted anchor}. Generating it in the
+opposite direction produces a configuration that looks symmetric and is
+not -- an attempt to relocate only the follower is then blocked by a
+\texttt{-INFINITY} promotion score, and the cluster refuses the move
+with no obvious explanation. The interface presents this as an explicit
+anchor/follower pair and labels which side to move, because the correct
+choice is not recoverable from the generated constraint by inspection.
+
+\subsection{Idempotency and teardown}
+
+Two properties proved necessary once the tool was used on a cluster that
+already existed. First, \emph{idempotency}: because the generated script
+runs under \texttt{set -euo pipefail}, a \texttt{pcs resource create}
+that fails with "already exists" stops the run after the preceding
+commands have been applied, leaving a partially configured cluster and
+an administrator who must determine by hand how far the script got.
+Every resource creation is now wrapped in an existence check
+(\texttt{pcs resource config <id>} returns non-zero when the resource is
+absent), and every constraint creation in the corresponding check
+against \texttt{pcs constraint --full}, so re-running on a configured
+cluster is a no-op that reports what it skipped.
+
+Second, \emph{teardown}. A generator that can only create is of limited
+use when a configuration must be revised: the administrator has to
+inspect the CIB and decide what to delete, which is the task the tool
+exists to remove. The tool emits a matching teardown script that removes
+only the objects it created, in reverse dependency order -- constraints,
+groups, systemd and filesystem resources, the DRBD clone, then STONITH
+devices. The order is mandatory, not cosmetic: a remaining constraint
+blocks resource deletion and a remaining group blocks member deletion.
+Resources are stopped normally rather than with \texttt{--force}, so the
+filesystem unmounts and DRBD demotes cleanly. The script explicitly does
+\emph{not} touch the DRBD volume or the \texttt{.res} file: it withdraws
+the storage from Pacemaker management and leaves the data alone. Tests
+assert the ordering, the re-runnability, and the absence of any
+storage-destroying command.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Generating the stack}
+\label{sec:design}
+
+\subsection{A generator, not a controller}
+
+The chain of Sect.~\ref{sec:promote} is what \emph{IPVLAN Container
+Manager} produces. The central design decision is that the tool produces
+text and then gets out of the way: there is no agent on the cluster
+nodes, no reconciliation loop, and no runtime dependency on the tool
+being available. A generator can be abandoned without stranding the
+cluster, whereas a controller cannot; if the site later manages the
+cluster by hand, the artefacts the tool produced are exactly the
+artefacts a handwritten deployment would have contained. This is the
+reasoning of Sect.~\ref{sec:choices} applied once more -- minimise the
+number of components whose continued existence the site depends on.
+Every artefact is emitted as a complete file including comments that
+state \emph{why} a setting is present; for a two-person team, a
+generated script whose comments record that \texttt{on-fail=fence} is
+inert while \texttt{stonith-enabled=false} is worth more than a
+graphical rendering of the same configuration.
+
+The application is a single Rust binary (about 12\,000 lines of Rust and
+7\,000 of HTML templates). Requests carry no server-side session state,
+and each submission is an independent transformation from a set of
+values to the set of files listed in Table~\ref{tab:artefacts}; a small
+SQLite database holds only inventory that must persist across restarts.
+At startup a background task scans \texttt{/etc/drbd.d/},
+\texttt{/etc/containers/systemd/} and the local \texttt{pcsd} REST API,
+so an administrator with a partially configured cluster does not start
+from an empty form. Each generator is a pure function from a model
+structure to a string, which is what makes the validation strategy of
+Sect.~\ref{sec:validation} possible.
+
+\begin{table}
+\centering
+\caption{Artefacts generated from the web interface. Each row
+corresponds to one pure generator function and one set of tests.}
+\label{tab:artefacts}
+\begin{tabular}{lll}
+\hline
+Subsystem & Artefact & Consumer \\\hline
+DRBD           & \texttt{<res>.res} + playbook        & \texttt{drbdadm} \\
+Quadlet        & \texttt{.container}, \texttt{.pod},  & \texttt{podman} \\
+               & \texttt{.network}, \texttt{.volume}  & (quadlet generator) \\
+Pacemaker      & \texttt{pcs} setup script,           & \texttt{pcs} \\
+               & teardown script, playbook            & \\
+Firewall       & \texttt{table netdev} policy         & \texttt{nft} \\\hline
+\end{tabular}
+\end{table}
+
+\subsection{Ansible as the only mutation path}
+
+Early in development the tool was permitted to execute a few commands
+directly on cluster nodes, for instance to inspect firewall state while
+diagnosing a failover. This was removed. The rule adopted instead is
+that any change to the state of a cluster node must be expressed as a
+generated Ansible playbook~\cite{ansible} that the administrator can
+read before it runs and re-run afterwards.
+
+The reason is not purity. A direct command is invisible after the fact:
+it appears in no artefact, it cannot be reviewed, and it cannot be
+replayed on a node that was down at the time. At a minimally-staffed
+site the last property matters most, because the person who applies a
+change is frequently not the person who diagnoses its consequence three
+weeks later. Two facilities follow. Interface discovery: rather than
+asking which NIC carries a given subnet on each node, the tool generates
+a playbook that runs \texttt{ip -j addr show} everywhere and matches
+interfaces to the configured subnets. Deferred substitution: when a
+network's parent interface is unknown at generation time the Quadlet
+generator emits the placeholder
+\texttt{Options=parent=\_\_PARENT\_IFACE\_\_}, and the accompanying
+playbook inserts an \texttt{ip route show to match <subnet>} detection
+task whose output replaces it at deployment time, so the generated unit
+is correct on nodes with differing interface names.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Validating generated artefacts}
+\label{sec:validation}
+
+The natural way to test a generator is to assert that its output
+contains the expected substrings. We did this, and the tests passed
+while the generated artefacts were being rejected by the tools that
+consume them. The reason is structural: a substring assertion encodes
+the same intent as the generator, written by the same author at the same
+time. If the intent is wrong -- if the author believes that
+\texttt{on-io-error passthrough} is a valid DRBD option -- the generator
+and the test agree, and the test confirms the error.
+
+We therefore added a permanent test module that submits generated
+artefacts to the real tools: \texttt{drbdadm} for DRBD resource files,
+\texttt{nft --check} for the firewall policy, the Podman Quadlet
+generator for unit files, and \texttt{ansible-playbook --syntax-check}
+with \texttt{ansible-inventory --graph} for playbooks and inventories.
+Each validator is skipped, with a reported reason, when its binary is
+absent, and a dedicated test reports which validators ran, so a silently
+degraded suite cannot be mistaken for a passing one. Each check is
+paired with a \emph{negative control}: a deliberately invalid artefact
+of the same kind that the validator must reject. Without this, a
+validator that has silently become a no-op -- through a changed flag, a
+missing kernel module or a permission error -- would report success for
+every input. The negative controls caught exactly that situation once
+during development.
+
+Table~\ref{tab:defects} lists the defects this uncovered that the
+substring tests had accepted. Most are semantic rather than
+typographical, and four of the seven would have manifested only during a
+failover. A further defect in the firewall generator deserves mention
+because our first diagnosis of it was wrong: two named sets generated
+with colliding names do not produce a duplicate-element error from
+\texttt{nft}; the rule set is accepted and the sets are \emph{merged}.
+The consequence is a policy granting more access than was specified -- a
+firewall that silently fails open. At the time of writing the suite
+contains 79 tests, including the external validations.
+
+\begin{table}
+\centering
+\caption{Defects in generated artefacts found by external-tool
+validation, none of which had been detected by substring assertions.}
+\label{tab:defects}
+\begin{tabular}{p{0.44\textwidth}p{0.19\textwidth}p{0.25\textwidth}}
+\hline
+Defect & Found by & Consequence \\\hline
+Jinja \texttt{search()} pattern with an unescaped literal
+\texttt{(} & Python \texttt{re} & playbook aborts \\
+\texttt{hosts:} value containing a newline & YAML parser & play targets wrong hosts \\
+\texttt{on-io-error passthrough} is not a valid DRBD~9
+value, and was the generator default & \texttt{drbdadm} & resource file rejected \\
+\texttt{after-sb-1pri call-pri-lost} is not a valid value & \texttt{drbdadm} & resource file rejected \\
+Two role-scoped monitors with identical intervals & real cluster & whole script aborts \\
+Colocation role qualifier in the option position & real cluster & constraint absent; mount fails on failover \\
+Singleton configuration tables accumulating duplicate rows & explicit test & configuration read is non-deterministic \\\hline
+\end{tabular}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Production deployment}
+\label{sec:deployment}
+
+The stack is in production on a three-node AlmaLinux~9 cluster at
+T2\_KR\_KISTI, the CMS Tier-2 site operated by KISTI, where it manages
+the dCache~\cite{dcache} frontend, HTCondor-CE~\cite{htcondorce,condor}
+and the site-BDII/APEL~\cite{apel} information and accounting services.
+These three share the profile the design targets: each is a
+single-instance, stateful service whose unavailability is immediately
+visible to the collaboration, and each needs a modest configuration and
+state directory rather than bulk storage -- exactly the working set DRBD
+replication between the cluster nodes is suited to, and the reason no
+NFS or SAN layer is involved. Each service is a Quadlet-defined
+container group registered with Pacemaker as a systemd resource,
+colocated with the filesystem resource carrying its configuration, which
+in turn is colocated with the promoted DRBD instance, following the
+chain of Sect.~\ref{sec:promote}. IPVLAN L2 networks attach the
+containers directly to the nodes' physical interfaces, so each service
+keeps a stable routable address across a failover.
+Figure~\ref{fig:arch} shows the arrangement. All deployment is performed
+with the generated playbooks; no configuration change is applied to a
+node by hand.
+
+%% TODO the figure below is the poster diagram as exported from the
+%% .pptx. It is portrait-shaped and text-heavy for a proceedings page;
+%% consider redrawing it in landscape with the five layers side by side
+%% before submission.
+\begin{figure}[h]
+\centering
+\includegraphics[height=110mm]{fig/architecture}
+\caption{The three-node production deployment: DRBD promotable clones
+replicating the services' configuration and state between the nodes,
+filesystem resources colocated with the promoted instance, Quadlet
+container groups for the dCache frontend, HTCondor-CE and site-BDII/APEL
+services, and IPVLAN attachment to the physical interfaces.}
+\label{fig:arch}
+\end{figure}
+
+Relocation of a DRBD-backed service between nodes completes in the
+expected sequence: containers stopped, filesystem unmounted, DRBD
+demoted on the source, promoted on the target, filesystem mounted,
+containers started. The constraint chain of Sect.~\ref{sec:promote} was
+necessary and sufficient for this, and the failures described there were
+all encountered on the way to it.
+
+%% TODO (author): insert the failover timing here from the production
+%% logs -- wall-clock time from node loss to service ready, and the
+%% dominant contribution (typically the promote timeout or the
+%% filesystem check). A sentence of the form "In production, relocation
+%% of <service> completed in X s, of which Y s was ..." is enough.
+%% No network throughput measurement is needed: that IPVLAN is closer
+%% to native than a bridge or VXLAN path is established knowledge.
+
+Because IPVLAN places containers on the physical subnet, access control
+cannot be delegated to a NAT boundary. The tool generates an nftables
+\texttt{table netdev} ingress policy~\cite{nftables} with per-target
+address sets, named subnet groups and per-service port sets. One
+property of this artefact is specific to the HA setting: the policy must
+be installed identically on \emph{every} node, not only the node
+currently running the service, because after a failover the destination
+address is served elsewhere and a node without the rule drops the
+traffic. The generated playbook therefore targets the whole cluster
+group. A related observation concerns \texttt{firewalld}: when zone
+membership is determined by interface rather than by source address,
+traffic from a peer whose address is not covered by the active zone's
+sources is handled by a different zone than intended, and since
+\texttt{AllowZoneDrifting} was removed in \texttt{firewalld}~1.0 the
+previously forgiving behaviour is gone. Source matching was required for
+the cluster peers to reach each other as intended.
+
+DRBD can also be driven through LINSTOR~\cite{linstor}, which manages
+the same replication layer from a central controller and writes the
+resource files itself; the promotion chain of Sect.~\ref{sec:promote} is
+unchanged by that choice, since Pacemaker still owns promotion through
+\texttt{ocf:linbit:drbd}. We have recently added an experimental,
+separate code path that generates a LINSTOR inventory and playbook, so
+the approach is applicable to LINSTOR-managed volumes as well. The
+production deployment described here does not use it.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Discussion and conclusion}
+\label{sec:discussion}
+
+We have described the chain of Pacemaker definitions that binds DRBD
+promotion to the start of containerised services, and the configurations
+that every tool accepts and that are nevertheless wrong: monitor
+operations whose role does not disambiguate their interval, a colocation
+role qualifier in the option position, a clone count that silently
+excludes nodes, a colocation between promotable clones generated in the
+wrong direction, and a fencing action downgraded at runtime without
+notice. What these share is that they are not detected at configuration
+time, only at failover time -- which is the one moment at which a
+minimally-staffed site has no capacity to debug. Encoding them once, in
+a generator, is worth more than documenting them.
+
+The most transferable result is arguably the testing discipline of
+Sect.~\ref{sec:validation}. A configuration generator is a compiler
+whose back end is someone else's parser; testing it against one's own
+beliefs about that parser is not testing. The cost of running the real
+validators in continuous integration was small; the cost of the defects
+they found, had they reached a production failover, would not have been.
+
+The design targets sites whose binding constraint is operator attention
+rather than capacity: a handful of stateful services, three to seven
+machines, one or two administrators with other duties, and no external
+shared storage. A site that needs elasticity, dynamic scheduling or
+multi-tenancy is better served by a general-purpose orchestrator. Two
+limitations are worth stating. There is no drift detection: because the
+tool generates and leaves, a configuration changed by hand is not
+noticed until the next scan, and the scan is informational rather than
+corrective. And two-node clusters have no natural majority; sites that
+can afford a third machine, even one acting only as a quorum member,
+should use it.
+
+Finally, the choices of Sect.~\ref{sec:choices} were made with an
+eventual migration in mind. Because the services are packaged as OCI
+containers and described declaratively, the unit of deployment is
+already the unit a container orchestrator would schedule; what is
+specific to this stack is the availability and storage layer, not the
+workload definition. We consider that claim provisional until
+demonstrated rather than argued, and it -- together with quantitative
+failover and networking measurements, and divergence reporting between
+generated and live configuration -- is the direction of future work.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{thebibliography}{99}
+
+\bibitem{kubernetes}
+Kubernetes documentation, The Kubernetes Authors,
+\texttt{kubernetes.io/docs} (accessed 2026)
+
+\bibitem{pacemaker}
+\textit{Pacemaker Explained}, ClusterLabs,
+\texttt{clusterlabs.org/pacemaker/doc} (accessed 2026)
+
+\bibitem{corosync}
+Corosync Cluster Engine documentation, ClusterLabs,
+\texttt{corosync.github.io/corosync} (accessed 2026)
+
+\bibitem{rhelha}
+\textit{Configuring and managing high availability clusters},
+Red Hat Enterprise Linux 9 documentation, Red Hat,
+\texttt{docs.redhat.com} (accessed 2026)
+
+\bibitem{podman}
+Podman documentation, Containers project,
+\texttt{docs.podman.io} (accessed 2026)
+
+\bibitem{quadlet}
+\texttt{podman-systemd.unit} (Quadlet) manual page, Containers project,
+\texttt{docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html}
+(accessed 2026)
+
+\bibitem{drbd9}
+\textit{The DRBD 9 User's Guide}, LINBIT,
+\texttt{linbit.com/drbd-user-guide} (accessed 2026)
+
+\bibitem{ipvlan}
+IPVLAN driver HOWTO, Linux kernel documentation,
+\texttt{docs.kernel.org/networking/ipvlan.html} (accessed 2026)
+
+\bibitem{nftables}
+nftables wiki, Netfilter project,
+\texttt{wiki.nftables.org} (accessed 2026)
+
+\bibitem{ansible}
+Ansible documentation, Red Hat,
+\texttt{docs.ansible.com} (accessed 2026)
+
+\bibitem{linstor}
+LINSTOR User's Guide, LINBIT,
+\texttt{linbit.com/linstor-user-guide} (accessed 2026)
+
+\bibitem{dcache}
+P.~Fuhrmann, V.~G\"ulzow, \textit{dCache, Storage System for the
+Future}, in Euro-Par 2006 Parallel Processing, Lecture Notes in Computer
+Science \textbf{4128} (Springer, Berlin, 2006) pp.~1106--1113
+
+\bibitem{htcondorce}
+HTCondor-CE documentation, HTCondor Software Suite, University of
+Wisconsin--Madison, \texttt{htcondor.com/htcondor-ce} (accessed 2026)
+
+\bibitem{condor}
+D.~Thain, T.~Tannenbaum, M.~Livny, Concurrency and Computation: Practice
+and Experience \textbf{17}, 323--356 (2005)
+
+\bibitem{apel}
+M.~Jiang \textit{et al.}, \textit{An APEL Tool Based CPU Usage
+Accounting Infrastructure for Large Scale Computing Grids}, in Data
+Driven e-Science (Springer, New York, 2011) pp.~175--186
+%% TODO: verify the page range and volume details of this APEL
+%% reference against the published version before submission.
+
+\end{thebibliography}
+
+\end{document}
