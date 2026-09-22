@@ -65,7 +65,7 @@ r#"---
         dest: "{nft_file}"
         content: |
           # nftables ipvlan L2 방화벽 규칙
-          # HA Container Manager에서 자동 관리됩니다
+          # IPVLAN Container Manager에서 자동 관리됩니다
         mode: '0640'
         force: no
 

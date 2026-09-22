@@ -48,7 +48,8 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     if !config.stonith_devices.is_empty() {
         lines.push("# ─── STONITH(fencing) 리소스 ─────────────────────────────────".to_string());
         for dev in &config.stonith_devices {
-            lines.extend(generate_stonith_cmds(dev));
+            let id = format!("stonith-ipmi-{}", sanitize_stonith_id(&dev.node));
+            lines.extend(guard_resource(&id, generate_stonith_cmds(dev)));
         }
         lines.push(String::new());
     }
@@ -83,7 +84,10 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
             config.cluster.nodes.len()
         };
         for drbd in &config.drbd_resources {
-            lines.extend(generate_drbd_resource_cmds(drbd, node_count));
+            lines.extend(guard_resource(
+                &drbd.resource_name,
+                generate_drbd_resource_cmds(drbd, node_count),
+            ));
         }
         lines.push(String::new());
     }
@@ -93,7 +97,7 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
         lines.push("# ─── Filesystem 리소스 (ocf:heartbeat:Filesystem) ───────────".to_string());
         lines.push("# DRBD가 Primary로 승격된 후 볼륨을 마운트합니다.".to_string());
         for fs in &config.fs_resources {
-            lines.extend(generate_fs_resource_cmds(fs));
+            lines.extend(guard_resource(&fs.resource_name, generate_fs_resource_cmds(fs)));
         }
         lines.push(String::new());
     }
@@ -102,7 +106,10 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     if !config.systemd_resources.is_empty() {
         lines.push("# ─── Quadlet Systemd 리소스 (Pod / Container) ───────────────".to_string());
         for svc in &config.systemd_resources {
-            lines.extend(generate_systemd_resource_cmds(svc));
+            lines.extend(guard_resource(
+                &svc.resource_name,
+                generate_systemd_resource_cmds(svc),
+            ));
         }
         lines.push(String::new());
     }
@@ -111,6 +118,7 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     if !config.resource_groups.is_empty() {
         lines.push("# ─── 리소스 그룹 (Pod → Container 순서 보장) ───────────────".to_string());
         lines.push("# 그룹 내 start: members 순서대로, stop: 역순 자동 처리".to_string());
+        lines.push("# (pcs resource group add 는 자체적으로 멱등이라 가드를 두지 않는다)".to_string());
         for grp in &config.resource_groups {
             lines.push(generate_resource_group_cmd(grp));
         }
@@ -121,7 +129,7 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     if !config.order_constraints.is_empty() {
         lines.push("# ─── Order 제약조건 ──────────────────────────────────────────".to_string());
         for ord in &config.order_constraints {
-            lines.push(generate_order_constraint(ord));
+            lines.extend(guard_constraint(&ord.id, generate_order_constraint(ord)));
         }
         lines.push(String::new());
     }
@@ -130,7 +138,7 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     if !config.colocation_constraints.is_empty() {
         lines.push("# ─── Colocation 제약조건 ────────────────────────────────────".to_string());
         for col in &config.colocation_constraints {
-            lines.push(generate_colocation_constraint(col));
+            lines.extend(guard_constraint(&col.id, generate_colocation_constraint(col)));
         }
         lines.push(String::new());
     }
@@ -139,13 +147,52 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     if !config.location_constraints.is_empty() {
         lines.push("# ─── Location 제약조건 (선호 노드) ─────────────────────────".to_string());
         for loc in &config.location_constraints {
-            lines.push(generate_location_constraint(loc));
+            lines.extend(guard_constraint(&loc.id, generate_location_constraint(loc)));
         }
         lines.push(String::new());
     }
 
     lines.push("echo '✅ Pacemaker 설정 완료'".to_string());
     lines.join("\n")
+}
+
+/// 리소스가 이미 있으면 건너뛰도록 `pcs resource create` 묶음을 감싼다.
+///
+/// 생성 스크립트는 `set -euo pipefail` 이라 `pcs resource create` 가
+/// "already exists" 로 실패하면 **거기서 멈춘다**. 그런데 그 앞 명령들은
+/// 이미 적용된 뒤라, 부분 적용 상태로 끝나고 사용자는 어디까지 됐는지
+/// 직접 확인해야 한다. `pcs resource config <id>` 는 없으면 rc=1, 있으면
+/// rc=0 이므로(실측) 이걸로 가드한다.
+fn guard_resource(id: &str, body: Vec<String>) -> Vec<String> {
+    let mut out = vec![format!(
+        "if ! pcs resource config {id} >/dev/null 2>&1; then",
+        id = shell_quote(id)
+    )];
+    for line in body {
+        out.push(format!("  {}", line));
+    }
+    out.push(format!("else"));
+    out.push(format!(
+        "  echo \"  - {id} 는 이미 있어 건너뜁니다\"",
+        id = id
+    ));
+    out.push("fi".to_string());
+    out
+}
+
+/// 제약조건이 이미 있으면 건너뛴다. `pcs constraint --full` 출력에
+/// `(id: <id>)` 형태로 나오는 것을 확인했다(실측).
+fn guard_constraint(id: &str, cmd: String) -> Vec<String> {
+    vec![
+        format!(
+            "if ! pcs constraint --full 2>/dev/null | grep -q \"(id: {id})\"; then",
+            id = id
+        ),
+        format!("  {}", cmd),
+        "else".to_string(),
+        format!("  echo \"  - 제약조건 {id} 는 이미 있어 건너뜁니다\"", id = id),
+        "fi".to_string(),
+    ]
 }
 
 /// bash 작은따옴표로 안전하게 감싼다.
@@ -513,6 +560,128 @@ pub fn generate_default_constraints(config: &mut PacemakerConfig) {
     }
 }
 
+/// 이 설정이 만든 Pacemaker 리소스/제약조건을 제거하는 스크립트 생성.
+///
+/// 생성 스크립트만 있고 되돌릴 방법이 없으면, 설정을 바꿔 다시 적용하려 할 때
+/// 사용자가 CIB 를 직접 들여다보며 무엇을 지울지 찾아야 한다. 이 앱의 목적이
+/// 그 부담을 없애는 것이므로 짝이 되는 teardown 을 함께 낸다.
+///
+/// **의존 역순으로 지운다**: 제약조건 → 그룹 → systemd/FS → DRBD clone →
+/// STONITH. 제약조건이 남아 있으면 리소스 삭제가 막히고, 그룹이 남아 있으면
+/// 멤버 삭제가 막힌다.
+///
+/// 리소스가 없을 때도 실패하지 않아야 재실행할 수 있으므로 각 삭제를
+/// 존재 확인으로 감싼다. DRBD 볼륨 자체(LINSTOR 리소스나 .res 파일)는
+/// **건드리지 않는다** — Pacemaker 등록만 해제한다.
+pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
+    let mut lines: Vec<String> = Vec::new();
+
+    lines.push("#!/bin/bash".to_string());
+    lines.push("# Pacemaker 리소스 해제 스크립트 (생성 스크립트의 짝)".to_string());
+    lines.push("#".to_string());
+    lines.push("# 이 앱이 등록한 Pacemaker 리소스와 제약조건만 제거합니다.".to_string());
+    lines.push("# DRBD 볼륨의 데이터, LINSTOR 리소스, .res 파일은 건드리지 않습니다".to_string());
+    lines.push("# — Pacemaker 관리에서만 빼냅니다.".to_string());
+    lines.push("#".to_string());
+    lines.push("# 의존 역순으로 지웁니다: 제약조건 → 그룹 → 서비스/FS → DRBD → STONITH".to_string());
+    lines.push("# 없는 항목은 건너뛰므로 여러 번 실행해도 안전합니다.".to_string());
+    lines.push(String::new());
+    lines.push("set -euo pipefail".to_string());
+    lines.push(String::new());
+
+    let del_constraint = |id: &str| -> Vec<String> {
+        vec![
+            format!(
+                "if pcs constraint --full 2>/dev/null | grep -q \"(id: {id})\"; then",
+                id = id
+            ),
+            format!("  pcs constraint delete {}", shell_quote(id)),
+            "else".to_string(),
+            format!("  echo \"  - 제약조건 {id} 없음 (건너뜀)\"", id = id),
+            "fi".to_string(),
+        ]
+    };
+    let del_resource = |id: &str| -> Vec<String> {
+        vec![
+            format!("if pcs resource config {} >/dev/null 2>&1; then", shell_quote(id)),
+            // --force 로 정지 대기를 건너뛰지 않는다. 정상 정지시켜야
+            // Filesystem 이 언마운트되고 DRBD 가 Secondary 로 내려간다.
+            format!("  pcs resource delete {}", shell_quote(id)),
+            "else".to_string(),
+            format!("  echo \"  - 리소스 {id} 없음 (건너뜀)\"", id = id),
+            "fi".to_string(),
+        ]
+    };
+
+    if !config.order_constraints.is_empty()
+        || !config.colocation_constraints.is_empty()
+        || !config.location_constraints.is_empty()
+    {
+        lines.push("# ─── 1. 제약조건 제거 ────────────────────────────────────────".to_string());
+        for c in &config.location_constraints {
+            lines.extend(del_constraint(&c.id));
+        }
+        for c in &config.colocation_constraints {
+            lines.extend(del_constraint(&c.id));
+        }
+        for c in &config.order_constraints {
+            lines.extend(del_constraint(&c.id));
+        }
+        lines.push(String::new());
+    }
+
+    if !config.resource_groups.is_empty() {
+        lines.push("# ─── 2. 리소스 그룹 해체 ─────────────────────────────────────".to_string());
+        lines.push("# 그룹을 지우면 멤버는 남는다(아래에서 개별 삭제).".to_string());
+        for grp in &config.resource_groups {
+            lines.extend(del_resource(&grp.group_name));
+        }
+        lines.push(String::new());
+    }
+
+    if !config.systemd_resources.is_empty() {
+        lines.push("# ─── 3. Systemd(Quadlet) 리소스 제거 ─────────────────────────".to_string());
+        for svc in &config.systemd_resources {
+            lines.extend(del_resource(&svc.resource_name));
+        }
+        lines.push(String::new());
+    }
+
+    if !config.fs_resources.is_empty() {
+        lines.push("# ─── 4. Filesystem 리소스 제거 (언마운트됨) ──────────────────".to_string());
+        for fs in &config.fs_resources {
+            lines.extend(del_resource(&fs.resource_name));
+        }
+        lines.push(String::new());
+    }
+
+    if !config.drbd_resources.is_empty() {
+        lines.push("# ─── 5. DRBD Promotable Clone 제거 ───────────────────────────".to_string());
+        lines.push("# clone id 를 지우면 안에 든 primitive 도 함께 사라진다.".to_string());
+        for drbd in &config.drbd_resources {
+            lines.extend(del_resource(&drbd.clone_name));
+        }
+        lines.push(String::new());
+    }
+
+    if !config.stonith_devices.is_empty() {
+        lines.push("# ─── 6. STONITH 리소스 제거 ──────────────────────────────────".to_string());
+        for dev in &config.stonith_devices {
+            let id = format!("stonith-ipmi-{}", sanitize_stonith_id(&dev.node));
+            lines.extend(del_resource(&id));
+        }
+        lines.push(String::new());
+    }
+
+    lines.push("# 실패 기록이 남아 있으면 정리한다 (없으면 no-op)".to_string());
+    lines.push("pcs resource cleanup >/dev/null 2>&1 || true".to_string());
+    lines.push(String::new());
+    lines.push("echo '✅ Pacemaker 리소스 해제 완료'".to_string());
+    lines.push("pcs resource status || true".to_string());
+
+    lines.join("\n")
+}
+
 /// CIB XML 조각 생성 (참고용)
 pub fn generate_cib_xml_snippet(config: &PacemakerConfig) -> String {
     let mut xml = String::new();
@@ -790,6 +959,112 @@ mod tests {
     /// 뒤에 `role=` 로 붙이면 옵션으로 해석돼 스키마에 맞지 않는 CIB 가 되고
     /// pcs 가 거부한다(실측). 그러면 콜로케이션이 빠져 Filesystem 이 DRBD
     /// Primary 가 아닌 노드에서 시작하려다 마운트 실패로 이어진다.
+    fn full_config() -> PacemakerConfig {
+        let mut c = config_with_nodes(3);
+        c.fs_resources.push(FsResource {
+            drbd_clone_name: c.drbd_resources[0].clone_name.clone(),
+            ..FsResource::default()
+        });
+        c.systemd_resources.push(SystemdResource {
+            resource_name: "svc-app".to_string(),
+            systemd_unit: "app.service".to_string(),
+            ..SystemdResource::default()
+        });
+        c.resource_groups.push(ResourceGroup {
+            group_name: "grp-app".to_string(),
+            members: vec!["svc-app".to_string()],
+            after_fs: Some("fs-r0".to_string()),
+        });
+        c.stonith_devices.push(StonithDevice {
+            node: "node1".to_string(),
+            ipmi_ip: "10.0.0.1".to_string(),
+            ipmi_user: "admin".to_string(),
+            ipmi_password: "secret".to_string(),
+            extra_opts: vec![],
+        });
+        generate_default_constraints(&mut c);
+        c
+    }
+
+    /// 생성 스크립트는 `set -euo pipefail` 이라 `pcs resource create` 가
+    /// "already exists" 로 실패하면 거기서 멈춘다. 그 앞 명령들은 이미
+    /// 적용된 뒤라 부분 적용 상태로 끝난다. 모든 생성을 존재 확인으로
+    /// 감싸야 재실행이 안전하다.
+    #[test]
+    fn every_resource_create_is_guarded() {
+        let script = generate_pcs_script(&full_config());
+
+        for line in script.lines().filter(|l| l.trim_start().starts_with("pcs resource create")) {
+            // 가드 블록 안이라면 두 칸 들여쓰기돼 있다
+            assert!(
+                line.starts_with("  "),
+                "가드되지 않은 생성 명령: {}",
+                line
+            );
+        }
+        assert!(script.contains("if ! pcs resource config"));
+        assert!(script.contains("이미 있어 건너뜁니다"));
+    }
+
+    #[test]
+    fn every_constraint_is_guarded() {
+        let script = generate_pcs_script(&full_config());
+        for line in script
+            .lines()
+            .filter(|l| l.trim_start().starts_with("pcs constraint"))
+        {
+            assert!(line.starts_with("  "), "가드되지 않은 제약조건: {}", line);
+        }
+        assert!(script.contains("pcs constraint --full 2>/dev/null | grep -q"));
+    }
+
+    /// teardown 은 의존 역순이어야 한다. 제약조건이 남아 있으면 리소스 삭제가
+    /// 막히고, 그룹이 남아 있으면 멤버 삭제가 막힌다.
+    #[test]
+    fn teardown_removes_in_reverse_dependency_order() {
+        let config = full_config();
+        let script = generate_teardown_script(&config);
+
+        let pos = |needle: &str| script.find(needle).unwrap_or_else(|| panic!("없음: {}", needle));
+        let constraints = pos("1. 제약조건 제거");
+        let groups = pos("2. 리소스 그룹 해체");
+        let systemd = pos("3. Systemd");
+        let fs = pos("4. Filesystem");
+        let drbd = pos("5. DRBD");
+        let stonith = pos("6. STONITH");
+
+        assert!(constraints < groups);
+        assert!(groups < systemd);
+        assert!(systemd < fs);
+        assert!(fs < drbd);
+        assert!(drbd < stonith);
+
+        // clone id 를 지워야 primitive 까지 사라진다
+        assert!(script.contains(&config.drbd_resources[0].clone_name));
+    }
+
+    /// teardown 도 재실행 가능해야 한다 — 없는 항목에서 멈추면 안 된다.
+    #[test]
+    fn teardown_skips_missing_items() {
+        let script = generate_teardown_script(&full_config());
+        assert!(script.contains("없음 (건너뜀)"));
+        assert!(script.contains("if pcs resource config"));
+    }
+
+    /// teardown 은 Pacemaker 등록만 해제한다. DRBD 볼륨/LINSTOR 리소스를
+    /// 지우면 데이터가 날아간다.
+    #[test]
+    fn teardown_does_not_touch_storage() {
+        let script = generate_teardown_script(&full_config());
+        for forbidden in ["drbdadm", "linstor ", "lvremove", "wipefs", "mkfs"] {
+            assert!(
+                !script.contains(forbidden),
+                "teardown 이 스토리지를 건드린다: {}",
+                forbidden
+            );
+        }
+    }
+
     #[test]
     fn colocation_role_comes_before_the_resource_id() {
         let cmd = generate_colocation_constraint(&ColocationConstraint {

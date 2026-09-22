@@ -14,7 +14,7 @@ use crate::models::pacemaker::{
 };
 use crate::generators::pacemaker::{
     generate_pcs_script, generate_default_constraints, generate_cib_xml_snippet,
-    generate_maintenance_script, generate_drbd_resource_cmds, generate_fs_resource_cmds,
+    generate_maintenance_script, generate_teardown_script, generate_drbd_resource_cmds, generate_fs_resource_cmds,
     generate_systemd_resource_cmds, generate_resource_group_cmd, generate_order_constraint,
     generate_colocation_constraint, generate_location_constraint, sanitize_stonith_id,
     shell_quote,
@@ -175,6 +175,10 @@ pub struct PacemakerResult {
     pub ansible_playbook: String,
     /// 롤링 유지보수 스크립트 (PLAN.md A.7) — cluster.nodes가 비어 있으면 빈 문자열.
     pub maintenance_script: String,
+    /// 이 설정이 등록한 리소스/제약조건을 되돌리는 스크립트.
+    /// 생성 스크립트만 있으면 설정을 바꿔 다시 적용할 때 사용자가 CIB를
+    /// 직접 뒤져야 한다.
+    pub teardown_script: String,
 }
 
 pub async fn generate(
@@ -362,12 +366,14 @@ pub async fn generate(
     let cib_xml = generate_cib_xml_snippet(&config);
     let ansible_playbook = generate_pacemaker_ansible_playbook(&form, &config);
     let maintenance_script = generate_maintenance_script(&config);
+    let teardown_script = generate_teardown_script(&config);
 
     let result = PacemakerResult {
         pcs_script,
         cib_xml,
         ansible_playbook,
         maintenance_script,
+        teardown_script,
     };
 
     let mut ctx = Context::new();

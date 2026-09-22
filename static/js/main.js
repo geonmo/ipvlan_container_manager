@@ -1,5 +1,5 @@
 /**
- * HA Container Manager - Main JS
+ * IPVLAN Container Manager - Main JS
  * CodeMirror 에디터 초기화 및 공통 유틸리티
  */
 

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Pacemaker 설정 결과 - HA Container Manager{% endblock %}
+{% block title %}Pacemaker 설정 결과 - IPVLAN Container Manager{% endblock %}
 {% block nav_pacemaker %}active{% endblock %}
 
 {% block content %}
@@ -22,6 +22,11 @@
       </div>
       <div class="card-body p-0">
         <textarea id="pcsScript" class="code-editor" data-mode="shell">{{ result.pcs_script }}</textarea>
+      </div>
+      <div class="card-footer small text-muted">
+        각 리소스/제약조건 생성은 <strong>이미 있으면 건너뛰도록</strong> 감싸여 있어 여러 번 실행해도
+        안전합니다. 설정을 바꿔 다시 적용하려면 아래 <code>pacemaker_teardown.sh</code> 로 먼저
+        해제하세요 — 이미 등록된 리소스는 건너뛰기 때문에 정의만 바꿔 다시 실행해도 반영되지 않습니다.
       </div>
     </div>
 
@@ -69,6 +74,25 @@
       </div>
       <div class="card-footer small text-muted">
         실행: <code>ansible-playbook -i inventory.yml deploy_pacemaker.yml</code>
+      </div>
+    </div>
+
+    <!-- 해제(teardown) 스크립트 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-secondary text-white d-flex align-items-center">
+        <span class="fw-bold"><i class="bi bi-arrow-counterclockwise"></i> pacemaker_teardown.sh (등록 해제)</span>
+        <button class="btn btn-sm btn-light ms-auto" onclick="copyText('pmTeardown')">
+          <i class="bi bi-clipboard"></i> 복사
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <textarea id="pmTeardown" class="code-editor" data-mode="shell">{{ result.teardown_script }}</textarea>
+      </div>
+      <div class="card-footer small text-muted">
+        위 생성 스크립트의 짝입니다. 설정을 바꿔 다시 적용하려면 먼저 이걸 실행하세요.
+        의존 역순(제약조건 → 그룹 → 서비스/FS → DRBD → STONITH)으로 제거하며,
+        없는 항목은 건너뛰므로 여러 번 실행해도 안전합니다.
+        <strong>DRBD 볼륨의 데이터와 LINSTOR 리소스는 건드리지 않고</strong> Pacemaker 등록만 해제합니다.
       </div>
     </div>
 
