@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}nftables 설정 결과 - IPVLAN Container Manager{% endblock %}
+{% block title %}nftables Configuration Result - IPVLAN Container Manager{% endblock %}
 {% block nav_nft %}active{% endblock %}
 
 {% block content %}
@@ -8,27 +8,27 @@
 
     {% if error %}
     <div class="alert alert-danger">
-      <i class="bi bi-exclamation-triangle-fill"></i> <strong>오류:</strong> {{ error }}
+      <i class="bi bi-exclamation-triangle-fill"></i> <strong>Error:</strong> {{ error }}
     </div>
-    <a href="/nft/" class="btn btn-secondary">← 다시 시도</a>
+    <a href="/nft/" class="btn btn-secondary">← Try again</a>
 
     {% else %}
 
     <div class="d-flex align-items-center mb-4">
-      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> nftables 설정 생성 완료</h2>
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> nftables configuration generated</h2>
       <div class="ms-auto">
         <a href="/nft/" class="btn btn-outline-secondary btn-sm">
-          <i class="bi bi-arrow-left"></i> 다시 설정
+          <i class="bi bi-arrow-left"></i> Reconfigure
         </a>
       </div>
     </div>
 
-    <!-- 생성된 .nft 파일 -->
+    <!-- Generated .nft file -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-danger text-white d-flex align-items-center">
         <span class="fw-bold font-monospace"><i class="bi bi-file-earmark-code-fill"></i> {{ result.filename }}</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('nftContent')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
@@ -36,24 +36,24 @@
       </div>
     </div>
 
-    <!-- 설정 요약 -->
+    <!-- Configuration summary -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-secondary text-white fw-bold">
-        <i class="bi bi-list-check"></i> 설정 요약
+        <i class="bi bi-list-check"></i> Summary
       </div>
       <div class="card-body">
         <div class="row g-3">
           <div class="col-md-4">
             <table class="table table-sm mb-0">
-              <tr><th class="text-muted small">테이블</th><td class="font-monospace">{{ result.policy.table_name }}</td></tr>
-              <tr><th class="text-muted small">인터페이스</th><td class="font-monospace">{{ result.policy.device_name }}</td></tr>
-              <tr><th class="text-muted small">체인</th><td class="font-monospace">{{ result.policy.chain_name }}</td></tr>
+              <tr><th class="text-muted small">Table</th><td class="font-monospace">{{ result.policy.table_name }}</td></tr>
+              <tr><th class="text-muted small">Interface</th><td class="font-monospace">{{ result.policy.device_name }}</td></tr>
+              <tr><th class="text-muted small">Chain</th><td class="font-monospace">{{ result.policy.chain_name }}</td></tr>
               <tr><th class="text-muted small">Traceroute UDP</th>
                 <td class="font-monospace">{{ result.policy.traceroute_start }}–{{ result.policy.traceroute_end }}</td></tr>
             </table>
           </div>
           <div class="col-md-8">
-            <div class="fw-semibold small text-muted mb-2">대상 ({{ result.policy.targets | length }}개)</div>
+            <div class="fw-semibold small text-muted mb-2">Targets ({{ result.policy.targets | length }})</div>
             {% for target in result.policy.targets %}
             <div class="mb-3 border rounded p-2">
               <div class="d-flex align-items-center gap-2 mb-1">
@@ -80,7 +80,7 @@
                   {% if rule.subnet_group %}
                   <span class="text-primary">@ {{ rule.subnet_group }}</span>
                   {% else %}
-                  <span class="text-muted">(전체)</span>
+                  <span class="text-muted">(any source)</span>
                   {% endif %}
                 </span>
                 {% endfor %}
@@ -93,48 +93,48 @@
       </div>
     </div>
 
-    <!-- 적용 방법 -->
+    <!-- How to apply -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-dark text-white fw-bold">
-        <i class="bi bi-terminal-fill"></i> 적용 방법
+        <i class="bi bi-terminal-fill"></i> How to apply
       </div>
       <div class="card-body">
-        <p class="text-muted small mb-3">생성된 파일을 서버에 배포하고 nftables를 재시작합니다.</p>
+        <p class="text-muted small mb-3">Deploy the generated file to the server and restart nftables.</p>
         <div class="mb-3">
-          <div class="fw-semibold small mb-1">① 파일 배포</div>
+          <div class="fw-semibold small mb-1">1. Deploy the file</div>
           <div class="bg-dark text-light rounded p-3 font-monospace small">
-            <div class="text-success"># {{ result.filename }} 파일을 서버에 복사</div>
+            <div class="text-success"># {{ result.filename }} Copy the file to the server</div>
             scp {{ result.filename }} root@&lt;server&gt;:/etc/nftables/<br>
             <br>
-            <div class="text-success"># 또는 직접 작성</div>
+            <div class="text-success"># Or create it directly</div>
             tee /etc/nftables/{{ result.filename }} &lt;&lt;'EOF'<br>
-            <em class="text-warning">(파일 내용 붙여넣기)</em><br>
+            <em class="text-warning">(paste the file contents)</em><br>
             EOF
           </div>
         </div>
         <div class="mb-3">
-          <div class="fw-semibold small mb-1">② nftables 설정에 include 추가 <code class="small">/etc/nftables.conf</code></div>
+          <div class="fw-semibold small mb-1">2. Add an include to the nftables config <code class="small">/etc/nftables.conf</code></div>
           <div class="bg-dark text-light rounded p-3 font-monospace small">
             include "/etc/nftables/{{ result.filename }}"
           </div>
         </div>
         <div class="mb-3">
-          <div class="fw-semibold small mb-1">③ 적용 및 검증</div>
+          <div class="fw-semibold small mb-1">3. Apply and verify</div>
           <div class="bg-dark text-light rounded p-3 font-monospace small">
-            <div class="text-success"># 문법 검사</div>
+            <div class="text-success"># Syntax check</div>
             nft -c -f /etc/nftables/{{ result.filename }}<br>
             <br>
-            <div class="text-success"># 즉시 적용 (테스트)</div>
+            <div class="text-success"># Apply now (test)</div>
             nft -f /etc/nftables/{{ result.filename }}<br>
             <br>
-            <div class="text-success"># 영구 적용 (재부팅 후에도 유지)</div>
+            <div class="text-success"># Apply persistently (survives reboot)</div>
             systemctl reload nftables<br>
-            <div class="text-success"># 또는</div>
+            <div class="text-success"># or</div>
             systemctl restart nftables
           </div>
         </div>
         <div>
-          <div class="fw-semibold small mb-1">④ 규칙 확인</div>
+          <div class="fw-semibold small mb-1">4. Check the rules</div>
           <div class="bg-dark text-light rounded p-3 font-monospace small">
             nft list table netdev {{ result.policy.table_name }}<br>
             nft list chain netdev {{ result.policy.table_name }} {{ result.policy.chain_name }}
@@ -146,18 +146,18 @@
     <!-- Ansible Playbook -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
-        <span><i class="bi bi-file-earmark-play-fill"></i> Ansible로 자동 배포 (클러스터 전 노드 동일 적용)</span>
+        <span><i class="bi bi-file-earmark-play-fill"></i> Deploy with Ansible (same file on every cluster node)</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansibleSnippet')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
         <textarea id="ansibleSnippet" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
       </div>
       <div class="card-footer small text-muted">
-        서비스(pod)가 failover로 다른 노드로 옮겨갈 수 있으므로, <strong>개별 노드가 아니라
-        클러스터 전체 노드 그룹</strong>에 동일한 파일을 배포합니다.
-        실행: <code>ansible-playbook -i inventory.yml deploy_nftables.yml</code>
+        A pod can fail over to any node, so the same file is deployed to <strong>the whole
+        cluster</strong> rather than to individual nodes.
+        Run: <code>ansible-playbook -i inventory.yml deploy_nftables.yml</code>
       </div>
     </div>
 
@@ -171,7 +171,7 @@
 function copyText(id) {
   const el = document.getElementById(id);
   navigator.clipboard.writeText(el.value || el.textContent).then(() => {
-    alert('클립보드에 복사되었습니다.');
+    alert('Copied to clipboard.');
   });
 }
 </script>

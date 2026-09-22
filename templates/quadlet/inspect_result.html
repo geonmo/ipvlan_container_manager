@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Quadlet 변환 결과 - IPVLAN Container Manager{% endblock %}
+{% block title %}Quadlet Conversion Result - IPVLAN Container Manager{% endblock %}
 {% block nav_quadlet %}active{% endblock %}
 
 {% block content %}
@@ -7,11 +7,11 @@
   <div class="col-lg-10">
     {% if error %}
     <div class="alert alert-danger">
-      <i class="bi bi-exclamation-triangle-fill"></i> <strong>JSON 파싱 오류:</strong> {{ error }}
+      <i class="bi bi-exclamation-triangle-fill"></i> <strong>JSON parse error:</strong> {{ error }}
     </div>
     {% else %}
     <h2 class="fw-bold mb-4">
-      <i class="bi bi-check-circle-fill text-success"></i> podman inspect → Quadlet 변환 완료
+      <i class="bi bi-check-circle-fill text-success"></i> podman inspect → Quadlet conversion complete
     </h2>
     {% for file in files %}
     <div class="card shadow-sm mb-3">
@@ -24,7 +24,7 @@
     </div>
     {% endfor %}
     {% endif %}
-    <a href="/quadlet/" class="btn btn-secondary mt-3">← 돌아가기</a>
+    <a href="/quadlet/" class="btn btn-secondary mt-3">← Back</a>
   </div>
 </div>
 {% endblock %}

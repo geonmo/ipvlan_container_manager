@@ -1,28 +1,28 @@
 {% extends "base.html" %}
-{% block title %}클러스터 현황 - IPVLAN Container Manager{% endblock %}
+{% block title %}Cluster Status - IPVLAN Container Manager{% endblock %}
 {% block nav_cluster %}active{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-11">
-    <h2 class="fw-bold mb-1"><i class="bi bi-diagram-3-fill text-primary"></i> 클러스터 현황</h2>
-    <p class="text-muted mb-4">pcsd에서 리소스·제약조건을 가져와 서비스 토폴로지를 시각화합니다.</p>
+    <h2 class="fw-bold mb-1"><i class="bi bi-diagram-3-fill text-primary"></i> Cluster Status</h2>
+    <p class="text-muted mb-4">Fetches resources and constraints from pcsd and draws the service topology.</p>
 
-    <!-- pcsd 연결 카드 -->
+    <!-- pcsd connection -->
     <div class="card shadow-sm mb-4 border-info">
       <div class="card-header bg-info text-white fw-bold">
-        <i class="bi bi-cloud-download-fill"></i> pcsd 클러스터 정보 가져오기
+        <i class="bi bi-cloud-download-fill"></i> Fetch cluster info from pcsd
       </div>
       <div class="card-body">
         <div class="row g-2 align-items-end">
           <div class="col-md-8">
             <label class="form-label fw-semibold small mb-1">pcsd URL</label>
             <input type="text" class="form-control form-control-sm" id="pcsdUrl" value="https://localhost:2224">
-            <div class="form-text">서버의 <code>/var/lib/pcsd/known-hosts</code> 노드 토큰을 자동으로 사용합니다.</div>
+            <div class="form-text">Uses the node token from <code>/var/lib/pcsd/known-hosts</code> on the server.</div>
           </div>
           <div class="col-md-4">
             <button type="button" class="btn btn-info w-100" onclick="pcsdFetch()">
-              <i class="bi bi-cloud-download"></i> 클러스터 정보 가져오기
+              <i class="bi bi-cloud-download"></i> Fetch cluster info
             </button>
           </div>
         </div>
@@ -30,7 +30,7 @@
       </div>
     </div>
 
-    <!-- 토폴로지 결과 -->
+    <!-- Topology -->
     <div id="topoResult" class="d-none"></div>
   </div>
 </div>
@@ -39,7 +39,7 @@
 {% block scripts %}
 <script>
 // ── 등록된 DRBD 리소스 (DB) ───────────────────────────────────────────────
-let knownDrbdNames = new Set();  // DB에 등록된 DRBD resource 이름 (r0, r1 등)
+let knownDrbdNames = new Set();  // DB에 등록된 DRBD resource Name (r0, r1 등)
 
 async function loadKnownDrbd() {
   try {
@@ -230,7 +230,7 @@ function renderServiceCard(svcResources, idx, allOrders, allColocs, resMap) {
     drbdCnt  ? `<span class="badge" style="background:#0d6efd"><i class="bi bi-database-fill"></i> DRBD ×${drbdCnt}</span>` : '',
     fsCnt    ? `<span class="badge" style="background:#e6a817"><i class="bi bi-hdd-fill"></i> FS ×${fsCnt}</span>` : '',
     grpCnt   ? `<span class="badge bg-success"><i class="bi bi-collection-fill"></i> Group ×${grpCnt}</span>` : '',
-    otherCnt ? `<span class="badge bg-secondary"><i class="bi bi-box"></i> 기타 ×${otherCnt}</span>` : '',
+    otherCnt ? `<span class="badge bg-secondary"><i class="bi bi-box"></i> other ×${otherCnt}</span>` : '',
   ].filter(Boolean).join(' ');
 
   // 파이프라인 박스+화살표
@@ -257,7 +257,7 @@ function renderServiceCard(svcResources, idx, allOrders, allColocs, resMap) {
       <td class="text-nowrap"><span class="badge bg-success;font-size:.7em" style="background:#198754">${escHtml(c.then)}</span></td>
     </tr>`).join('');
     orderTable = `<details class="mt-2">
-      <summary class="small text-muted" style="cursor:pointer"><i class="bi bi-sort-down"></i> Order 제약 (${svcOrders.length})</summary>
+      <summary class="small text-muted" style="cursor:pointer"><i class="bi bi-sort-down"></i> Order constraints (${svcOrders.length})</summary>
       <table class="table table-sm table-bordered mt-1 small mb-0"><tbody>${rows}</tbody></table>
     </details>`;
   }
@@ -272,9 +272,9 @@ function renderServiceCard(svcResources, idx, allOrders, allColocs, resMap) {
       <td class="small text-muted">${escHtml(String(c.score||''))}</td>
     </tr>`).join('');
     colocTable = `<details class="mt-1">
-      <summary class="small text-muted" style="cursor:pointer"><i class="bi bi-link-45deg"></i> Colocation 제약 (${svcColocs.length})</summary>
+      <summary class="small text-muted" style="cursor:pointer"><i class="bi bi-link-45deg"></i> Colocation constraints (${svcColocs.length})</summary>
       <table class="table table-sm table-bordered mt-1 small mb-0">
-        <thead class="table-light"><tr><th>리소스</th><th></th><th>With</th><th>Score</th></tr></thead>
+        <thead class="table-light"><tr><th>Resource</th><th></th><th>With</th><th>Score</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </details>`;
@@ -301,7 +301,7 @@ async function pcsdFetch() {
   const resultEl = document.getElementById('topoResult');
 
   statusEl.className = 'mt-2 small text-warning';
-  statusEl.textContent = '연결 중...';
+  statusEl.textContent = 'Connecting...';
   statusEl.classList.remove('d-none');
   resultEl.classList.add('d-none');
   resultEl.innerHTML = '';
@@ -315,16 +315,16 @@ async function pcsdFetch() {
     const json = await resp.json();
     if (!json.ok) {
       statusEl.className = 'mt-2 small text-danger';
-      statusEl.textContent = '오류: ' + json.message;
+      statusEl.textContent = 'Error: ' + json.message;
       return;
     }
     statusEl.className = 'mt-2 small text-success';
-    statusEl.textContent = `✓ 연결 성공 — 클러스터: ${json.data.cluster_name || '(unknown)'}`;
+    statusEl.textContent = `✓ Connected — cluster: ${json.data.cluster_name || '(unknown)'}`;
     renderTopology(json.data);
     resultEl.classList.remove('d-none');
   } catch(e) {
     statusEl.className = 'mt-2 small text-danger';
-    statusEl.textContent = '오류: ' + e.message;
+    statusEl.textContent = 'Error: ' + e.message;
   }
 }
 
@@ -352,15 +352,15 @@ function renderTopology(data) {
     ).join('');
     html += `<div class="card shadow-sm mb-3">
       <div class="card-body py-2 d-flex align-items-center gap-3 flex-wrap">
-        <span class="fw-semibold small"><i class="bi bi-diagram-2"></i> 클러스터 노드</span>
+        <span class="fw-semibold small"><i class="bi bi-diagram-2"></i> Cluster nodes</span>
         ${badges}
-        <span class="text-muted small ms-auto">${resources.length}개 리소스 · ${orders.length}개 Order · ${colocs.length}개 Colocation</span>
+        <span class="text-muted small ms-auto">${resources.length} resources · ${orders.length} order · ${colocs.length} colocation</span>
       </div>
     </div>`;
   }
 
   if (!resources.length) {
-    html += '<div class="alert alert-warning">리소스 정보를 가져오지 못했습니다.</div>';
+    html += '<div class="alert alert-warning">Could not fetch resource information.</div>';
     el.innerHTML = html;
     return;
   }
@@ -369,8 +369,8 @@ function renderTopology(data) {
   const services = buildServiceGroups(resources, constr);
   html += `<p class="text-muted small mb-3">
     <i class="bi bi-info-circle"></i>
-    Order / Colocation 제약으로 연결된 리소스를 서비스 단위로 묶었습니다.
-    연결되지 않은 리소스는 독립 서비스로 표시됩니다.
+    Resources linked by order/colocation constraints are grouped into services.
+    Unlinked resources are shown as standalone services.
   </p>`;
 
   services.forEach((svc, i) => {
@@ -379,7 +379,7 @@ function renderTopology(data) {
 
   // 원시 응답
   html += `<details class="mt-2 mb-4">
-    <summary class="small text-muted" style="cursor:pointer">원시 응답 보기</summary>
+    <summary class="small text-muted" style="cursor:pointer">Show raw response</summary>
     <pre class="bg-dark text-light p-2 rounded small mt-1" style="max-height:300px;overflow:auto;font-size:.72rem">${escHtml(JSON.stringify(data.raw_status, null, 2))}</pre>
   </details>`;
 

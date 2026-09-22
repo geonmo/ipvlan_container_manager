@@ -1,41 +1,42 @@
 {% extends "base.html" %}
-{% block title %}Pacemaker 설정 결과 - IPVLAN Container Manager{% endblock %}
+{% block title %}Pacemaker Configuration Result - IPVLAN Container Manager{% endblock %}
 {% block nav_pacemaker %}active{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-10">
     <div class="d-flex align-items-center mb-4">
-      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> Pacemaker 설정 파일 생성 완료</h2>
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> Pacemaker configuration generated</h2>
       <a href="/pacemaker/" class="btn btn-outline-secondary btn-sm ms-auto">
-        <i class="bi bi-arrow-left"></i> 다시 설정
+        <i class="bi bi-arrow-left"></i> Reconfigure
       </a>
     </div>
 
-    <!-- pcs 스크립트 -->
+    <!-- pcs script -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-danger text-white d-flex align-items-center">
-        <span class="fw-bold"><i class="bi bi-terminal-fill"></i> pacemaker_setup.sh (pcs 명령 스크립트)</span>
+        <span class="fw-bold"><i class="bi bi-terminal-fill"></i> pacemaker_setup.sh (pcs commands)</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('pcsScript')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
         <textarea id="pcsScript" class="code-editor" data-mode="shell">{{ result.pcs_script }}</textarea>
       </div>
       <div class="card-footer small text-muted">
-        각 리소스/제약조건 생성은 <strong>이미 있으면 건너뛰도록</strong> 감싸여 있어 여러 번 실행해도
-        안전합니다. 설정을 바꿔 다시 적용하려면 아래 <code>pacemaker_teardown.sh</code> 로 먼저
-        해제하세요 — 이미 등록된 리소스는 건너뛰기 때문에 정의만 바꿔 다시 실행해도 반영되지 않습니다.
+        Every resource and constraint is wrapped in an <strong>skip-if-it-already-exists</strong>
+        guard, so the script is safe to re-run. To change a definition, tear it down first with
+        <code>pacemaker_teardown.sh</code> below &mdash; re-running this script will skip
+        resources that already exist, so edits alone will not take effect.
       </div>
     </div>
 
-    <!-- CIB XML 스니펫 -->
+    <!-- CIB XML snippet -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-secondary text-white d-flex align-items-center">
-        <span class="fw-bold"><i class="bi bi-file-earmark-code-fill"></i> CIB XML 스니펫 (참고용)</span>
+        <span class="fw-bold"><i class="bi bi-file-earmark-code-fill"></i> CIB XML snippet (for reference)</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('cibXml')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
@@ -43,21 +44,21 @@
       </div>
     </div>
 
-    <!-- Ansible 인벤토리 -->
+    <!-- Ansible Inventory -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-warning text-dark d-flex align-items-center">
         <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> inventory.yml (Ansible)</span>
         <div class="ms-auto d-flex align-items-center gap-2">
           <select id="pmProfileSel" class="form-select form-select-sm" style="min-width:160px">
-            <option value="">-- 프로파일 선택 --</option>
+            <option value="">-- select profile --</option>
           </select>
           <button class="btn btn-sm btn-dark" onclick="copyText('pmInventory')">
-            <i class="bi bi-clipboard"></i> 복사
+            <i class="bi bi-clipboard"></i> Copy
           </button>
         </div>
       </div>
       <div class="card-body p-0">
-        <textarea id="pmInventory" class="code-editor" data-mode="yaml"># 프로파일을 선택하면 노드 풀의 노드 목록으로 인벤토리가 생성됩니다.</textarea>
+        <textarea id="pmInventory" class="code-editor" data-mode="yaml"># Selecting a profile builds the inventory from the node pool.</textarea>
       </div>
     </div>
 
@@ -66,82 +67,85 @@
       <div class="card-header bg-success text-white d-flex align-items-center">
         <span class="fw-bold"><i class="bi bi-file-earmark-play-fill"></i> deploy_pacemaker.yml (Ansible Playbook)</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansiblePm')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
         <textarea id="ansiblePm" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
       </div>
       <div class="card-footer small text-muted">
-        실행: <code>ansible-playbook -i inventory.yml deploy_pacemaker.yml</code>
+        Run: <code>ansible-playbook -i inventory.yml deploy_pacemaker.yml</code>
       </div>
     </div>
 
-    <!-- 해제(teardown) 스크립트 -->
+    <!-- Teardown script -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-secondary text-white d-flex align-items-center">
-        <span class="fw-bold"><i class="bi bi-arrow-counterclockwise"></i> pacemaker_teardown.sh (등록 해제)</span>
+        <span class="fw-bold"><i class="bi bi-arrow-counterclockwise"></i> pacemaker_teardown.sh (unregister)</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('pmTeardown')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
         <textarea id="pmTeardown" class="code-editor" data-mode="shell">{{ result.teardown_script }}</textarea>
       </div>
       <div class="card-footer small text-muted">
-        위 생성 스크립트의 짝입니다. 설정을 바꿔 다시 적용하려면 먼저 이걸 실행하세요.
-        의존 역순(제약조건 → 그룹 → 서비스/FS → DRBD → STONITH)으로 제거하며,
-        없는 항목은 건너뛰므로 여러 번 실행해도 안전합니다.
-        <strong>DRBD 볼륨의 데이터와 LINSTOR 리소스는 건드리지 않고</strong> Pacemaker 등록만 해제합니다.
+        The counterpart to the script above. Run this first when you want to change a definition
+        and re-apply. It removes things in reverse dependency order (constraints &rarr; groups
+        &rarr; services/FS &rarr; DRBD &rarr; STONITH) and skips anything that is missing, so it
+        is safe to re-run. <strong>It does not touch DRBD volume data or LINSTOR resources</strong>
+        &mdash; it only unregisters them from Pacemaker.
       </div>
     </div>
 
-    <!-- 유지보수(패치/재부팅) 스크립트 -->
+    <!-- Maintenance (patch/reboot) script -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-info text-dark d-flex align-items-center">
-        <span class="fw-bold"><i class="bi bi-tools"></i> pacemaker_maintenance.sh (노드별 순차 패치/재부팅)</span>
+        <span class="fw-bold"><i class="bi bi-tools"></i> pacemaker_maintenance.sh (rolling patch/reboot, one node at a time)</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('pmMaintenance')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
         <textarea id="pmMaintenance" class="code-editor" data-mode="shell">{{ result.maintenance_script }}</textarea>
       </div>
       <div class="card-footer small text-muted">
-        가이드 §5.1 절차: standby → versionlock 해제/패치 → 재부팅 → unstandby를 노드마다 순서대로 수행합니다.
-        두 지점(standby 직후, 최종 확인)에서 사람 확인(Enter) 대기가 있습니다 — 무인 자동화가 아닙니다.
+        Follows the §5.1 procedure per node: standby &rarr; release versionlock and patch &rarr;
+        reboot &rarr; unstandby. It pauses for confirmation (Enter) at two points &mdash; right
+        after standby and at the final check &mdash; so it is not unattended automation.
       </div>
     </div>
 
-    <!-- 수동 실행 안내 -->
+    <!-- Manual execution -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-dark text-white fw-bold">
-        <i class="bi bi-info-circle-fill"></i> 수동 실행 절차
+        <i class="bi bi-info-circle-fill"></i> Running it manually
       </div>
       <div class="card-body">
-        <pre class="bg-dark text-light p-3 rounded small"><code># 1. 스크립트 복사 및 실행 (첫 번째 노드에서)
+        <pre class="bg-dark text-light p-3 rounded small"><code># 1. Copy and run the script (on the first node)
 scp pacemaker_setup.sh root@node1:/tmp/
 ssh root@node1 "bash /tmp/pacemaker_setup.sh"
 
-# 2. 클러스터 상태 확인
+# 2. Check cluster status
 pcs status
 pcs resource show
 pcs constraint show
 
-# 3. DRBD 상태 확인
+# 3. Check DRBD status
 drbdadm status
 
-# 4. Quadlet 서비스 상태 확인
+# 4. Check the Quadlet services
 systemctl status myapp.service</code></pre>
       </div>
     </div>
 
-    <!-- 완료 메시지 -->
+    <!-- Done -->
     <div class="alert alert-success d-flex align-items-center">
       <i class="bi bi-check-circle-fill fs-4 me-3"></i>
       <div>
-        <strong>설정 완료!</strong> DRBD + Quadlet + Pacemaker 기반 HA 컨테이너 클러스터 설정이 완성되었습니다.
-        문제 발생 시 <code>pcs status</code> 및 <code>journalctl -xe</code>로 로그를 확인하세요.
+        <strong>All set.</strong> Your DRBD + Quadlet + Pacemaker HA container cluster configuration
+        is complete. If something goes wrong, check <code>pcs status</code> and
+        <code>journalctl -xe</code>.
       </div>
     </div>
   </div>
@@ -153,7 +157,7 @@ systemctl status myapp.service</code></pre>
 function copyText(id) {
   const el = document.getElementById(id);
   navigator.clipboard.writeText(el.value || el.textContent).then(() => {
-    alert('클립보드에 복사되었습니다.');
+    alert('Copied to clipboard.');
   });
 }
 

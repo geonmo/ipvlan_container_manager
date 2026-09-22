@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Volume Quadlet 생성 결과 - IPVLAN Container Manager{% endblock %}
+{% block title %}Volume Quadlet Generation Result - IPVLAN Container Manager{% endblock %}
 {% block nav_volume %}active{% endblock %}
 
 {% block content %}
@@ -8,16 +8,16 @@
 
     {% if error %}
     <div class="alert alert-danger">
-      <i class="bi bi-exclamation-triangle-fill"></i> <strong>오류:</strong> {{ error }}
+      <i class="bi bi-exclamation-triangle-fill"></i> <strong>Error:</strong> {{ error }}
     </div>
-    <a href="/volume/" class="btn btn-secondary">← 다시 시도</a>
+    <a href="/volume/" class="btn btn-secondary">← Try again</a>
 
     {% else %}
 
     <div class="d-flex align-items-center mb-4">
-      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> Volume Quadlet 생성 완료</h2>
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> Volume Quadlet files generated</h2>
       <a href="/volume/" class="btn btn-outline-secondary btn-sm ms-auto">
-        <i class="bi bi-arrow-left"></i> 볼륨 목록
+        <i class="bi bi-arrow-left"></i> Volume list
       </a>
     </div>
 
@@ -26,7 +26,7 @@
       <div class="card-header bg-secondary text-white d-flex align-items-center">
         <span class="fw-bold font-monospace"><i class="bi bi-file-earmark-code-fill"></i> {{ file.0 }}</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('file_{{ loop.index }}')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
@@ -40,40 +40,40 @@
       <div class="card-header bg-success text-white d-flex align-items-center">
         <span class="fw-bold"><i class="bi bi-file-earmark-play-fill"></i> deploy_volumes.yml</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansiblePlaybook')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
         <textarea id="ansiblePlaybook" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
       </div>
       <div class="card-footer small text-muted">
-        실행: <code>ansible-playbook -i inventory.yml deploy_volumes.yml</code>
+        Run: <code>ansible-playbook -i inventory.yml deploy_volumes.yml</code>
       </div>
     </div>
 
-    <!-- 사용 방법 -->
+    <!-- Usage -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-dark text-white fw-bold">
-        <i class="bi bi-info-circle-fill"></i> 컨테이너에서 사용
+        <i class="bi bi-info-circle-fill"></i> Using it from a container
       </div>
       <div class="card-body">
-        <p class="small text-muted mb-2">생성된 Named Volume을 컨테이너에서 다음과 같이 참조합니다:</p>
+        <p class="small text-muted mb-2">Reference the generated named volume from a container like this:</p>
         <div class="bg-dark text-light rounded p-3 font-monospace small">
           {% for file in result.files %}
-          <div># {{ file.0 }} 사용 예시</div>
-          <div class="text-success">Volume={{ file.0 | replace(from=".volume", to="") }}.volume:/컨테이너/경로:Z</div>
+          <div># {{ file.0 }} usage example</div>
+          <div class="text-success">Volume={{ file.0 | replace(from=".volume", to="") }}.volume:/container/path:Z</div>
           {% if not loop.last %}<br>{% endif %}
           {% endfor %}
         </div>
       </div>
     </div>
 
-    <!-- 다음 단계 -->
+    <!-- Next step -->
     <div class="alert alert-info d-flex align-items-center">
       <i class="bi bi-arrow-right-circle-fill fs-4 me-3"></i>
       <div>
-        <strong>다음 단계:</strong> Pod 설정 탭에서 컨테이너와 Volume을 연결하세요.
-        <a href="/quadlet/" class="btn btn-info btn-sm ms-2">Pod 설정 →</a>
+        <strong>Next step:</strong> attach the volume to a container on the Pod Settings tab.
+        <a href="/quadlet/" class="btn btn-info btn-sm ms-2">Pod Settings →</a>
       </div>
     </div>
 
@@ -87,7 +87,7 @@
 function copyText(id) {
   const el = document.getElementById(id);
   navigator.clipboard.writeText(el.value || el.textContent).then(() => {
-    alert('클립보드에 복사되었습니다.');
+    alert('Copied to clipboard.');
   });
 }
 </script>

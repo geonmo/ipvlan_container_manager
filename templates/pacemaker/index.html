@@ -6,7 +6,7 @@
 <div class="row justify-content-center">
   <div class="col-lg-10">
     <h2 class="fw-bold mb-1"><i class="bi bi-heart-pulse-fill text-danger"></i> Pacemaker 설정</h2>
-    <p class="text-muted mb-4">DRBD Promotable Clone 및 Quadlet Systemd 리소스를 Pacemaker에 등록하는 <code>pcs</code> 스크립트를 생성합니다.</p>
+    <p class="text-muted mb-4">DRBD Promotable Clone 및 Quadlet Systemd 리소스를 Pacemaker에 등록하는 <code>pcs</code> generates the script.</p>
 
     <!-- pcsd 동기화 카드 (폼 외부) -->
     <div class="card shadow-sm mb-4 border-info">
@@ -18,7 +18,7 @@
           <div class="col-md-8">
             <label class="form-label fw-semibold small mb-1">pcsd URL</label>
             <input type="text" class="form-control form-control-sm" id="pcsdUrl" value="https://localhost:2224">
-            <div class="form-text">서버의 <code>/var/lib/pcsd/known-hosts</code> 노드 토큰을 자동으로 사용합니다.
+            <div class="form-text">서버의 <code>/var/lib/pcsd/known-hosts</code> uses the node token automatically.
               <a href="/cluster/" class="ms-2"><i class="bi bi-diagram-3-fill"></i> 클러스터 현황 탭에서 전체 토폴로지 확인</a>
             </div>
           </div>
@@ -50,7 +50,7 @@
             <div class="accordion-body pt-3">
               <div class="row g-3">
                 <div class="col-md-3">
-                  <label class="form-label fw-semibold">클러스터 이름</label>
+                  <label class="form-label fw-semibold">클러스터 Name</label>
                   <input type="text" class="form-control" name="cluster_name" value="ha-cluster" required>
                 </div>
                 <div class="col-12">
@@ -58,7 +58,7 @@
                   <input type="hidden" name="nodes_json" id="pmNodesJson" value="[]">
                   <div class="row g-2">
                     <div class="col-md-5">
-                      <div class="small text-muted mb-1">노드 풀 <a href="/nodes/" target="_blank" class="ms-1"><i class="bi bi-pencil"></i></a></div>
+                      <div class="small text-muted mb-1">Node Pool <a href="/nodes/" target="_blank" class="ms-1"><i class="bi bi-pencil"></i></a></div>
                       <ul class="list-group" id="pmPoolList" style="min-height:80px;max-height:180px;overflow-y:auto"></ul>
                     </div>
                     <div class="col-md-1 d-flex flex-column justify-content-center align-items-center gap-2">
@@ -119,17 +119,17 @@
               <input type="hidden" name="drbd_resources_json" id="drbdResourcesJson" value="[]">
               <div class="d-flex gap-2 mb-3">
                 <button type="button" class="btn btn-sm btn-outline-primary" onclick="addDrbdGroup()">
-                  <i class="bi bi-plus-lg"></i> DRBD 볼륨 추가
+                  <i class="bi bi-plus-lg"></i> DRBD Add volume
                 </button>
                 <select class="form-select form-select-sm w-auto" id="drbdQuickSel"
                         onchange="if(this.value){addDrbdGroup(this.value);this.value='';}">
-                  <option value="">-- 등록된 리소스에서 추가 --</option>
+                  <option value="">-- 등록된 리소스에서 Add --</option>
                 </select>
               </div>
               <div id="drbdResourceWarning" class="alert alert-warning py-2 px-3 small d-none"></div>
               <div id="drbdGroupList"></div>
               <div class="text-center mt-2 text-muted small" id="drbdGroupEmpty">
-                DRBD 볼륨을 추가하거나 위 드롭다운에서 선택하세요.
+                DRBD 볼륨을 Add하거나 위 드롭다운에서 선택하세요.
               </div>
               <div class="mt-3 p-2 bg-light rounded small text-muted">
                 각 DRBD Promotable Clone 리소스마다 Filesystem 마운트가 연결됩니다.
@@ -152,15 +152,15 @@
             <div class="accordion-body p-0">
               <div class="px-3 pt-2 pb-1 d-flex justify-content-end">
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadGrpExample()">
-                  <i class="bi bi-lightning-fill"></i> 예시
+                  <i class="bi bi-lightning-fill"></i> Example
                 </button>
               </div>
               <textarea id="grpJson" name="resource_groups_json" class="code-editor"
                         data-mode="javascript" style="min-height:160px">[]</textarea>
               <div class="px-3 py-2 small text-muted bg-light border-top">
-                <code>group_name</code>: 그룹 이름 (예: <code>grp-myapp</code>),
-                <code>members</code>: 리소스 이름 순서 목록 — Pod를 첫 번째로,
-                <code>after_fs</code>: 선행 FS 리소스 이름
+                <code>group_name</code>: 그룹 Name (예: <code>grp-myapp</code>),
+                <code>members</code>: 리소스 Name 순서 목록 — Pod를 첫 번째로,
+                <code>after_fs</code>: 선행 FS 리소스 Name
               </div>
             </div>
           </div>
@@ -179,14 +179,14 @@
             <div class="accordion-body p-0">
               <div class="px-3 pt-2 pb-1 d-flex justify-content-end">
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="loadSvcExample()">
-                  <i class="bi bi-lightning-fill"></i> 예시
+                  <i class="bi bi-lightning-fill"></i> Example
                 </button>
               </div>
               <textarea id="svcJson" name="systemd_resources_json" class="code-editor"
                         data-mode="javascript" style="min-height:200px">[]</textarea>
               <div class="px-3 py-2 small text-muted bg-light border-top">
-                <code>resource_name</code>: Pacemaker 리소스 이름,
-                <code>systemd_unit</code>: systemd 유닛 이름 (예: <code>myapp.service</code>),
+                <code>resource_name</code>: Pacemaker 리소스 Name,
+                <code>systemd_unit</code>: systemd 유닛 Name (예: <code>myapp.service</code>),
                 <code>resource_type</code>: container | pod | volume
               </div>
             </div>
@@ -229,7 +229,7 @@
                           style="min-height:80px">[]</textarea>
                 <div class="border rounded p-2 mt-2 bg-light">
                   <div class="small fw-semibold mb-2">
-                    <i class="bi bi-link-45deg"></i> DRBD-DRBD anchor/follower 결합 빠른 추가
+                    <i class="bi bi-link-45deg"></i> DRBD-DRBD anchor/follower 결합 빠른 Add
                   </div>
                   <div class="row g-2 align-items-end">
                     <div class="col-md-5">
@@ -242,7 +242,7 @@
                     </div>
                     <div class="col-md-2">
                       <button type="button" class="btn btn-outline-primary btn-sm w-100" onclick="addAnchorFollowerConstraint()">
-                        <i class="bi bi-plus-lg"></i> 추가
+                        <i class="bi bi-plus-lg"></i> Add
                       </button>
                     </div>
                   </div>
@@ -279,12 +279,12 @@
               <input type="hidden" name="stonith_devices_json" id="stonithDevicesJson" value="[]">
               <div class="d-flex gap-2 mb-3">
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="addStonithDevice()">
-                  <i class="bi bi-plus-lg"></i> STONITH 장치 추가
+                  <i class="bi bi-plus-lg"></i> STONITH 장치 Add
                 </button>
               </div>
               <div id="stonithDeviceList"></div>
               <div class="text-center mt-2 text-muted small" id="stonithDeviceEmpty">
-                노드별 IPMI(fence_ipmilan) 펜싱 장치를 추가하세요. 노드마다 하나씩 등록합니다.
+                노드별 IPMI(fence_ipmilan) 펜싱 장치를 Add하세요. 노드마다 하나씩 등록합니다.
               </div>
               <div class="mt-3 p-2 bg-light rounded small text-muted">
                 <code>pcs stonith create stonith-ipmi-&lt;node&gt; fence_ipmilan pcmk_host_list=&lt;node&gt;
@@ -295,13 +295,13 @@
           </div>
         </div>
 
-        <!-- ⑦ Ansible 배포 설정 -->
+        <!-- ⑦ Ansible Deployment -->
         <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
           <h2 class="accordion-header" id="pmHeadAnsible">
             <button class="accordion-button collapsed" type="button"
                     data-bs-toggle="collapse" data-bs-target="#pmSecAnsible" aria-expanded="false">
               <i class="bi bi-send-fill text-warning me-2"></i>
-              <span class="fw-semibold">Ansible 배포 설정</span>
+              <span class="fw-semibold">Ansible Deployment</span>
             </button>
           </h2>
           <div id="pmSecAnsible" class="accordion-collapse collapse">
@@ -312,19 +312,19 @@
                   <input type="text" class="form-control" name="ansible_hosts" placeholder="all">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label">Ansible 프로파일</label>
+                  <label class="form-label">Ansible Profile</label>
                   <select class="form-select" id="pmProfileSel" onchange="pmSyncProfile()">
-                    <option value="">-- 직접 입력 --</option>
+                    <option value="">-- enter manually --</option>
                   </select>
                 </div>
               </div>
               <div class="row g-3 mt-1" id="pmProfileManual">
                 <div class="col-md-4">
-                  <label class="form-label">SSH 사용자</label>
+                  <label class="form-label">SSH user</label>
                   <input type="text" class="form-control" name="ansible_user" id="pmAnsibleUser" value="root">
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label">SSH 개인키</label>
+                  <label class="form-label">SSH private key</label>
                   <input type="text" class="form-control" name="ansible_ssh_key" id="pmAnsibleKey" value="~/.ssh/id_rsa">
                 </div>
               </div>
@@ -341,7 +341,7 @@
           <i class="bi bi-gear-fill"></i> pcs 스크립트 생성
         </button>
         <button type="button" class="btn btn-outline-secondary btn-lg" onclick="loadExample()">
-          <i class="bi bi-lightning-fill"></i> 예시 값 입력
+          <i class="bi bi-lightning-fill"></i> Example 값 입력
         </button>
       </div>
     </form>
@@ -433,7 +433,7 @@ async function pmLoadDrbdResources() {
     }
   }
 
-  // 빠른 추가 드롭다운 채우기
+  // 빠른 Add 드롭다운 채우기
   const sel = document.getElementById('drbdQuickSel');
   pmDrbdResources.forEach(r => {
     const opt = document.createElement('option');
@@ -489,7 +489,7 @@ function renderDrbdGroups() {
   badge.textContent = drbdGroups.length;
 
   drbdGroups.forEach((g, idx) => {
-    // 예전 형식(op timeout 필드 도입 전)으로 localStorage에 저장된 데이터도
+    // 예전 형식(op timeout 필드 도입 전)으로 localStorage에 Save된 데이터도
     // 그대로 열릴 수 있어 기본값으로 채워준다.
     g.promote_timeout = g.promote_timeout || '90s';
     g.demote_timeout  = g.demote_timeout  || '90s';
@@ -519,17 +519,17 @@ function renderDrbdGroups() {
 
       <div class="row g-2 mb-2">
         <div class="col-md-3">
-          <label class="form-label small fw-semibold mb-1">Pacemaker 리소스 이름</label>
+          <label class="form-label small fw-semibold mb-1">Pacemaker 리소스 Name</label>
           <input type="text" class="form-control form-control-sm" value="${g.resource_name}"
             oninput="drbdGroups[${idx}].resource_name=this.value; syncDrbdJson()">
         </div>
         <div class="col-md-3">
-          <label class="form-label small fw-semibold mb-1">DRBD .res 이름</label>
+          <label class="form-label small fw-semibold mb-1">DRBD .res Name</label>
           <input type="text" class="form-control form-control-sm" value="${g.drbd_resource_name}"
             oninput="drbdGroups[${idx}].drbd_resource_name=this.value; syncDrbdJson()">
         </div>
         <div class="col-md-3">
-          <label class="form-label small fw-semibold mb-1">Clone 이름</label>
+          <label class="form-label small fw-semibold mb-1">Clone Name</label>
           <input type="text" class="form-control form-control-sm" value="${g.clone_name}"
             oninput="drbdGroups[${idx}].clone_name=this.value; syncDrbdJson()">
         </div>
@@ -585,7 +585,7 @@ function renderDrbdGroups() {
         </div>
         <div class="row g-2">
           <div class="col-md-3">
-            <label class="form-label small mb-1">리소스 이름</label>
+            <label class="form-label small mb-1">리소스 Name</label>
             <input type="text" class="form-control form-control-sm" value="${g.fs.resource_name}"
               oninput="drbdGroups[${idx}].fs.resource_name=this.value; syncDrbdJson()">
           </div>
@@ -615,14 +615,14 @@ function renderDrbdGroups() {
   refreshCloneSelectors();
 }
 
-// ── A.6: anchor/follower DRBD-DRBD colocation 빠른 추가 ───────────────────
+// ── A.6: anchor/follower DRBD-DRBD colocation 빠른 Add ───────────────────
 function refreshCloneSelectors() {
   const clones = drbdGroups.map(g => g.clone_name).filter(Boolean);
   ['anchorCloneSel', 'followerCloneSel'].forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
     const prev = sel.value;
-    sel.innerHTML = '<option value="">-- 선택 --</option>' +
+    sel.innerHTML = '<option value="">-- select --</option>' +
       clones.map(c => `<option value="${c}">${c}</option>`).join('');
     if (clones.includes(prev)) sel.value = prev;
   });
@@ -849,7 +849,7 @@ function renderStonithDevices() {
         <div class="col-md-3">
           <label class="form-label small fw-semibold mb-1">대상 노드</label>
           <select class="form-select form-select-sm" onchange="stonithDevices[${idx}].node=this.value; syncStonithJson()">
-            <option value="">-- 선택 --</option>
+            <option value="">-- select --</option>
             ${nodeOpts}
           </select>
         </div>
@@ -869,7 +869,7 @@ function renderStonithDevices() {
             oninput="stonithDevices[${idx}].ipmi_password=this.value; syncStonithJson()">
         </div>
         <div class="col-12">
-          <label class="form-label small mb-1">추가 옵션 (공백으로 구분, 선택 — 예: <code>lanplus=1</code>)</label>
+          <label class="form-label small mb-1">Add 옵션 (공백으로 구분, 선택 — 예: <code>lanplus=1</code>)</label>
           <input type="text" class="form-control form-control-sm" value="${(d.extra_opts||[]).join(' ')}"
             oninput="stonithDevices[${idx}].extra_opts=this.value.split(/\\s+/).filter(Boolean); syncStonithJson()">
         </div>
@@ -884,12 +884,12 @@ function syncStonithJson() {
   document.getElementById('stonithDevicesJson').value = JSON.stringify(stonithDevices);
 }
 
-// ── Ansible 프로파일 ────────────────────────────────────────────────────
+// ── Ansible Profile ────────────────────────────────────────────────────
 function pmInitProfile() {
   const sel = document.getElementById('pmProfileSel');
   const active = getActiveProfileName();
   const profiles = getProfilePool();
-  sel.innerHTML = '<option value="">-- 직접 입력 --</option>';
+  sel.innerHTML = '<option value="">-- enter manually --</option>';
   profiles.forEach(p => {
     const opt = document.createElement('option');
     opt.value = p.name;
@@ -945,7 +945,7 @@ async function pcsdFetch() {
 
     if (!json.ok) {
       statusEl.className = 'mt-2 small text-danger';
-      statusEl.textContent = '오류: ' + json.message;
+      statusEl.textContent = 'Error: ' + json.message;
       return;
     }
 
@@ -961,7 +961,7 @@ async function pcsdFetch() {
     }
   } catch (e) {
     statusEl.className = 'mt-2 small text-danger';
-    statusEl.textContent = '오류: ' + e.message;
+    statusEl.textContent = 'Error: ' + e.message;
   }
 }
 

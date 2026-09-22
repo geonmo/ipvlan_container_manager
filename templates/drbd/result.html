@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}DRBD 설정 결과 - IPVLAN Container Manager{% endblock %}
+{% block title %}DRBD Configuration Result - IPVLAN Container Manager{% endblock %}
 {% block nav_drbd %}active{% endblock %}
 
 {% block content %}
@@ -8,27 +8,27 @@
 
     {% if error %}
     <div class="alert alert-danger">
-      <i class="bi bi-exclamation-triangle-fill"></i> <strong>오류:</strong> {{ error }}
+      <i class="bi bi-exclamation-triangle-fill"></i> <strong>Error:</strong> {{ error }}
     </div>
-    <a href="/drbd/" class="btn btn-secondary">← 다시 시도</a>
+    <a href="/drbd/" class="btn btn-secondary">← Try again</a>
 
     {% else %}
 
     <div class="d-flex align-items-center mb-4">
-      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> DRBD 설정 파일 생성 완료</h2>
+      <h2 class="fw-bold me-3"><i class="bi bi-check-circle-fill text-success"></i> DRBD configuration files generated</h2>
       <div class="ms-auto d-flex gap-2">
         <button class="btn btn-success btn-sm" onclick="saveToDb()">
-          <i class="bi bi-cloud-arrow-up-fill"></i> DB에 저장
+          <i class="bi bi-cloud-arrow-up-fill"></i> Save to DB
         </button>
         <a href="/drbd/" class="btn btn-outline-secondary btn-sm">
-          <i class="bi bi-arrow-left"></i> 다시 설정
+          <i class="bi bi-arrow-left"></i> Reconfigure
         </a>
       </div>
     </div>
 
     <div id="saveAlert" class="alert d-none mb-3" role="alert"></div>
 
-    <!-- DB 저장용 숨김 폼 데이터 -->
+    <!-- Hidden form data for saving to the DB -->
     <form id="saveForm" style="display:none">
       <input name="resource_name"     value="{{ result.save_form.resource_name }}">
       <input name="protocol"          value="{{ result.save_form.protocol }}">
@@ -52,24 +52,24 @@
     <div class="alert alert-warning d-flex align-items-center mb-4">
       <i class="bi bi-layers-fill fs-5 me-2"></i>
       <div>
-        <strong>LVM 모드:</strong>
-        DRBD 디스크로 LVM LV를 사용합니다.
-        아래 Ansible 플레이북에 LV 자동 생성 태스크가 포함되어 있습니다.
+        <strong>LVM mode:</strong>
+        DRBD uses an LVM logical volume as its backing disk.
+        The playbook below includes a task that creates the LV.
         (<code>/dev/&lt;VG&gt;/{{ result.res_filename | replace(from=".res", to="") }}</code>)
       </div>
     </div>
     {% endif %}
 
-    <!-- .res 파일 -->
+    <!-- .res file -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-primary text-white d-flex align-items-center">
         <span class="fw-bold"><i class="bi bi-file-earmark-code-fill"></i> {{ result.res_filename }}</span>
         <div class="ms-auto d-flex gap-2">
           <button class="btn btn-sm btn-light" onclick="copyText('resContent')">
-            <i class="bi bi-clipboard"></i> 복사
+            <i class="bi bi-clipboard"></i> Copy
           </button>
           <form method="post" action="/drbd/download" style="display:inline">
-            <!-- 다운로드는 현재 res 내용을 그대로 재전송할 수 없으므로 복사 후 저장 안내 -->
+            <!-- Download would require re-posting the .res body, so we tell the user to copy and save -->
           </form>
         </div>
       </div>
@@ -78,16 +78,16 @@
       </div>
     </div>
 
-    <!-- Ansible 인벤토리 -->
+    <!-- Ansible Inventory -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-warning text-dark d-flex align-items-center">
         <span class="fw-bold"><i class="bi bi-file-earmark-text-fill"></i> inventory.yml (Ansible)</span>
         <div class="ms-auto d-flex align-items-center gap-2">
           <select id="drbdProfileSel" class="form-select form-select-sm" style="min-width:160px">
-            <option value="">-- 프로파일 선택 --</option>
+            <option value="">-- select profile --</option>
           </select>
           <button class="btn btn-sm btn-dark" onclick="copyText('inventoryContent')">
-            <i class="bi bi-clipboard"></i> 복사
+            <i class="bi bi-clipboard"></i> Copy
           </button>
         </div>
       </div>
@@ -96,7 +96,7 @@
       </div>
     </div>
 
-    <!-- Ansible 플레이북 (생성됨) -->
+    <!-- Generated Ansible playbook -->
     <div class="card shadow-sm mb-4">
       <div class="card-header d-flex align-items-center
         {% if result.has_lvm %}bg-danger text-white{% else %}bg-success text-white{% endif %}">
@@ -104,25 +104,25 @@
           <i class="bi bi-file-earmark-play-fill"></i>
           deploy_drbd.yml
           {% if result.has_lvm %}
-          <span class="badge bg-light text-danger ms-1">LVM 포함</span>
+          <span class="badge bg-light text-danger ms-1">includes LVM</span>
           {% endif %}
         </span>
         <button class="btn btn-sm btn-light ms-auto" onclick="copyText('ansiblePlaybook')">
-          <i class="bi bi-clipboard"></i> 복사
+          <i class="bi bi-clipboard"></i> Copy
         </button>
       </div>
       <div class="card-body p-0">
         <textarea id="ansiblePlaybook" class="code-editor" data-mode="yaml">{{ result.ansible_playbook }}</textarea>
       </div>
       <div class="card-footer small text-muted">
-        실행: <code>ansible-playbook -i inventory.yml deploy_drbd.yml</code>
+        Run: <code>ansible-playbook -i inventory.yml deploy_drbd.yml</code>
       </div>
     </div>
 
-    <!-- DRBD 초기화 절차 -->
+    <!-- DRBD initialisation steps -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-secondary text-white fw-bold">
-        <i class="bi bi-info-circle-fill"></i> DRBD 초기화 절차 (배포 후)
+        <i class="bi bi-info-circle-fill"></i> DRBD initialisation (after deployment)
       </div>
       <div class="card-body">
         <ul class="list-group list-group-flush">
@@ -135,12 +135,12 @@
       </div>
     </div>
 
-    <!-- 다음 단계 -->
+    <!-- Next step -->
     <div class="alert alert-info d-flex align-items-center">
       <i class="bi bi-arrow-right-circle-fill fs-4 me-3"></i>
       <div>
-        <strong>다음 단계:</strong> Quadlet 유닛 파일을 생성하여 컨테이너를 systemd 서비스로 등록하세요.
-        <a href="/quadlet/" class="btn btn-info btn-sm ms-2">Quadlet 변환 →</a>
+        <strong>Next step:</strong> generate Quadlet unit files to register your containers as systemd services.
+        <a href="/quadlet/" class="btn btn-info btn-sm ms-2">Quadlet →</a>
       </div>
     </div>
 
@@ -154,7 +154,7 @@
 function copyText(id) {
   const el = document.getElementById(id);
   navigator.clipboard.writeText(el.value || el.textContent).then(() => {
-    alert('클립보드에 복사되었습니다.');
+    alert('Copied to clipboard.');
   });
 }
 
@@ -187,7 +187,7 @@ function saveToDb() {
   .catch(e => {
     const alert = document.getElementById('saveAlert');
     alert.className = 'alert alert-danger';
-    alert.textContent = '저장 요청 실패: ' + e.message;
+    alert.textContent = 'Save request failed: ' + e.message;
     alert.classList.remove('d-none');
   });
 }

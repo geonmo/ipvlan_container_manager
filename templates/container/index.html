@@ -1,18 +1,18 @@
 {% extends "base.html" %}
-{% block title %}컨테이너 설정 - IPVLAN Container Manager{% endblock %}
+{% block title %}Container Settings - IPVLAN Container Manager{% endblock %}
 {% block nav_container %}active{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-10">
-    <h2 class="fw-bold mb-1"><i class="bi bi-boxes text-success"></i> 컨테이너 설정</h2>
-    <p class="text-muted mb-4">Podman 컨테이너를 systemd Quadlet 유닛으로 설정합니다. Pod 설정은 <a href="/quadlet/">Pod 설정</a> 페이지에서 합니다.</p>
+    <h2 class="fw-bold mb-1"><i class="bi bi-boxes text-success"></i> Container Settings</h2>
+    <p class="text-muted mb-4">Podman 컨테이너를 systemd Quadlet 유닛으로 설정합니다. Pod Settings은 <a href="/quadlet/">Pod Settings</a> 페이지에서 합니다.</p>
 
     <!-- 탭 -->
     <ul class="nav nav-tabs mb-4" id="containerTab">
       <li class="nav-item">
         <a class="nav-link active" data-bs-toggle="tab" href="#manualTab">
-          <i class="bi bi-pencil-fill"></i> 컨테이너 설정
+          <i class="bi bi-pencil-fill"></i> Container Settings
         </a>
       </li>
       <li class="nav-item">
@@ -40,7 +40,7 @@
             <div class="card-body">
               <div class="row g-3">
                 <div class="col-md-4">
-                  <label class="form-label fw-semibold">컨테이너 이름 <span class="text-danger">*</span></label>
+                  <label class="form-label fw-semibold">컨테이너 Name <span class="text-danger">*</span></label>
                   <input type="text" class="form-control" id="cName" placeholder="myapp">
                 </div>
                 <div class="col-md-4">
@@ -48,7 +48,7 @@
                   <select class="form-select" id="cPodSel">
                     <option value="">-- Pod 없음 (독립 컨테이너) --</option>
                   </select>
-                  <div class="form-text"><a href="/quadlet/" target="_blank"><i class="bi bi-box-seam-fill"></i> Pod 설정</a>에서 Pod를 먼저 생성하세요.</div>
+                  <div class="form-text"><a href="/quadlet/" target="_blank"><i class="bi bi-box-seam-fill"></i> Pod Settings</a>에서 Pod를 먼저 생성하세요.</div>
                 </div>
                 <div class="col-md-4">
                   <label class="form-label fw-semibold">컨테이너 이미지 <span class="text-danger">*</span></label>
@@ -63,12 +63,12 @@
             <div class="card-header bg-secondary text-white fw-bold d-flex align-items-center">
               <span><i class="bi bi-hdd-stack-fill"></i> 볼륨 마운트</span>
               <button type="button" class="btn btn-sm btn-light ms-auto" onclick="addVolumeRow()">
-                <i class="bi bi-plus-circle"></i> 볼륨 추가
+                <i class="bi bi-plus-circle"></i> Add volume
               </button>
             </div>
             <div class="card-body">
               <div id="volumeRows">
-                <div class="text-muted small py-2">볼륨이 없습니다. 추가 버튼을 눌러 볼륨을 마운트하세요.</div>
+                <div class="text-muted small py-2">볼륨이 없습니다. Add 버튼을 눌러 볼륨을 마운트하세요.</div>
               </div>
             </div>
           </div>
@@ -78,7 +78,7 @@
             <div class="card-header bg-info text-white fw-bold d-flex align-items-center">
               <span><i class="bi bi-table"></i> 환경 변수 (Env)</span>
               <button type="button" class="btn btn-sm btn-light ms-auto" onclick="addEnvRow()">
-                <i class="bi bi-plus-circle"></i> 추가
+                <i class="bi bi-plus-circle"></i> Add
               </button>
             </div>
             <div class="card-body">
@@ -118,7 +118,7 @@
             <div class="card-header bg-dark text-white fw-bold d-flex align-items-center">
               <span><i class="bi bi-sliders"></i> PodmanArgs / Tmpfs</span>
               <button type="button" class="btn btn-sm btn-light ms-auto" onclick="addArgRow()">
-                <i class="bi bi-plus-circle"></i> PodmanArgs 추가
+                <i class="bi bi-plus-circle"></i> PodmanArgs Add
               </button>
             </div>
             <div class="card-body">
@@ -188,7 +188,7 @@
           <input type="hidden" name="ansible_hosts" id="containerHosts" value="">
           <div class="card shadow-sm mb-4">
             <div class="card-header bg-warning text-dark fw-bold">
-              <i class="bi bi-send-fill"></i> Ansible 배포 설정
+              <i class="bi bi-send-fill"></i> Ansible Deployment
             </div>
             <div class="card-body">
               <div class="row g-3">
@@ -196,7 +196,7 @@
                   <label class="form-label fw-semibold">대상 노드 선택</label>
                   <div class="row g-2">
                     <div class="col-6">
-                      <div class="small text-muted mb-1">노드 풀 <a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i></a></div>
+                      <div class="small text-muted mb-1">Node Pool <a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i></a></div>
                       <ul class="list-group" id="cPoolList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
                     </div>
                     <div class="col-auto d-flex flex-column justify-content-center gap-2">
@@ -209,9 +209,9 @@
                   </div>
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label fw-semibold">Ansible 프로파일</label>
+                  <label class="form-label fw-semibold">Ansible Profile</label>
                   <select class="form-select" id="cProfileSel">
-                    <option value="">-- 선택 안 함 --</option>
+                    <option value="">-- none --</option>
                   </select>
                   <div class="form-text"><a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i> 프로파일 관리</a></div>
                 </div>
@@ -271,7 +271,7 @@ function esc(s) {
 function renderVolumeRows() {
   const container = document.getElementById('volumeRows');
   if (!cVolumes.length) {
-    container.innerHTML = '<div class="text-muted small py-2">볼륨이 없습니다. 추가 버튼을 눌러 볼륨을 마운트하세요.</div>';
+    container.innerHTML = '<div class="text-muted small py-2">볼륨이 없습니다. Add 버튼을 눌러 볼륨을 마운트하세요.</div>';
     return;
   }
   container.innerHTML = '';
@@ -288,7 +288,7 @@ function renderVolumeRows() {
         </select>
       </div>
       <div class="col-md-3">
-        <label class="form-label small fw-semibold">${v.source_type==='named'?'볼륨 이름':'볼륨 선택'}</label>
+        <label class="form-label small fw-semibold">${v.source_type==='named'?'Volume name':'볼륨 선택'}</label>
         ${v.source_type === 'named' ?
           `<input type="text" class="form-control form-control-sm" placeholder="myapp-data"
                  value="${esc(v.source)}"
@@ -429,7 +429,7 @@ function serializeContainerForm() {
   const pod   = document.getElementById('cPodSel').value.trim();
 
   if (!name || !image) {
-    alert('컨테이너 이름과 이미지는 필수입니다.');
+    alert('컨테이너 Name과 이미지는 필수입니다.');
     return false;
   }
 
@@ -497,7 +497,7 @@ function initCProfileSel() {
   if (!sel) return;
   const profiles = getProfilePool();
   const active   = getActiveProfileName();
-  sel.innerHTML  = '<option value="">-- 선택 안 함 --</option>';
+  sel.innerHTML  = '<option value="">-- none --</option>';
   profiles.forEach(p => {
     const opt = document.createElement('option');
     opt.value = p.name;
@@ -572,7 +572,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Pod 드롭다운 채우기
   const podSel = document.getElementById('cPodSel');
   if (podSel) {
-    // localStorage 에서 저장된 pod 이름
+    // localStorage 에서 Save된 pod Name
     const savedPod = localStorage.getItem('quadlet_pod_name') || '';
     scannedPods.forEach(p => {
       const opt = document.createElement('option');
@@ -581,11 +581,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (p.name === savedPod) opt.selected = true;
       podSel.appendChild(opt);
     });
-    // localStorage pod 이름이 scannedPods에 없으면 직접 추가
+    // localStorage pod Name이 scannedPods에 없으면 직접 Add
     if (savedPod && !scannedPods.find(p => p.name === savedPod)) {
       const opt = document.createElement('option');
       opt.value = savedPod;
-      opt.textContent = savedPod + ' (저장됨)';
+      opt.textContent = savedPod + ' (Save됨)';
       opt.selected = true;
       podSel.appendChild(opt);
     }

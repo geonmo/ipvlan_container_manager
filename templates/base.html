@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -24,47 +24,47 @@
       <ul class="navbar-nav ms-3">
         <li class="nav-item">
           <a class="nav-link {% block nav_nodes %}{% endblock %}" href="/nodes/">
-            <i class="bi bi-server"></i> 노드 풀
+            <i class="bi bi-server"></i> Node Pool
           </a>
         </li>
         <li class="nav-item">
           <a class="nav-link {% block nav_drbd %}{% endblock %}" href="/drbd/">
-            <i class="bi bi-database-fill"></i> DRBD 설정
+            <i class="bi bi-database-fill"></i> DRBD
           </a>
         </li>
         <li class="nav-item">
           <a class="nav-link {% block nav_volume %}{% endblock %}" href="/volume/">
-            <i class="bi bi-hdd-stack-fill"></i> Volume 설정
+            <i class="bi bi-hdd-stack-fill"></i> Volumes
           </a>
         </li>
         <li class="nav-item">
           <a class="nav-link {% block nav_quadlet %}{% endblock %}" href="/quadlet/">
-            <i class="bi bi-box-seam-fill"></i> Pod 설정
+            <i class="bi bi-box-seam-fill"></i> Pods
           </a>
         </li>
         <li class="nav-item">
           <a class="nav-link {% block nav_nft %}{% endblock %}" href="/nft/">
-            <i class="bi bi-shield-fill-check"></i> 방화벽
+            <i class="bi bi-shield-fill-check"></i> Firewall
           </a>
         </li>
         <li class="nav-item">
           <a class="nav-link {% block nav_container %}{% endblock %}" href="/container/">
-            <i class="bi bi-boxes"></i> 컨테이너 설정
+            <i class="bi bi-boxes"></i> Containers
           </a>
         </li>
         <li class="nav-item">
           <a class="nav-link {% block nav_pacemaker %}{% endblock %}" href="/pacemaker/">
-            <i class="bi bi-heart-pulse-fill"></i> Pacemaker 설정
+            <i class="bi bi-heart-pulse-fill"></i> Pacemaker
           </a>
         </li>
         <li class="nav-item">
           <a class="nav-link {% block nav_cluster %}{% endblock %}" href="/cluster/">
-            <i class="bi bi-diagram-3-fill"></i> 클러스터 현황
+            <i class="bi bi-diagram-3-fill"></i> Cluster Status
           </a>
         </li>
         <li class="nav-item">
           <a class="nav-link {% block nav_linstor %}{% endblock %}" href="/linstor/">
-            <i class="bi bi-hdd-stack-fill"></i> LINSTOR <span class="badge bg-warning text-dark">실험적</span>
+            <i class="bi bi-hdd-stack-fill"></i> LINSTOR <span class="badge bg-warning text-dark">experimental</span>
           </a>
         </li>
       </ul>
@@ -80,7 +80,7 @@
 </div>
 
 <footer class="border-top mt-5 py-3 bg-white text-center text-muted small">
-  DRBD + Quadlet + Pacemaker 설정 도우미 &mdash; RHEL9 / AlmaLinux9 HA Cluster
+  DRBD + Quadlet + Pacemaker configuration helper &mdash; RHEL9 / AlmaLinux9 HA Cluster
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

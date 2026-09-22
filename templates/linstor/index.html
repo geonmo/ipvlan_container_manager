@@ -14,15 +14,15 @@
     </p>
     <div class="alert alert-warning small">
       <i class="bi bi-exclamation-triangle-fill"></i>
-      RHEL/AlmaLinux9는 LINBIT 공식 저장소가 구독 고객 전용이라 무료 접근이 불가능합니다.
+      RHEL/AlmaLinux9는 LINBIT 공식 Save소가 구독 고객 전용이라 무료 접근이 불가능합니다.
       아래 <strong>RPM 디렉터리</strong>에는 별도 빌드 파이프라인(<code>gsdc-linbit-build</code>,
-      이 저장소 범위 밖)이 만든 <code>linstor-*.rpm</code> 파일들이 이미 있어야 합니다 —
+      이 Save소 범위 밖)이 만든 <code>linstor-*.rpm</code> 파일들이 이미 있어야 합니다 —
       생성된 플레이북이 이를 각 노드에 로컬 설치한 뒤 공식 컬렉션에 이어받깁니다.
     </div>
     <div class="d-flex align-items-center gap-2 mb-4">
       <span class="small text-muted">현재 감지된 스토리지 백엔드:</span>
       <span class="badge" id="linstorBackendBadge">확인 중...</span>
-      <a href="/nodes/" class="small">노드 풀에서 다시 감지</a>
+      <a href="/nodes/" class="small">Node Pool에서 다시 감지</a>
     </div>
 
     <form action="/linstor/generate" method="post" id="linstorForm">
@@ -107,7 +107,7 @@
         <div class="card-header bg-primary text-white fw-bold d-flex align-items-center">
           <span><i class="bi bi-hdd-fill"></i> 스토리지 풀 (linstor_storage_pools)</span>
           <button type="button" class="btn btn-sm btn-outline-light ms-auto" onclick="loadStoragePoolExample()">
-            <i class="bi bi-lightning-fill"></i> 예시
+            <i class="bi bi-lightning-fill"></i> Example
           </button>
         </div>
         <div class="card-body p-0">
@@ -127,7 +127,7 @@
         <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
           <span><i class="bi bi-hdd-network-fill"></i> 리소스 그룹 / 리소스 (DRBD 볼륨)</span>
           <button type="button" class="btn btn-sm btn-outline-light ms-auto" onclick="loadResourceExample()">
-            <i class="bi bi-lightning-fill"></i> 예시
+            <i class="bi bi-lightning-fill"></i> Example
           </button>
         </div>
         <div class="card-body p-0">
@@ -140,27 +140,27 @@
         </div>
       </div>
 
-      <!-- Ansible 배포 설정 -->
+      <!-- Ansible Deployment -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-warning text-dark fw-bold">
-          <i class="bi bi-send-fill"></i> Ansible 배포 설정
+          <i class="bi bi-send-fill"></i> Ansible Deployment
         </div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-4">
-              <label class="form-label">Ansible 프로파일</label>
+              <label class="form-label">Ansible Profile</label>
               <select class="form-select" id="linstorProfileSel" onchange="linstorSyncProfile()">
-                <option value="">-- 직접 입력 --</option>
+                <option value="">-- enter manually --</option>
               </select>
             </div>
           </div>
           <div class="row g-3 mt-1" id="linstorProfileManual">
             <div class="col-md-4">
-              <label class="form-label">SSH 사용자</label>
+              <label class="form-label">SSH user</label>
               <input type="text" class="form-control" name="ansible_user" id="linstorAnsibleUser" value="root">
             </div>
             <div class="col-md-4">
-              <label class="form-label">SSH 개인키</label>
+              <label class="form-label">SSH private key</label>
               <input type="text" class="form-control" name="ansible_ssh_key" id="linstorAnsibleKey" value="~/.ssh/id_rsa">
             </div>
           </div>
@@ -186,7 +186,7 @@ function renderNodeCheckList(containerId, selected, onToggle) {
   const container = document.getElementById(containerId);
   const pool = getNodePool();
   if (!pool.length) {
-    container.innerHTML = '<div class="text-muted small">노드 풀이 비어 있습니다. <a href="/nodes/">노드 풀에서 추가</a></div>';
+    container.innerHTML = '<div class="text-muted small">Node Pool이 비어 있습니다. <a href="/nodes/">Node Pool에서 Add</a></div>';
     return;
   }
   container.innerHTML = pool.map(n => `
@@ -241,12 +241,12 @@ function loadResourceExample() {
   if (resEl._cmEditor) resEl._cmEditor.setValue(resExample); else resEl.value = resExample;
 }
 
-// ── Ansible 프로파일 ────────────────────────────────────────────────────
+// ── Ansible Profile ────────────────────────────────────────────────────
 function linstorInitProfile() {
   const sel = document.getElementById('linstorProfileSel');
   const active = getActiveProfileName();
   const profiles = getProfilePool();
-  sel.innerHTML = '<option value="">-- 직접 입력 --</option>';
+  sel.innerHTML = '<option value="">-- enter manually --</option>';
   profiles.forEach(p => {
     const opt = document.createElement('option');
     opt.value = p.name;

@@ -48,7 +48,7 @@
 
           <div class="row g-3">
             <div class="col-md-4">
-              <label class="form-label fw-semibold">리소스 이름 <span class="text-danger">*</span></label>
+              <label class="form-label fw-semibold">리소스 Name <span class="text-danger">*</span></label>
               <input type="text" class="form-control" name="resource_name" id="resourceName" value="r0" required
                      placeholder="예: r0, drbd0" oninput="updateLvPreviews()">
               <div class="form-text">생성될 파일명: <code>&lt;name&gt;.res</code></div>
@@ -76,19 +76,19 @@
           <span><i class="bi bi-pc-display-horizontal"></i> 클러스터 노드 설정</span>
           <span class="ms-3 badge bg-light text-dark" id="nodeCountBadge">0 노드</span>
           <a href="/nodes/" class="btn btn-sm btn-light ms-auto" target="_blank">
-            <i class="bi bi-pencil-fill"></i> 노드 풀 편집
+            <i class="bi bi-pencil-fill"></i> Node Pool 편집
           </a>
         </div>
         <div class="card-body">
           <div class="row g-2">
             <!-- 왼쪽: 풀 -->
             <div class="col-md-4">
-              <div class="fw-semibold small text-muted mb-1">노드 풀 <span class="badge bg-secondary" id="poolBadge">0</span></div>
+              <div class="fw-semibold small text-muted mb-1">Node Pool <span class="badge bg-secondary" id="poolBadge">0</span></div>
               <ul class="list-group" id="nodePoolList" style="min-height:120px;max-height:280px;overflow-y:auto"></ul>
             </div>
             <!-- 가운데: 버튼 -->
             <div class="col-md-1 d-flex flex-column justify-content-center align-items-center gap-2">
-              <button type="button" class="btn btn-outline-success btn-sm" id="nodePoolList_add" title="선택 추가">
+              <button type="button" class="btn btn-outline-success btn-sm" id="nodePoolList_add" title="선택 Add">
                 <i class="bi bi-arrow-right"></i>
               </button>
             </div>
@@ -102,7 +102,7 @@
         <div class="card-footer text-muted small">
           <i class="bi bi-info-circle"></i>
           최소 2개, 최대 7개. 3개 이상 시 DRBD 9 <code>connection-mesh</code> 자동 생성.
-          노드 풀이 비어있으면 <a href="/nodes/" target="_blank">노드 풀 편집</a>에서 먼저 노드를 추가하세요.
+          Node Pool이 비어있으면 <a href="/nodes/" target="_blank">Node Pool 편집</a>에서 먼저 노드를 Add하세요.
         </div>
       </div>
 
@@ -205,16 +205,16 @@
       <!-- Ansible 설정 -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-warning text-dark fw-bold">
-          <i class="bi bi-send-fill"></i> Ansible 배포 설정
+          <i class="bi bi-send-fill"></i> Ansible Deployment
         </div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-4">
-              <label class="form-label fw-semibold">SSH 사용자</label>
+              <label class="form-label fw-semibold">SSH user</label>
               <input type="text" class="form-control" name="ansible_user" value="root">
             </div>
             <div class="col-md-4">
-              <label class="form-label fw-semibold">SSH 개인키 경로</label>
+              <label class="form-label fw-semibold">SSH private key 경로</label>
               <input type="text" class="form-control" name="ansible_ssh_key" value="~/.ssh/id_rsa">
             </div>
             <div class="col-md-4">
@@ -233,7 +233,7 @@
           <i class="bi bi-gear-fill"></i> 설정 파일 생성
         </button>
         <button type="button" class="btn btn-outline-secondary btn-lg" onclick="loadExample()">
-          <i class="bi bi-lightning-fill"></i> 예시 값 입력
+          <i class="bi bi-lightning-fill"></i> Example 값 입력
         </button>
       </div>
     </form>
@@ -308,7 +308,7 @@ function renderSelectedNodes() {
         </div>
         ${isLvm ? `
         <div class="col-4">
-          <input class="form-control form-control-sm" placeholder="VG 이름"
+          <input class="form-control form-control-sm" placeholder="VG Name"
             id="lvm_vg_${i}"
             value="${esc(node.lvm_vg)}" oninput="setNodeField(${i},'lvm_vg',this.value)">
         </div>
@@ -346,7 +346,7 @@ function updateLvPreviews() {
   renderSelectedNodes();
 }
 
-// ← 추가 버튼
+// ← Add 버튼
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('nodePoolList_add').addEventListener('click', () => {
     const pool = getNodePool();
@@ -376,7 +376,7 @@ function serializeNodes() {
   return true;
 }
 
-// ── localStorage 저장/복원 ────────────────────────────────────
+// ── localStorage Save/복원 ────────────────────────────────────
 function saveFormToStorage() {
   try {
     const state = {
@@ -438,7 +438,7 @@ window.addEventListener('beforeunload', saveFormToStorage);
 
 // ── lvscan 자동 채우기 ────────────────────────────────────────
 // 각 노드의 lvm_size가 비어있을 때 lvEntries에서 매칭해서 채운다.
-// 매칭 순서: 1) 원본 disk 경로 일치, 2) VG 이름 일치
+// 매칭 순서: 1) 원본 disk 경로 일치, 2) VG Name 일치
 function autoFillLvmSizes(nodeArr) {
   if (!lvEntries.length) return;
   nodeArr.forEach(node => {
@@ -446,7 +446,7 @@ function autoFillLvmSizes(nodeArr) {
     if (node.lvm_size) return; // 이미 값 있으면 건드리지 않음
     // 1) 정확한 경로 매칭
     let match = lvEntries.find(e => e.path === node.disk);
-    // 2) VG 이름 매칭 (첫 번째 해당 VG의 LV)
+    // 2) VG Name 매칭 (첫 번째 해당 VG의 LV)
     if (!match && node.lvm_vg) {
       match = lvEntries.find(e => e.vg === node.lvm_vg);
     }
@@ -488,7 +488,7 @@ async function scanDrbd() {
       fileRes.forEach((r, _) => {
         const opt = document.createElement('option');
         opt.value = r.resource_name;
-        const dbBadge = r.in_db ? ' [DB저장됨]' : '';
+        const dbBadge = r.in_db ? ' [DBSave됨]' : '';
         opt.textContent = `${r.resource_name}  (minor=${r.minor}, ${r.nodes.length}노드)${dbBadge}`;
         grp.appendChild(opt);
       });
@@ -499,7 +499,7 @@ async function scanDrbd() {
     const dbOnly = scanData.resources.filter(r => r.source === 'db');
     if (dbOnly.length) {
       const grp = document.createElement('optgroup');
-      grp.label = '🗄️ DB 저장 리소스';
+      grp.label = '🗄️ DB Save 리소스';
       dbOnly.forEach(r => {
         const opt = document.createElement('option');
         opt.value = r.resource_name;
@@ -613,7 +613,7 @@ function setSelectValue(id, val) {
   }
 }
 
-// ── 예시 값 ────────────────────────────────────────────────────
+// ── Example 값 ────────────────────────────────────────────────────
 function loadExample() {
   nodes = [
     { hostname:'node1.ha.local', ip:'192.168.10.11', disk_type:'block', disk:'/dev/sdb', lvm_vg:'', lvm_size:'', meta:'internal', port:7789 },
