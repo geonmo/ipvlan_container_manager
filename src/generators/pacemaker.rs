@@ -55,6 +55,22 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
 
     // DRBD Promotable Clone 리소스
     if !config.drbd_resources.is_empty() {
+        // on-fail=fence 는 STONITH 가 켜져 있어야 의미가 있다. pcs 는 이 조합을
+        // 거부하지 않고(실측 rc=0) Pacemaker 가 런타임에 조용히 stop 으로
+        // 격하시킨다 — 사용자는 fence 를 골랐는데 펜싱이 일어나지 않는다.
+        let fence_without_stonith: Vec<&str> = config
+            .drbd_resources
+            .iter()
+            .filter(|d| d.on_fail.trim() == "fence")
+            .map(|d| d.resource_name.as_str())
+            .collect();
+        if !fence_without_stonith.is_empty() && !config.cluster.stonith_enabled {
+            lines.push("# ⚠️  주의: 아래 리소스에 on-fail=fence 가 지정돼 있지만".to_string());
+            lines.push("#     stonith-enabled=false 입니다. Pacemaker 는 이 조합에서".to_string());
+            lines.push("#     on-fail 을 조용히 stop 으로 격하시키므로 펜싱이 일어나지".to_string());
+            lines.push("#     않습니다. STONITH 를 켜거나 on-fail 을 바꾸세요.".to_string());
+            lines.push(format!("#     해당 리소스: {}", fence_without_stonith.join(", ")));
+        }
         lines.push("# ─── DRBD Promotable Clone 리소스 ───────────────────────────".to_string());
         // clone-max는 클러스터 노드 수를 따라야 한다 (PLAN.md A.2) — 3노드
         // 이상 클러스터에서 하드코딩된 값으로는 세 번째 이상 노드에 DRBD
@@ -132,17 +148,27 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     lines.join("\n")
 }
 
+/// bash 작은따옴표로 안전하게 감싼다.
+///
+/// 생성물은 `set -euo pipefail` 이 걸린 bash 스크립트이고, IPMI 비밀번호 같은
+/// 값은 사용자 입력이라 공백·`$`·`;`·따옴표가 들어올 수 있다. 그대로 넣으면
+/// 명령이 잘리거나(공백) 의도치 않은 명령이 실행된다(`;`, `$(...)`).
+/// 작은따옴표 안에서는 `'` 만 특별하므로 `'\''` 로 끊어 이어 붙인다.
+pub(crate) fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// 단일 STONITH(fence_ipmilan) 생성 명령 (PLAN.md A.5, R02/R55 패턴 그대로).
 fn generate_stonith_cmds(dev: &StonithDevice) -> Vec<String> {
     let id = format!("stonith-ipmi-{}", sanitize_stonith_id(&dev.node));
     let mut cmds = vec![
         format!("pcs stonith create {id} fence_ipmilan \\", id = id),
-        format!("    pcmk_host_list={node} \\", node = dev.node),
+        format!("    pcmk_host_list={node} \\", node = shell_quote(&dev.node)),
         format!(
             "    ip={ip} user={user} password={pass} \\",
-            ip = dev.ipmi_ip,
-            user = dev.ipmi_user,
-            pass = dev.ipmi_password
+            ip = shell_quote(&dev.ipmi_ip),
+            user = shell_quote(&dev.ipmi_user),
+            pass = shell_quote(&dev.ipmi_password)
         ),
     ];
     let mut opts = vec![
@@ -748,6 +774,37 @@ mod tests {
     ///   interval: monitor with intervals 20s, 20s
     /// 예전에는 양쪽 다 20s 였고, 그래서 생성된 pcs 스크립트가 실행 자체가
     /// 되지 않았다.
+    /// on-fail=fence 는 STONITH 가 켜져 있어야 의미가 있다. pcs 는 이 조합을
+    /// 거부하지 않고 Pacemaker 가 런타임에 조용히 stop 으로 격하시키므로,
+    /// 생성물에 경고를 남기지 않으면 사용자가 알 방법이 없다.
+    #[test]
+    fn warns_when_on_fail_fence_without_stonith() {
+        let mut config = config_with_nodes(3);
+        config.cluster.stonith_enabled = false;
+        config.drbd_resources[0].on_fail = "fence".to_string();
+        let script = generate_pcs_script(&config);
+
+        assert!(script.contains("stonith-enabled=false"));
+        assert!(script.contains("on-fail 을 조용히 stop 으로 격하"));
+        assert!(script.contains(&config.drbd_resources[0].resource_name));
+    }
+
+    #[test]
+    fn no_warning_when_stonith_enabled() {
+        let mut config = config_with_nodes(3);
+        config.cluster.stonith_enabled = true;
+        config.drbd_resources[0].on_fail = "fence".to_string();
+        assert!(!generate_pcs_script(&config).contains("조용히 stop 으로 격하"));
+    }
+
+    #[test]
+    fn no_warning_when_on_fail_is_not_fence() {
+        let mut config = config_with_nodes(3);
+        config.cluster.stonith_enabled = false;
+        config.drbd_resources[0].on_fail = "restart".to_string();
+        assert!(!generate_pcs_script(&config).contains("조용히 stop 으로 격하"));
+    }
+
     #[test]
     fn role_monitors_must_use_different_intervals() {
         let script = generate_pcs_script(&config_with_nodes(3));

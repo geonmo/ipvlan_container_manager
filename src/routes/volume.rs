@@ -11,7 +11,7 @@ use crate::generators::quadlet::generate_bind_volume_unit;
 
 pub async fn index(State(state): State<AppState>) -> Html<String> {
     let mut ctx = Context::new();
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     let volumes = db::list_volumes(&conn).unwrap_or_default();
     drop(conn);
     ctx.insert("volumes", &volumes);
@@ -23,7 +23,7 @@ pub async fn index(State(state): State<AppState>) -> Html<String> {
 // ── API ─────────────────────────────────────────────────────────────────────
 
 pub async fn api_list(State(state): State<AppState>) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::list_volumes(&conn) {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -34,7 +34,7 @@ pub async fn api_upsert(
     State(state): State<AppState>,
     Json(body): Json<DbVolume>,
 ) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::upsert_volume(&conn, &body) {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -45,7 +45,7 @@ pub async fn api_delete(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::delete_volume(&conn, id) {
         Ok(_) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -173,7 +173,7 @@ fn db_drbd_resources(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<serde_
 pub async fn api_list_drbd_resources(State(state): State<AppState>) -> impl IntoResponse {
     // 백엔드 판정과 DB 조회를 먼저 끝내고 락을 놓는다 (이후 await 구간 때문).
     let (backend, db_items) = {
-        let conn = state.db.lock().unwrap();
+        let conn = crate::lock_db(&state.db);
         let backend = db::get_storage_backend(&conn)
             .map(|b| b.backend)
             .unwrap_or_else(|_| "kernel-module".to_string());
@@ -241,7 +241,7 @@ pub async fn generate(
     let mut ctx = Context::new();
 
     let volumes = {
-        let conn = state.db.lock().unwrap();
+        let conn = crate::lock_db(&state.db);
         db::list_volumes(&conn).unwrap_or_default()
     };
 

@@ -17,6 +17,7 @@ use crate::generators::pacemaker::{
     generate_maintenance_script, generate_drbd_resource_cmds, generate_fs_resource_cmds,
     generate_systemd_resource_cmds, generate_resource_group_cmd, generate_order_constraint,
     generate_colocation_constraint, generate_location_constraint, sanitize_stonith_id,
+    shell_quote,
 };
 
 /// YAML 작은따옴표(single-quoted) 스칼라로 안전하게 감싼다. 리소스/제약조건
@@ -616,12 +617,19 @@ fn build_stonith_play(config: &PacemakerConfig, hosts: &str, user: &str, key: &s
     for dev in &config.stonith_devices {
         let id = format!("stonith-ipmi-{}", sanitize_stonith_id(&dev.node));
         out.push_str(&format!("    - name: STONITH 생성 ({})\n", dev.node));
-        out.push_str("      ansible.builtin.command: >\n");
+        // command 가 아니라 shell 이어야 위의 작은따옴표 인용이 해석된다.
+        out.push_str("      ansible.builtin.shell: >\n");
+        // ansible.builtin.command 의 `>` 폴드 스칼라는 셸을 거치지 않지만
+        // 공백으로 인자가 쪼개진다. 값에 공백이 있으면 pcs 가 엉뚱한 인자를
+        // 받으므로, 공백/메타문자가 섞일 수 있는 값은 shell 모듈 + 인용으로
+        // 넘긴다(아래 ansible.builtin.shell 참고).
         out.push_str(&format!("        pcs stonith create {} fence_ipmilan\n", id));
-        out.push_str(&format!("        pcmk_host_list={}\n", dev.node));
+        out.push_str(&format!("        pcmk_host_list={}\n", shell_quote(&dev.node)));
         out.push_str(&format!(
             "        ip={} user={} password={}\n",
-            dev.ipmi_ip, dev.ipmi_user, dev.ipmi_password
+            shell_quote(&dev.ipmi_ip),
+            shell_quote(&dev.ipmi_user),
+            shell_quote(&dev.ipmi_password)
         ));
         out.push_str("        lanplus=1 power_wait=5 pcmk_reboot_timeout=300\n");
         out.push_str("        pcmk_monitor_timeout=60 pcmk_reboot_action=reboot\n");
@@ -1026,10 +1034,52 @@ mod tests {
         assert!(playbook.contains("pcs stonith status"));
         assert!(playbook.contains("register: existing_stonith"));
         assert!(playbook.contains("pcs stonith create stonith-ipmi-node1 fence_ipmilan"));
-        assert!(playbook.contains("ip=10.0.0.1 user=admin password=secret"));
+        // 자격증명은 셸 인용된 형태로 나가야 한다 (공백·메타문자 대비)
+        assert!(playbook.contains("ip='10.0.0.1' user='admin' password='secret'"));
         assert!(playbook.contains(
             "when: 'existing_stonith.stdout is not search(\"stonith-ipmi-node1\")'"
         ));
+    }
+
+    /// IPMI 자격증명은 사용자 입력이라 공백·`$`·`;`·따옴표가 들어올 수 있다.
+    /// 생성물은 bash 스크립트(pcs)와 ansible shell 모듈로 나가므로, 인용하지
+    /// 않으면 명령이 잘리거나 의도치 않은 명령이 실행된다.
+    #[test]
+    fn stonith_credentials_are_shell_quoted() {
+        let form = sample_form();
+        let mut config = config_with_nodes(3);
+        config.stonith_devices.push(StonithDevice {
+            node: "node1".to_string(),
+            ipmi_ip: "10.0.0.1".to_string(),
+            ipmi_user: "admin user".to_string(),          // 공백
+            ipmi_password: "p4ss; rm -rf /".to_string(),  // 세미콜론 + 공백
+            extra_opts: vec![],
+        });
+        let playbook = generate_pacemaker_ansible_playbook(&form, &config);
+
+        // 값 전체가 한 덩어리로 인용돼야 한다
+        assert!(playbook.contains("user='admin user'"));
+        assert!(playbook.contains("password='p4ss; rm -rf /'"));
+        // 인용 없이 그대로 나가면 안 된다
+        assert!(!playbook.contains("password=p4ss;"));
+        // command 가 아니라 shell 이어야 인용이 해석된다
+        assert!(playbook.contains("ansible.builtin.shell: >"));
+    }
+
+    #[test]
+    fn stonith_password_with_single_quote_is_escaped() {
+        let form = sample_form();
+        let mut config = config_with_nodes(3);
+        config.stonith_devices.push(StonithDevice {
+            node: "node1".to_string(),
+            ipmi_ip: "10.0.0.1".to_string(),
+            ipmi_user: "admin".to_string(),
+            ipmi_password: "it's".to_string(),
+            extra_opts: vec![],
+        });
+        let playbook = generate_pacemaker_ansible_playbook(&form, &config);
+        // bash 작은따옴표 안의 ' 는 '\'' 로 끊어 이어붙인다
+        assert!(playbook.contains(r"password='it'\''s'"));
     }
 
     #[test]

@@ -83,14 +83,28 @@ pub struct DbStorageBackend {
 /// DB 초기화 (테이블 생성)
 pub fn init_db(path: &str) -> Result<Connection> {
     let conn = Connection::open(path)?;
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL;
-         -- 기존 networks 테이블에 새 컬럼 추가 (이미 있으면 무시)
-         ALTER TABLE networks ADD COLUMN subnet6  TEXT NOT NULL DEFAULT '' ;
-         ALTER TABLE networks ADD COLUMN gateway6 TEXT NOT NULL DEFAULT '' ;
-         ALTER TABLE networks ADD COLUMN ipv6     INTEGER NOT NULL DEFAULT 0 ;
-        "
-    ).ok(); // 이미 존재하는 컬럼 오류는 무시
+    // 기존 networks 테이블에 새 컬럼 추가 (이미 있으면 무시).
+    //
+    // 한 execute_batch 로 묶으면 안 된다 — SQLite 는 배치 중 한 문장이
+    // 실패하면 거기서 멈추므로, subnet6 만 추가돼 있던 DB 에서는 gateway6/
+    // ipv6 가 영영 추가되지 않는다(부분 마이그레이션). 문장마다 따로 실행하고
+    // "duplicate column" 만 무시한다. 다른 오류는 그대로 드러나야 한다.
+    for stmt in [
+        "ALTER TABLE networks ADD COLUMN subnet6  TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE networks ADD COLUMN gateway6 TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE networks ADD COLUMN ipv6     INTEGER NOT NULL DEFAULT 0",
+    ] {
+        if let Err(e) = conn.execute(stmt, []) {
+            let msg = e.to_string();
+            // networks 테이블이 아직 없는 최초 기동(아래 CREATE 가 처리)과
+            // 이미 컬럼이 있는 경우만 무시한다.
+            let benign = msg.contains("duplicate column")
+                || msg.contains("no such table");
+            if !benign {
+                return Err(e);
+            }
+        }
+    }
 
     conn.execute_batch(
         "PRAGMA journal_mode=WAL;
@@ -184,7 +198,7 @@ pub fn init_db(path: &str) -> Result<Connection> {
          );
 
          CREATE TABLE IF NOT EXISTS nft_global_config (
-             id               INTEGER NOT NULL DEFAULT 1 CHECK (id = 1),
+             id               INTEGER PRIMARY KEY CHECK (id = 1),
              table_name       TEXT    NOT NULL DEFAULT 'filter_ingress',
              device_name      TEXT    NOT NULL DEFAULT 'eth0',
              chain_name       TEXT    NOT NULL DEFAULT '',
@@ -193,7 +207,8 @@ pub fn init_db(path: &str) -> Result<Connection> {
              nft_file         TEXT    NOT NULL DEFAULT '/etc/nftables/ipvlan_l2.nft',
              updated_at       TEXT    NOT NULL DEFAULT ''
          );
-         INSERT OR IGNORE INTO nft_global_config (id) VALUES (1);
+         INSERT INTO nft_global_config (id)
+             SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM nft_global_config);
 
          CREATE TABLE IF NOT EXISTS nft_targets (
              id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,12 +236,31 @@ pub fn init_db(path: &str) -> Result<Connection> {
          );
 
          CREATE TABLE IF NOT EXISTS storage_backend_config (
-             id          INTEGER NOT NULL DEFAULT 1 CHECK (id = 1),
+             id          INTEGER PRIMARY KEY CHECK (id = 1),
              backend     TEXT    NOT NULL DEFAULT 'kernel-module',
              detected_at TEXT    NOT NULL DEFAULT ''
          );
-         INSERT OR IGNORE INTO storage_backend_config (id) VALUES (1);",
+         INSERT INTO storage_backend_config (id)
+             SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM storage_backend_config);",
     )?;
+
+    // 싱글턴 테이블 중복 행 정리.
+    //
+    // 예전 스키마는 id 에 PRIMARY KEY 가 없어 `INSERT OR IGNORE ... VALUES (1)`
+    // 이 충돌할 대상이 없었다 — 앱을 띄울 때마다 행이 하나씩 늘었다.
+    // 조회는 `WHERE id = 1` 로 첫 행만 보고 UPDATE 도 전부를 갱신해서 겉보기
+    // 동작은 같았지만, 테이블이 무한히 자란다. 기존 DB 를 위해 가장 오래된
+    // 행 하나만 남긴다 (PRIMARY KEY 는 새로 만드는 DB 에만 적용된다).
+    for table in ["nft_global_config", "storage_backend_config"] {
+        conn.execute(
+            &format!(
+                "DELETE FROM {t} WHERE rowid NOT IN (SELECT MIN(rowid) FROM {t})",
+                t = table
+            ),
+            [],
+        )?;
+    }
+
     Ok(conn)
 }
 
@@ -959,4 +993,96 @@ pub fn set_storage_backend(conn: &Connection, backend: &str) -> Result<()> {
         params![backend, now],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn columns(conn: &Connection, table: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({})", table))
+            .expect("PRAGMA 실패");
+        stmt.query_map([], |r| r.get::<_, String>(1))
+            .expect("query_map")
+            .map(|r| r.expect("row"))
+            .collect()
+    }
+
+    /// 부분 마이그레이션 회귀 테스트.
+    ///
+    /// 예전에는 세 ALTER 를 한 execute_batch 로 묶고 `.ok()` 로 삼켰다.
+    /// SQLite 는 배치 중 한 문장이 실패하면 거기서 멈추므로, subnet6 만
+    /// 있던 DB 에서는 gateway6/ipv6 가 **영영 추가되지 않았다**.
+    #[test]
+    fn migration_completes_when_only_some_columns_exist() {
+        let dir = std::env::temp_dir().join(format!("icm-db-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("partial.db");
+        let _ = std::fs::remove_file(&path);
+
+        // subnet6 만 있는 구버전 networks 테이블을 만든다
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE networks (
+                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                     name        TEXT NOT NULL UNIQUE,
+                     driver      TEXT NOT NULL DEFAULT 'ipvlan',
+                     interface   TEXT NOT NULL DEFAULT '',
+                     subnet      TEXT NOT NULL DEFAULT '',
+                     gateway     TEXT NOT NULL DEFAULT '',
+                     subnet6     TEXT NOT NULL DEFAULT '',
+                     ipvlan_mode TEXT NOT NULL DEFAULT 'l2',
+                     source      TEXT NOT NULL DEFAULT 'manual',
+                     created_at  TEXT NOT NULL
+                 );",
+            )
+            .unwrap();
+        }
+
+        let conn = init_db(path.to_str().unwrap()).expect("init_db 실패");
+        let cols = columns(&conn, "networks");
+        for want in ["subnet6", "gateway6", "ipv6"] {
+            assert!(cols.contains(&want.to_string()), "컬럼 {} 이 없다: {:?}", want, cols);
+        }
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 빈 DB 에서도 정상 동작하고, 두 번 호출해도 안전해야 한다.
+    #[test]
+    fn init_db_is_idempotent_on_fresh_database() {
+        let dir = std::env::temp_dir().join(format!("icm-db-fresh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fresh.db");
+        let _ = std::fs::remove_file(&path);
+
+        let conn = init_db(path.to_str().unwrap()).expect("첫 init_db 실패");
+        drop(conn);
+        let conn = init_db(path.to_str().unwrap()).expect("두 번째 init_db 실패");
+
+        let cols = columns(&conn, "networks");
+        for want in ["subnet6", "gateway6", "ipv6"] {
+            assert!(cols.contains(&want.to_string()));
+        }
+        // 싱글턴 로우가 중복 삽입되지 않아야 한다.
+        // 예전 스키마는 id 에 PRIMARY KEY 가 없어 INSERT OR IGNORE 가 충돌할
+        // 대상이 없었고, 앱을 띄울 때마다 행이 하나씩 늘었다(실제 DB 에서 4행 확인).
+        drop(conn);
+        for _ in 0..3 {
+            drop(init_db(path.to_str().unwrap()).expect("반복 init_db 실패"));
+        }
+        let conn = init_db(path.to_str().unwrap()).unwrap();
+        for t in ["storage_backend_config", "nft_global_config"] {
+            let n: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {}", t), [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(n, 1, "{} 가 {}행 — 싱글턴이어야 한다", t, n);
+        }
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -34,7 +34,7 @@ pub async fn ensure_and_scan(
 
         let (hosts_block, become_val) = if let Some(p) = profile {
             let nodes = {
-                let conn = db.lock().unwrap();
+                let conn = crate::lock_db(&db);
                 db::list_nodes(&conn).unwrap_or_default()
             };
             let become_val = if p.do_become { "true" } else { "false" };
@@ -86,7 +86,7 @@ r#"---
         // 인벤토리 파일 작성 (프로파일 사용 시)
         let ansible_args: Vec<String> = if let Some(p) = profile {
             let nodes = {
-                let conn = db.lock().unwrap();
+                let conn = crate::lock_db(&db);
                 db::list_nodes(&conn).unwrap_or_default()
             };
             if !nodes.is_empty() {
@@ -112,7 +112,12 @@ r#"---
                         inv_lines.push(format!("    ansible_become_password: {}", p.become_password));
                     }
                 }
-                std::fs::write(&inventory_path, inv_lines.join("\n") + "\n")?;
+                // ansible_ssh_pass / ansible_become_password 가 평문으로 들어가므로
+                // umask 에 맡기지 않고 0600 으로 만든다.
+                crate::routes::nodes::write_private(
+                    &inventory_path,
+                    &(inv_lines.join("\n") + "\n"),
+                )?;
                 vec!["-i".to_string(), inventory_path, playbook_path]
             } else {
                 vec!["-c".to_string(), "local".to_string(), "-i".to_string(), "localhost,".to_string(), playbook_path]
@@ -188,7 +193,7 @@ r#"---
 
     // 1. global config 업데이트
     {
-        let conn = db.lock().unwrap();
+        let conn = crate::lock_db(&db);
         let current = db::get_nft_global_config(&conn).unwrap_or(DbNftGlobalConfig {
             table_name:       "filter_ingress".to_string(),
             device_name:      "eth0".to_string(),
@@ -212,7 +217,7 @@ r#"---
 
     // 2. subnet groups 업데이트
     {
-        let conn = db.lock().unwrap();
+        let conn = crate::lock_db(&db);
         for (name, (cidrs_v4, cidrs_v6)) in &parsed.subnet_groups {
             let grp = NftSubnetGroup {
                 id:          0,
@@ -229,7 +234,7 @@ r#"---
 
     // 3. auto-services 업데이트 (이름 충돌 시 무시)
     {
-        let conn = db.lock().unwrap();
+        let conn = crate::lock_db(&db);
         for svc in &parsed.auto_services {
             if db::insert_nft_service_if_not_exists(&conn, svc).is_ok() {
                 services_updated += 1;
@@ -239,7 +244,7 @@ r#"---
 
     // 4. targets 업데이트
     {
-        let conn = db.lock().unwrap();
+        let conn = crate::lock_db(&db);
         for target in &parsed.targets {
             if db::upsert_nft_target(&conn, target).is_ok() {
                 targets_updated += 1;

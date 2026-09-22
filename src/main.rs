@@ -23,6 +23,19 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const CONFIG_FILE: &str = "icm.conf";
 
+/// DB 락을 얻는다. **poisoning 에서 자동 복구한다.**
+///
+/// `Mutex::lock().unwrap()` 은 다른 스레드가 락을 들고 패닉한 순간부터
+/// 이후 **모든** 호출이 패닉한다 — 요청 하나가 실패했을 뿐인데 서버가
+/// 재시작 전까지 영구히 망가진다. 여기서 보호하는 건 `rusqlite::Connection`
+/// 하나뿐이고, SQLite 는 자체 트랜잭션으로 일관성을 지키므로 패닉이
+/// 났다고 해서 커넥션 불변식이 깨지지 않는다. 그래서 복구가 안전하다.
+pub fn lock_db(
+    db: &Mutex<rusqlite::Connection>,
+) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
+    db.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub tera:        Arc<Tera>,

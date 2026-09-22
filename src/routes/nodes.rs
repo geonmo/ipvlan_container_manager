@@ -41,7 +41,7 @@ pub async fn rescan(State(state): State<AppState>) -> Result<Json<ScanResult>, S
     let mut nodes_added    = 0usize;
     let mut networks_added = 0usize;
     {
-        let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let conn = crate::lock_db(&state.db);
         for node in &drbd_nodes {
             if upsert_node(&conn, node).is_ok() { nodes_added += 1; }
         }
@@ -75,7 +75,7 @@ pub async fn api_list_quadlet_pods() -> Json<Vec<crate::scan::ScannedPodInfo>> {
 pub async fn api_list_nodes(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<DbNode>>, StatusCode> {
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     Ok(Json(list_nodes(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
 }
 
@@ -98,7 +98,7 @@ pub async fn api_upsert_node(
         source:   "manual".to_string(),
         created_at: String::new(),
     };
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     upsert_node(&conn, &node).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
 }
@@ -107,7 +107,7 @@ pub async fn api_delete_node(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, StatusCode> {
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     delete_node(&conn, id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
 }
@@ -117,7 +117,7 @@ pub async fn api_delete_node(
 pub async fn api_list_networks(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<DbNetwork>>, StatusCode> {
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     Ok(Json(list_networks(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
 }
 
@@ -154,7 +154,7 @@ pub async fn api_upsert_network(
         source:      "manual".to_string(),
         created_at:  String::new(),
     };
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     upsert_network(&conn, &net).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     // 저장 직후 자동매칭 시도
     auto_match_network_interfaces(&conn);
@@ -165,7 +165,7 @@ pub async fn api_delete_network(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, StatusCode> {
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     delete_network(&conn, id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
 }
@@ -175,7 +175,7 @@ pub async fn api_delete_network(
 pub async fn api_list_profiles(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<DbAnsibleProfile>>, StatusCode> {
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     Ok(Json(list_ansible_profiles(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
 }
 
@@ -209,7 +209,7 @@ pub async fn api_upsert_profile(
         created_at:      String::new(),
         updated_at:      String::new(),
     };
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     upsert_ansible_profile(&conn, &profile).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
 }
@@ -218,7 +218,7 @@ pub async fn api_delete_profile(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, StatusCode> {
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     delete_ansible_profile(&conn, id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::OK)
 }
@@ -228,7 +228,7 @@ pub async fn api_delete_profile(
 pub async fn api_list_node_interfaces(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<DbNodeInterface>>, StatusCode> {
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     Ok(Json(list_node_interfaces(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
 }
 
@@ -255,7 +255,7 @@ pub async fn api_collect_interfaces(
 
     // DB에서 노드와 프로파일 로드
     let (nodes, profile) = {
-        let conn = state.db.lock().map_err(|_| e500("DB lock 실패".into()))?;
+        let conn = crate::lock_db(&state.db);
         let nodes = list_nodes(&conn).map_err(|e| e500(e.to_string()))?;
         if nodes.is_empty() {
             return Err((StatusCode::BAD_REQUEST,
@@ -290,7 +290,7 @@ pub async fn api_collect_interfaces(
 
     if let Some(ref p) = profile {
         if p.auth_method == "key" && !p.ssh_key.is_empty() {
-            let key = p.ssh_key.replace('~', &std::env::var("HOME").unwrap_or_default());
+            let key = expand_home(&p.ssh_key);
             cmd.arg("--private-key").arg(&key);
         }
     }
@@ -314,7 +314,7 @@ pub async fn api_collect_interfaces(
     // 결과 파일 파싱 및 DB 저장
     let mut imported = 0usize;
     {
-        let conn = state.db.lock().map_err(|_| e500("DB lock 실패".into()))?;
+        let conn = crate::lock_db(&state.db);
         for node in &nodes {
             let file = format!("{}/ifaces_{}.json", temp_dir, node.hostname);
             match std::fs::read_to_string(&file) {
@@ -357,7 +357,7 @@ pub async fn api_collect_interfaces(
 pub async fn api_get_storage_backend(
     State(state): State<AppState>,
 ) -> Result<Json<DbStorageBackend>, StatusCode> {
-    let conn = state.db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let conn = crate::lock_db(&state.db);
     Ok(Json(get_storage_backend(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?))
 }
 
@@ -378,7 +378,7 @@ pub async fn api_detect_storage_backend(
     let e500 = |m: String| (StatusCode::INTERNAL_SERVER_ERROR, m);
 
     let (nodes, profile) = {
-        let conn = state.db.lock().map_err(|_| e500("DB lock 실패".into()))?;
+        let conn = crate::lock_db(&state.db);
         let nodes = list_nodes(&conn).map_err(|e| e500(e.to_string()))?;
         if nodes.is_empty() {
             return Err((StatusCode::BAD_REQUEST,
@@ -410,7 +410,7 @@ pub async fn api_detect_storage_backend(
 
     if let Some(ref p) = profile {
         if p.auth_method == "key" && !p.ssh_key.is_empty() {
-            let key = p.ssh_key.replace('~', &std::env::var("HOME").unwrap_or_default());
+            let key = expand_home(&p.ssh_key);
             cmd.arg("--private-key").arg(&key);
         }
     }
@@ -452,7 +452,7 @@ pub async fn api_detect_storage_backend(
     };
 
     let detected_at = {
-        let conn = state.db.lock().map_err(|_| e500("DB lock 실패".into()))?;
+        let conn = crate::lock_db(&state.db);
         set_storage_backend(&conn, backend).map_err(|e| e500(e.to_string()))?;
         get_storage_backend(&conn).map_err(|e| e500(e.to_string()))?.detected_at
     };
@@ -492,6 +492,48 @@ fn write_storage_backend_detect_playbook(temp_dir: &str, path: &str) -> anyhow::
     Ok(())
 }
 
+// ─── 헬퍼: 비밀 정보가 담긴 파일 쓰기 ─────────────────────────────────────
+
+/// 소유자만 읽을 수 있는 권한(0600)으로 파일을 쓴다.
+///
+/// Ansible 인벤토리에는 `ansible_ssh_pass` / `ansible_become_pass` 가 평문으로
+/// 들어간다. `std::fs::write` 는 umask 를 따르므로 보통 0644 로 만들어져
+/// 같은 호스트의 다른 사용자가 읽을 수 있다. temp_dir 기본값이 /tmp/icm 라
+/// 더 위험하다.
+pub(crate) fn write_private(path: &str, content: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    // 기존 파일이 느슨한 권한으로 남아 있을 수 있으므로 지우고 새로 만든다
+    // (OpenOptions 의 mode 는 **새로 생성될 때만** 적용된다).
+    let _ = std::fs::remove_file(path);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(content.as_bytes())?;
+    Ok(())
+}
+
+/// SSH 키 경로의 선행 `~` 를 홈 디렉터리로 바꾼다.
+///
+/// `str::replace` 는 경로 **중간의** `~` 까지 바꿔버린다
+/// (예: `/keys/my~key` → `/keys/my/home/userkey`). 선행 `~/` 와 단독 `~` 만 처리한다.
+fn expand_home(path: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if home.is_empty() {
+        return path.to_string();
+    }
+    if path == "~" {
+        home
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        format!("{}/{}", home.trim_end_matches('/'), rest)
+    } else {
+        path.to_string()
+    }
+}
+
 // ─── 헬퍼: Ansible 인벤토리 생성 ─────────────────────────────────────────
 
 fn write_ansible_inventory(
@@ -529,7 +571,8 @@ fn write_ansible_inventory(
     }
     lines.push("\n[all:vars]".to_string());
     lines.push("ansible_host_key_checking=False".to_string());
-    std::fs::write(path, lines.join("\n"))?;
+    // 인벤토리에는 ansible_ssh_pass / ansible_become_pass 가 평문으로 들어간다
+    write_private(path, &lines.join("\n"))?;
     Ok(())
 }
 

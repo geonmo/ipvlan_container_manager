@@ -24,16 +24,6 @@ const DRBD_DIR: &str = "/etc/drbd.d";
 // ─────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
-pub struct ScanResponse {
-    /// 파일 + DB 리소스 목록
-    pub resources: Vec<ScanEntry>,
-    /// 사용되지 않는 다음 minor 번호
-    pub next_minor: u32,
-    /// 사용되지 않는 다음 포트 번호
-    pub next_port: u16,
-}
-
-#[derive(Serialize)]
 pub struct ScanEntry {
     /// "file" | "db"
     pub source: String,
@@ -74,7 +64,7 @@ pub async fn scan(State(state): State<AppState>) -> Json<serde_json::Value> {
 
     // 2) DB 조회
     let db_resources = {
-        let conn = state.db.lock().unwrap();
+        let conn = crate::lock_db(&state.db);
         db::list_resources(&conn).unwrap_or_default()
     };
 
@@ -419,7 +409,7 @@ pub async fn save(
     };
 
     let result = {
-        let conn = state.db.lock().unwrap();
+        let conn = crate::lock_db(&state.db);
         db::upsert_resource(&conn, &record)
     };
 
@@ -444,7 +434,7 @@ pub async fn delete_saved(
     Path(name): Path<String>,
 ) -> Json<serde_json::Value> {
     let result = {
-        let conn = state.db.lock().unwrap();
+        let conn = crate::lock_db(&state.db);
         db::delete_resource(&conn, &name)
     };
     match result {
@@ -558,9 +548,14 @@ fn parse_lvscan(output: &str) -> Vec<LvEntry> {
 }
 
 pub async fn api_lvscan() -> impl IntoResponse {
+    // async 핸들러이므로 std::process::Command 를 쓰면 tokio 워커 스레드가
+    // 통째로 블로킹된다. LVM 명령은 디스크/락 대기로 수 초가 걸릴 수 있어
+    // 그동안 다른 요청까지 멈춘다. tokio::process 로 await 한다.
+    //
     // lvscan 실행 (없으면 lvs --noheadings -o lv_path,vg_name,lv_name,lv_size 로 폴백)
-    let output = std::process::Command::new("lvscan")
-        .output();
+    let output = tokio::process::Command::new("lvscan")
+        .output()
+        .await;
 
     match output {
         Ok(o) if o.status.success() => {
@@ -571,9 +566,10 @@ pub async fn api_lvscan() -> impl IntoResponse {
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr).to_string();
             // lvscan 실패 시 lvs 로 폴백
-            let lvs = std::process::Command::new("lvs")
+            let lvs = tokio::process::Command::new("lvs")
                 .args(["--noheadings", "--units", "g", "-o", "lv_path,vg_name,lv_name,lv_size"])
-                .output();
+                .output()
+                .await;
             match lvs {
                 Ok(lo) if lo.status.success() => {
                     // lvs 출력: "  /dev/vg/lv  vg  lv  10.00g"

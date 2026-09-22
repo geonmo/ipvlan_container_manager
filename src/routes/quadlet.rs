@@ -105,7 +105,7 @@ pub async fn generate(
     // (gateway 정보도 수집해서 나중에 pod_networks에 주입)
     let mut gw_map: Vec<(String, String, String)> = Vec::new(); // (name, gateway, gateway6)
     {
-        let db = state.db.lock().unwrap();
+        let db = crate::lock_db(&state.db);
         for entry in &pod_networks {
             if entry.network.is_empty() {
                 continue;

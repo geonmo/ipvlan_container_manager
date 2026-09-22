@@ -634,14 +634,15 @@ fn build_scanned_node(hostname: &str, lines: &[String]) -> ScannedDrbdNode {
     let address = extract_kv(lines, "address").unwrap_or_default();
     let meta    = extract_kv(lines, "meta-disk").unwrap_or_else(|| "internal".to_string());
 
-    // address = "ip:port"
-    let (ip, port) = if let Some(pos) = address.rfind(':') {
-        let ip   = address[..pos].to_string();
-        let port = address[pos + 1..].parse::<u16>().unwrap_or(7789);
-        (ip, port)
-    } else {
-        (address, 7789)
-    };
+    // address 는 "[<family>] <ip>:<port>" 형태이고 IPv6 는 [addr]:port 다.
+    // 파싱은 scan.rs 와 같은 규칙을 쓴다 (family 키워드/대괄호 처리).
+    let ip = crate::scan::parse_drbd_address(&format!("address {}", address))
+        .unwrap_or_else(|| address.clone());
+    let port = address
+        .trim_end_matches(';')
+        .rsplit_once(':')
+        .and_then(|(_, p)| p.trim().parse::<u16>().ok())
+        .unwrap_or(7789);
 
     // LVM 자동 감지: /dev/<vg>/<lv> 형태 (path component 3개)
     let disk_str = disk.clone().unwrap_or_default();

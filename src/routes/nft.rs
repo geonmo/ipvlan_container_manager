@@ -101,7 +101,7 @@ pub async fn generate(
     let filename = format!("{}.nft", table_name);
 
     // DB에서 그룹/서비스 조회
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     let subnet_groups = match db::get_nft_subnet_groups_by_names(&conn, &group_names) {
         Ok(g) => g,
         Err(e) => {
@@ -158,7 +158,7 @@ pub async fn generate(
 
     // 생성 후 대상 및 전역 설정 DB 저장
     {
-        let conn = state.db.lock().unwrap();
+        let conn = crate::lock_db(&state.db);
         for target in &policy.targets {
             let db_target = DbNftTarget {
                 id:         0,
@@ -201,7 +201,7 @@ pub async fn generate(
 // ── NFT Subnet Group API ─────────────────────────────────────────────────────
 
 pub async fn api_list_subnet_groups(State(state): State<AppState>) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::list_nft_subnet_groups(&conn) {
         Ok(groups) => Json(groups).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -212,7 +212,7 @@ pub async fn api_upsert_subnet_group(
     State(state): State<AppState>,
     Json(body): Json<NftSubnetGroup>,
 ) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::upsert_nft_subnet_group(&conn, &body) {
         Ok(id) => Json(serde_json::json!({ "ok": true, "id": id })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -223,7 +223,7 @@ pub async fn api_delete_subnet_group(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::delete_nft_subnet_group(&conn, id) {
         Ok(_) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -233,7 +233,7 @@ pub async fn api_delete_subnet_group(
 // ── NFT Service API ──────────────────────────────────────────────────────────
 
 pub async fn api_list_services(State(state): State<AppState>) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::list_nft_services(&conn) {
         Ok(services) => Json(services).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -244,7 +244,7 @@ pub async fn api_upsert_service(
     State(state): State<AppState>,
     Json(body): Json<NftServiceDef>,
 ) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::upsert_nft_service(&conn, &body) {
         Ok(id) => Json(serde_json::json!({ "ok": true, "id": id })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -255,7 +255,7 @@ pub async fn api_delete_service(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::delete_nft_service(&conn, id) {
         Ok(_) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -265,7 +265,7 @@ pub async fn api_delete_service(
 // ── NFT Target API ───────────────────────────────────────────────────────────
 
 pub async fn api_list_targets(State(state): State<AppState>) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::list_nft_targets(&conn) {
         Ok(targets) => Json(targets).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -276,7 +276,7 @@ pub async fn api_upsert_target(
     State(state): State<AppState>,
     Json(body): Json<DbNftTarget>,
 ) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::upsert_nft_target(&conn, &body) {
         Ok(id) => Json(serde_json::json!({ "ok": true, "id": id })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -287,7 +287,7 @@ pub async fn api_delete_target(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::delete_nft_target(&conn, id) {
         Ok(_) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -297,7 +297,7 @@ pub async fn api_delete_target(
 // ── NFT Global Config API ────────────────────────────────────────────────────
 
 pub async fn api_get_global_config(State(state): State<AppState>) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::get_nft_global_config(&conn) {
         Ok(cfg) => Json(cfg).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -308,7 +308,7 @@ pub async fn api_update_global_config(
     State(state): State<AppState>,
     Json(body): Json<DbNftGlobalConfig>,
 ) -> impl IntoResponse {
-    let conn = state.db.lock().unwrap();
+    let conn = crate::lock_db(&state.db);
     match db::update_nft_global_config(&conn, &body) {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -329,7 +329,7 @@ pub async fn api_scan(
     let req: NftScanRequest = serde_json::from_slice(&body).unwrap_or_default();
 
     let (nft_file, profile) = {
-        let conn = state.db.lock().unwrap();
+        let conn = crate::lock_db(&state.db);
         let nft_file = match db::get_nft_global_config(&conn) {
             Ok(cfg) => cfg.nft_file,
             Err(_)  => "/etc/nftables/ipvlan_l2.nft".to_string(),

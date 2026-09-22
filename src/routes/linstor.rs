@@ -85,7 +85,7 @@ pub async fn generate(
 
     // 노드 풀에 등록된 IP 조회 (없으면 hostname을 그대로 ansible_host로 사용)
     let node_ips = {
-        let conn = state.db.lock().unwrap();
+        let conn = crate::lock_db(&state.db);
         crate::db::list_nodes(&conn)
             .unwrap_or_default()
             .into_iter()

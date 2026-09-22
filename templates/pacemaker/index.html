@@ -92,6 +92,11 @@
                     <input class="form-check-input" type="checkbox" name="stonith_enabled" id="stonithEnabled">
                     <label class="form-check-label" for="stonithEnabled">STONITH 활성화</label>
                     <div class="form-text text-warning">&#9888; 테스트 환경에서는 비활성화 권장</div>
+                    <div class="form-text">
+                      끄면 DRBD 리소스의 <code>on-fail=fence</code> 가 런타임에 조용히
+                      <code>stop</code> 으로 격하됩니다(펜싱 안 일어남). 생성된 스크립트에
+                      경고가 함께 출력됩니다.
+                    </div>
                   </div>
                 </div>
               </div>

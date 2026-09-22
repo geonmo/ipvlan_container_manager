@@ -49,6 +49,39 @@ pub fn scan_drbd_nodes(drbd_dir: &str) -> Vec<DbNode> {
     result
 }
 
+/// DRBD `.res` 의 `address` 줄에서 IP 만 뽑는다.
+///
+/// drbdadm 이 받아들이는(그리고 `drbdadm dump` 가 출력하는) 형식은 세 가지다:
+///   address 1.2.3.4:7788;              — family 생략
+///   address ipv4 1.2.3.4:7788;         — family 명시
+///   address ipv6 [2001:db8::1]:7788;   — IPv6 는 대괄호
+///
+/// 예전에는 `split(':').next()` 만 써서 family 가 붙으면 "ipv4 1.2.3.4" 가
+/// 되고 IPv6 는 "[2001" 이 됐다.
+pub(crate) fn parse_drbd_address(line: &str) -> Option<String> {
+    let rest = line.trim().strip_prefix("address")?.trim().trim_end_matches(';').trim();
+
+    // family 키워드가 있으면 떼어낸다
+    let rest = match rest.split_once(char::is_whitespace) {
+        Some((first, tail)) if matches!(first, "ipv4" | "ipv6" | "ssocks" | "sdp") => tail.trim(),
+        _ => rest,
+    };
+
+    // IPv6 는 [addr]:port
+    if let Some(inner) = rest.strip_prefix('[') {
+        let (addr, _) = inner.split_once(']')?;
+        return Some(addr.to_string());
+    }
+
+    // IPv4 는 마지막 ':' 앞까지가 주소
+    let addr = match rest.rsplit_once(':') {
+        Some((a, _port)) => a,
+        None => rest,
+    };
+    let addr = addr.trim();
+    if addr.is_empty() { None } else { Some(addr.to_string()) }
+}
+
 fn parse_res_for_nodes(content: &str, nodes: &mut std::collections::HashMap<String, DbNode>) {
     let mut in_on_block = false;
     let mut current_hostname = String::new();
@@ -79,15 +112,10 @@ fn parse_res_for_nodes(content: &str, nodes: &mut std::collections::HashMap<Stri
         }
 
         if in_on_block {
-            // `address ip:port;` 파싱
+            // `address [<family>] <ip>:<port>;` 파싱
             if trimmed.starts_with("address ") {
-                let addr_part = trimmed
-                    .trim_start_matches("address ")
-                    .trim_end_matches(';')
-                    .trim();
-                // IPv4: 1.2.3.4:port
-                if let Some(ip) = addr_part.split(':').next() {
-                    current_ip = ip.trim().to_string();
+                if let Some(ip) = parse_drbd_address(trimmed) {
+                    current_ip = ip;
                 }
             }
 
@@ -511,7 +539,7 @@ pub async fn startup_scan(config: ScanConfig, db: Arc<Mutex<Connection>>) {
     // 1. DRBD 노드 스캔
     let drbd_nodes = scan_drbd_nodes(&config.drbd_dir);
     {
-        let conn = db.lock().unwrap();
+        let conn = crate::lock_db(&db);
         let mut count = 0;
         for node in &drbd_nodes {
             if upsert_node(&conn, node).is_ok() { count += 1; }
@@ -522,7 +550,7 @@ pub async fn startup_scan(config: ScanConfig, db: Arc<Mutex<Connection>>) {
     // 1b. DRBD 리소스 → Volume 자동 등록 (이미 등록된 경우 건너뜀)
     let drbd_resources = scan_drbd_resources(&config.drbd_dir);
     {
-        let conn = db.lock().unwrap();
+        let conn = crate::lock_db(&db);
         let mut count = 0;
         for res in &drbd_resources {
             let vol = DbVolume {
@@ -541,7 +569,7 @@ pub async fn startup_scan(config: ScanConfig, db: Arc<Mutex<Connection>>) {
     // 2. Quadlet 네트워크 스캔
     let networks = scan_quadlet_networks(&config.quadlet_dir);
     {
-        let conn = db.lock().unwrap();
+        let conn = crate::lock_db(&db);
         let mut count = 0;
         for net in &networks {
             if upsert_network(&conn, net).is_ok() { count += 1; }
@@ -557,7 +585,7 @@ pub async fn startup_scan(config: ScanConfig, db: Arc<Mutex<Connection>>) {
     ).await;
 
     {
-        let conn = db.lock().unwrap();
+        let conn = crate::lock_db(&db);
         let mut count = 0;
         for node in &pm_nodes {
             if upsert_node(&conn, node).is_ok() { count += 1; }
@@ -568,11 +596,11 @@ pub async fn startup_scan(config: ScanConfig, db: Arc<Mutex<Connection>>) {
     info!("시스템 스캔 완료");
 
     // 4. node_interfaces → networks 인터페이스 자동매칭
-    auto_match_network_interfaces(&db.lock().unwrap());
+    auto_match_network_interfaces(&crate::lock_db(&db));
 
     // 5. nft 파일 스캔
     let nft_file = {
-        let conn = db.lock().unwrap();
+        let conn = crate::lock_db(&db);
         match crate::db::get_nft_global_config(&conn) {
             Ok(cfg) => cfg.nft_file,
             Err(_)  => "/etc/nftables/ipvlan_l2.nft".to_string(),
@@ -688,4 +716,68 @@ fn find_interface_for_network(interfaces: &[DbNodeInterface], net: &DbNetwork) -
         );
     }
     Some(first.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// drbdadm 이 받아들이고 `drbdadm dump` 가 실제로 출력하는 세 가지 형식을
+    /// 모두 다뤄야 한다. 예전에는 `split(':').next()` 만 써서 family 키워드가
+    /// 붙으면 "ipv4 1.2.3.4" 가 되고 IPv6 는 "[2001" 이 됐다.
+    #[test]
+    fn parses_all_drbd_address_forms() {
+        for (line, expected) in [
+            ("address 1.2.3.4:7788;", "1.2.3.4"),
+            ("address ipv4 1.2.3.4:7788;", "1.2.3.4"),
+            ("        address   ipv4 10.9.9.1:7999;", "10.9.9.1"),
+            ("address ipv6 [2001:db8::1]:7788;", "2001:db8::1"),
+            ("address sdp 1.2.3.4:7788;", "1.2.3.4"),
+            // 포트가 없는 형태도 깨지지 않아야 한다
+            ("address 1.2.3.4;", "1.2.3.4"),
+        ] {
+            assert_eq!(
+                parse_drbd_address(line).as_deref(),
+                Some(expected),
+                "입력: {:?}",
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn drbd_address_parser_rejects_garbage() {
+        assert_eq!(parse_drbd_address("disk /dev/sdb;"), None);
+        assert_eq!(parse_drbd_address("address ;"), None);
+    }
+
+    /// `on <host> { ... address ipv4 <ip>:<port>; ... }` 를 실제로 스캔했을 때
+    /// 노드 IP 가 올바르게 뽑히는지 (family 키워드 포함).
+    #[test]
+    fn scans_nodes_from_res_with_family_keyword() {
+        let content = r#"
+resource r0 {
+    on node01 {
+        node-id   0;
+        device    /dev/drbd0;
+        disk      /dev/vg/lv;
+        address   ipv4 10.9.9.1:7789;
+        meta-disk internal;
+    }
+    on node02 {
+        node-id   1;
+        device    /dev/drbd0;
+        disk      /dev/vg/lv;
+        address   ipv4 10.9.9.2:7789;
+        meta-disk internal;
+    }
+}
+"#;
+        let mut nodes = std::collections::HashMap::new();
+        parse_res_for_nodes(content, &mut nodes);
+
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes["node01"].ip, "10.9.9.1");
+        assert_eq!(nodes["node02"].ip, "10.9.9.2");
+    }
 }
