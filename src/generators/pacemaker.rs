@@ -15,15 +15,15 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     lines.push("#!/bin/bash".to_string());
-    lines.push("# Pacemaker 설정 스크립트 (pcs 명령)".to_string());
+    lines.push("# Pacemaker configuration script (pcs commands)".to_string());
     lines.push("# AlmaLinux9 / RHEL9 + pacemaker + corosync".to_string());
-    lines.push("# 반드시 클러스터 노드 중 하나에서 root 권한으로 실행하세요.".to_string());
+    lines.push("# Run this as root on one of the cluster nodes.".to_string());
     lines.push(String::new());
     lines.push("set -euo pipefail".to_string());
     lines.push(String::new());
 
     // 클러스터 전역 설정
-    lines.push("# ─── 클러스터 전역 속성 ───────────────────────────────────────".to_string());
+    lines.push("# --- Cluster-wide properties -------------------------------------".to_string());
     lines.push(format!(
         "pcs property set stonith-enabled={}",
         config.cluster.stonith_enabled
@@ -46,7 +46,7 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     // Ansible 래퍼(routes/pacemaker.rs)에서 pcs stonith status 사전 캡처 +
     // is not search(...) 가드로 한다 (A.3와 동일한 방식).
     if !config.stonith_devices.is_empty() {
-        lines.push("# ─── STONITH(fencing) 리소스 ─────────────────────────────────".to_string());
+        lines.push("# --- STONITH (fencing) resources ---------------------------------".to_string());
         for dev in &config.stonith_devices {
             let id = format!("stonith-ipmi-{}", sanitize_stonith_id(&dev.node));
             lines.extend(guard_resource(&id, generate_stonith_cmds(dev)));
@@ -66,13 +66,13 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
             .map(|d| d.resource_name.as_str())
             .collect();
         if !fence_without_stonith.is_empty() && !config.cluster.stonith_enabled {
-            lines.push("# ⚠️  주의: 아래 리소스에 on-fail=fence 가 지정돼 있지만".to_string());
-            lines.push("#     stonith-enabled=false 입니다. Pacemaker 는 이 조합에서".to_string());
-            lines.push("#     on-fail 을 조용히 stop 으로 격하시키므로 펜싱이 일어나지".to_string());
-            lines.push("#     않습니다. STONITH 를 켜거나 on-fail 을 바꾸세요.".to_string());
-            lines.push(format!("#     해당 리소스: {}", fence_without_stonith.join(", ")));
+            lines.push("# WARNING: the resources below specify on-fail=fence, but".to_string());
+            lines.push("#     stonith-enabled=false. With that combination Pacemaker".to_string());
+            lines.push("#     silently downgrades on-fail to stop, so no fencing will".to_string());
+            lines.push("#     happen. Enable STONITH or change on-fail.".to_string());
+            lines.push(format!("#     affected resources: {}", fence_without_stonith.join(", ")));
         }
-        lines.push("# ─── DRBD Promotable Clone 리소스 ───────────────────────────".to_string());
+        lines.push("# --- DRBD Promotable Clone resources -----------------------------".to_string());
         // clone-max는 클러스터 노드 수를 따라야 한다 (PLAN.md A.2) — 3노드
         // 이상 클러스터에서 하드코딩된 값으로는 세 번째 이상 노드에 DRBD
         // clone이 배치되지 못하는 실제 버그가 있었다. 노드 목록이 비어
@@ -94,8 +94,8 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
 
     // Filesystem 리소스 (DRBD 볼륨 위 마운트)
     if !config.fs_resources.is_empty() {
-        lines.push("# ─── Filesystem 리소스 (ocf:heartbeat:Filesystem) ───────────".to_string());
-        lines.push("# DRBD가 Primary로 승격된 후 볼륨을 마운트합니다.".to_string());
+        lines.push("# --- Filesystem resources (ocf:heartbeat:Filesystem) -------------".to_string());
+        lines.push("# Mounts the volume once DRBD has been promoted to Primary.".to_string());
         for fs in &config.fs_resources {
             lines.extend(guard_resource(&fs.resource_name, generate_fs_resource_cmds(fs)));
         }
@@ -104,7 +104,7 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
 
     // Systemd (Quadlet) 리소스
     if !config.systemd_resources.is_empty() {
-        lines.push("# ─── Quadlet Systemd 리소스 (Pod / Container) ───────────────".to_string());
+        lines.push("# --- Quadlet systemd resources (pod / container) -----------------".to_string());
         for svc in &config.systemd_resources {
             lines.extend(guard_resource(
                 &svc.resource_name,
@@ -116,9 +116,9 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
 
     // 리소스 그룹 (Pod + Container들을 순서대로 묶음)
     if !config.resource_groups.is_empty() {
-        lines.push("# ─── 리소스 그룹 (Pod → Container 순서 보장) ───────────────".to_string());
-        lines.push("# 그룹 내 start: members 순서대로, stop: 역순 자동 처리".to_string());
-        lines.push("# (pcs resource group add 는 자체적으로 멱등이라 가드를 두지 않는다)".to_string());
+        lines.push("# --- Resource groups (enforce pod -> container order) ------------".to_string());
+        lines.push("# Within a group: start follows the member order, stop is reversed.".to_string());
+        lines.push("# (pcs resource group add is idempotent on its own, so no guard.)".to_string());
         for grp in &config.resource_groups {
             lines.push(generate_resource_group_cmd(grp));
         }
@@ -127,7 +127,7 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
 
     // Order 제약조건
     if !config.order_constraints.is_empty() {
-        lines.push("# ─── Order 제약조건 ──────────────────────────────────────────".to_string());
+        lines.push("# --- Order constraints -------------------------------------------".to_string());
         for ord in &config.order_constraints {
             lines.extend(guard_constraint(&ord.id, generate_order_constraint(ord)));
         }
@@ -136,7 +136,7 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
 
     // Colocation 제약조건
     if !config.colocation_constraints.is_empty() {
-        lines.push("# ─── Colocation 제약조건 ────────────────────────────────────".to_string());
+        lines.push("# --- Colocation constraints ---------------------------------------".to_string());
         for col in &config.colocation_constraints {
             lines.extend(guard_constraint(&col.id, generate_colocation_constraint(col)));
         }
@@ -145,14 +145,14 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
 
     // Location 제약조건 (선호 노드)
     if !config.location_constraints.is_empty() {
-        lines.push("# ─── Location 제약조건 (선호 노드) ─────────────────────────".to_string());
+        lines.push("# --- Location constraints (preferred nodes) -----------------------".to_string());
         for loc in &config.location_constraints {
             lines.extend(guard_constraint(&loc.id, generate_location_constraint(loc)));
         }
         lines.push(String::new());
     }
 
-    lines.push("echo '✅ Pacemaker 설정 완료'".to_string());
+    lines.push("echo 'Pacemaker configuration complete'".to_string());
     lines.join("\n")
 }
 
@@ -173,7 +173,7 @@ fn guard_resource(id: &str, body: Vec<String>) -> Vec<String> {
     }
     out.push(format!("else"));
     out.push(format!(
-        "  echo \"  - {id} 는 이미 있어 건너뜁니다\"",
+        "  echo \"  - {id} already exists, skipping\"",
         id = id
     ));
     out.push("fi".to_string());
@@ -190,7 +190,7 @@ fn guard_constraint(id: &str, cmd: String) -> Vec<String> {
         ),
         format!("  {}", cmd),
         "else".to_string(),
-        format!("  echo \"  - 제약조건 {id} 는 이미 있어 건너뜁니다\"", id = id),
+        format!("  echo \"  - constraint {id} already exists, skipping\"", id = id),
         "fi".to_string(),
     ]
 }
@@ -577,14 +577,14 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
     let mut lines: Vec<String> = Vec::new();
 
     lines.push("#!/bin/bash".to_string());
-    lines.push("# Pacemaker 리소스 해제 스크립트 (생성 스크립트의 짝)".to_string());
+    lines.push("# Pacemaker teardown script (counterpart to the setup script)".to_string());
     lines.push("#".to_string());
-    lines.push("# 이 앱이 등록한 Pacemaker 리소스와 제약조건만 제거합니다.".to_string());
-    lines.push("# DRBD 볼륨의 데이터, LINSTOR 리소스, .res 파일은 건드리지 않습니다".to_string());
-    lines.push("# — Pacemaker 관리에서만 빼냅니다.".to_string());
+    lines.push("# Removes only the Pacemaker resources and constraints this app created.".to_string());
+    lines.push("# DRBD volume data, LINSTOR resources and .res files are left untouched".to_string());
+    lines.push("# -- they are only removed from Pacemaker management.".to_string());
     lines.push("#".to_string());
-    lines.push("# 의존 역순으로 지웁니다: 제약조건 → 그룹 → 서비스/FS → DRBD → STONITH".to_string());
-    lines.push("# 없는 항목은 건너뛰므로 여러 번 실행해도 안전합니다.".to_string());
+    lines.push("# Removal follows reverse dependency order: constraints -> groups -> services/FS -> DRBD -> STONITH".to_string());
+    lines.push("# Missing items are skipped, so this is safe to run repeatedly.".to_string());
     lines.push(String::new());
     lines.push("set -euo pipefail".to_string());
     lines.push(String::new());
@@ -597,7 +597,7 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
             ),
             format!("  pcs constraint delete {}", shell_quote(id)),
             "else".to_string(),
-            format!("  echo \"  - 제약조건 {id} 없음 (건너뜀)\"", id = id),
+            format!("  echo \"  - constraint {id} not found (skipped)\"", id = id),
             "fi".to_string(),
         ]
     };
@@ -608,7 +608,7 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
             // Filesystem 이 언마운트되고 DRBD 가 Secondary 로 내려간다.
             format!("  pcs resource delete {}", shell_quote(id)),
             "else".to_string(),
-            format!("  echo \"  - 리소스 {id} 없음 (건너뜀)\"", id = id),
+            format!("  echo \"  - resource {id} not found (skipped)\"", id = id),
             "fi".to_string(),
         ]
     };
@@ -617,7 +617,7 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
         || !config.colocation_constraints.is_empty()
         || !config.location_constraints.is_empty()
     {
-        lines.push("# ─── 1. 제약조건 제거 ────────────────────────────────────────".to_string());
+        lines.push("# --- 1. Remove constraints ----------------------------------------".to_string());
         for c in &config.location_constraints {
             lines.extend(del_constraint(&c.id));
         }
@@ -631,8 +631,8 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
     }
 
     if !config.resource_groups.is_empty() {
-        lines.push("# ─── 2. 리소스 그룹 해체 ─────────────────────────────────────".to_string());
-        lines.push("# 그룹을 지우면 멤버는 남는다(아래에서 개별 삭제).".to_string());
+        lines.push("# --- 2. Dissolve resource groups ----------------------------------".to_string());
+        lines.push("# Deleting a group leaves its members behind (removed individually below).".to_string());
         for grp in &config.resource_groups {
             lines.extend(del_resource(&grp.group_name));
         }
@@ -640,7 +640,7 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
     }
 
     if !config.systemd_resources.is_empty() {
-        lines.push("# ─── 3. Systemd(Quadlet) 리소스 제거 ─────────────────────────".to_string());
+        lines.push("# --- 3. Remove systemd (Quadlet) resources ------------------------".to_string());
         for svc in &config.systemd_resources {
             lines.extend(del_resource(&svc.resource_name));
         }
@@ -648,7 +648,7 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
     }
 
     if !config.fs_resources.is_empty() {
-        lines.push("# ─── 4. Filesystem 리소스 제거 (언마운트됨) ──────────────────".to_string());
+        lines.push("# --- 4. Remove Filesystem resources (unmounts them) ---------------".to_string());
         for fs in &config.fs_resources {
             lines.extend(del_resource(&fs.resource_name));
         }
@@ -656,8 +656,8 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
     }
 
     if !config.drbd_resources.is_empty() {
-        lines.push("# ─── 5. DRBD Promotable Clone 제거 ───────────────────────────".to_string());
-        lines.push("# clone id 를 지우면 안에 든 primitive 도 함께 사라진다.".to_string());
+        lines.push("# --- 5. Remove DRBD promotable clones -----------------------------".to_string());
+        lines.push("# Deleting the clone id also removes the primitive inside it.".to_string());
         for drbd in &config.drbd_resources {
             lines.extend(del_resource(&drbd.clone_name));
         }
@@ -665,7 +665,7 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
     }
 
     if !config.stonith_devices.is_empty() {
-        lines.push("# ─── 6. STONITH 리소스 제거 ──────────────────────────────────".to_string());
+        lines.push("# --- 6. Remove STONITH resources ----------------------------------".to_string());
         for dev in &config.stonith_devices {
             let id = format!("stonith-ipmi-{}", sanitize_stonith_id(&dev.node));
             lines.extend(del_resource(&id));
@@ -673,10 +673,10 @@ pub fn generate_teardown_script(config: &PacemakerConfig) -> String {
         lines.push(String::new());
     }
 
-    lines.push("# 실패 기록이 남아 있으면 정리한다 (없으면 no-op)".to_string());
+    lines.push("# Clean up leftover failure records (no-op if there are none)".to_string());
     lines.push("pcs resource cleanup >/dev/null 2>&1 || true".to_string());
     lines.push(String::new());
-    lines.push("echo '✅ Pacemaker 리소스 해제 완료'".to_string());
+    lines.push("echo 'Pacemaker teardown complete'".to_string());
     lines.push("pcs resource status || true".to_string());
 
     lines.join("\n")
@@ -780,21 +780,21 @@ pub fn generate_maintenance_script(config: &PacemakerConfig) -> String {
 
     let mut lines: Vec<String> = Vec::new();
     lines.push("#!/bin/bash".to_string());
-    lines.push("# Pacemaker 클러스터 롤링 유지보수 스크립트 (가이드 5.1절 절차)".to_string());
-    lines.push("# 노드를 한 번에 하나씩, 완전히 정상화를 확인한 뒤 다음 노드로 진행합니다.".to_string());
-    lines.push("# set -e로 인해 어느 단계든 실패하면 즉시 중단되고 다음 노드로 넘어가지 않습니다.".to_string());
+    lines.push("# Pacemaker rolling maintenance script (guide section 5.1)".to_string());
+    lines.push("# One node at a time: the next node is only touched after the previous one is fully healthy.".to_string());
+    lines.push("# Because of set -e, any failing step aborts immediately and no further node is processed.".to_string());
     lines.push("#".to_string());
-    lines.push("# 알려진 공백(가이드 8.4절): Pacemaker가 관리하지 않는 podman 컨테이너".to_string());
-    lines.push("# (Restart=always + WantedBy=multi-user.target로 구성된 Quadlet 유닛)는".to_string());
-    lines.push("# 이 스크립트가 건드리지 않습니다 — 재부팅 전에 별도로".to_string());
-    lines.push("# `systemctl stop <unit>`을 실행하세요. `podman kill`/`podman rm -f`로".to_string());
-    lines.push("# 직접 종료하면 Restart=always 때문에 systemd가 즉시 재기동시킵니다.".to_string());
+    lines.push("# Known gap (guide section 8.4): podman containers not managed by Pacemaker".to_string());
+    lines.push("# (Quadlet units with Restart=always + WantedBy=multi-user.target) are".to_string());
+    lines.push("# not touched by this script -- stop them separately with".to_string());
+    lines.push("# `systemctl stop <unit>` before rebooting. Killing them with".to_string());
+    lines.push("# `podman kill` / `podman rm -f` just makes systemd restart them (Restart=always).".to_string());
     lines.push(String::new());
     lines.push("set -euo pipefail".to_string());
     lines.push(String::new());
 
     let controller = &config.cluster.nodes[0].name;
-    lines.push(format!("CONTROLLER=\"{}\"  # pcs 상태 조회는 이 노드를 통해 실행", controller));
+    lines.push(format!("CONTROLLER=\"{}\"  # pcs status queries run through this node", controller));
     lines.push(format!(
         "NODES=({})",
         config.cluster.nodes.iter().map(|n| n.name.as_str()).collect::<Vec<_>>().join(" ")
@@ -805,54 +805,54 @@ pub fn generate_maintenance_script(config: &PacemakerConfig) -> String {
     lines.push(String::new());
 
     lines.push("for node in \"${NODES[@]}\"; do".to_string());
-    lines.push("  echo \"=== [$node] 유지보수 시작 ===\"".to_string());
+    lines.push("  echo \"=== [$node] maintenance start ===\"".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 1. 온라인 노드 수 확인 (과반수 유지 필요)\"".to_string());
+    lines.push("  echo \"[$node] 1. check online node count (quorum must hold)\"".to_string());
     lines.push("  pcs_status".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 2. pacemaker/corosync/pcs versionlock 해제\"".to_string());
+    lines.push("  echo \"[$node] 2. clear pacemaker/corosync/pcs versionlock\"".to_string());
     lines.push("  ssh \"$node\" \"dnf versionlock delete $LOCK_PACKAGES\" || true".to_string());
     lines.push(String::new());
     lines.push("  echo \"[$node] 3. standby\"".to_string());
     lines.push("  ssh \"$CONTROLLER\" \"pcs node standby $node\"".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 4. 리소스가 다른 노드로 모두 이동했는지 확인\"".to_string());
+    lines.push("  echo \"[$node] 4. verify all resources moved to other nodes\"".to_string());
     lines.push("  pcs_status".to_string());
-    lines.push("  read -r -p \"[$node] Failed Resource Actions 없이 리소스가 이동했습니까? 계속하려면 Enter, 중단하려면 Ctrl+C: \"".to_string());
+    lines.push("  read -r -p \"[$node] Did resources move without any Failed Resource Actions? Enter to continue, Ctrl+C to abort: \"".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 5. 클러스터 멤버십에서 완전히 이탈 (STONITH 오발동 방지)\"".to_string());
+    lines.push("  echo \"[$node] 5. leave cluster membership completely (avoids spurious STONITH)\"".to_string());
     lines.push("  ssh \"$node\" \"pcs cluster stop\"".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 6. 다른 노드 관점에서 Offline 확인\"".to_string());
+    lines.push("  echo \"[$node] 6. confirm Offline from another node's point of view\"".to_string());
     lines.push("  pcs_status".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 7. 패키지 업데이트 (커널/DRBD 모듈 포함)\"".to_string());
+    lines.push("  echo \"[$node] 7. update packages (including kernel / DRBD modules)\"".to_string());
     lines.push("  ssh \"$node\" \"dnf update -y\"".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 8. 재부팅 후 SSH 재접속 대기\"".to_string());
+    lines.push("  echo \"[$node] 8. reboot and wait for SSH to come back\"".to_string());
     lines.push("  ssh \"$node\" \"reboot\" || true".to_string());
     lines.push("  until ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no \"$node\" true 2>/dev/null; do sleep 5; done".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 9. versionlock 재설정\"".to_string());
+    lines.push("  echo \"[$node] 9. re-apply versionlock\"".to_string());
     lines.push("  ssh \"$node\" \"dnf versionlock add $LOCK_PACKAGES\"".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 10. 클러스터 재합류\"".to_string());
+    lines.push("  echo \"[$node] 10. rejoin the cluster\"".to_string());
     lines.push("  ssh \"$node\" \"pcs cluster start\"".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 11. Online 재합류 확인\"".to_string());
+    lines.push("  echo \"[$node] 11. confirm the node is Online again\"".to_string());
     lines.push("  pcs_status".to_string());
     lines.push(String::new());
     lines.push("  echo \"[$node] 12. unstandby\"".to_string());
     lines.push("  ssh \"$CONTROLLER\" \"pcs node unstandby $node\"".to_string());
     lines.push(String::new());
-    lines.push("  echo \"[$node] 13. 최종 확인\"".to_string());
+    lines.push("  echo \"[$node] 13. final check\"".to_string());
     lines.push("  pcs_status".to_string());
-    lines.push("  read -r -p \"[$node] Failed Resource Actions 없습니까? 다음 노드로 진행하려면 Enter, 중단하려면 Ctrl+C: \"".to_string());
+    lines.push("  read -r -p \"[$node] Any Failed Resource Actions? Enter to continue to the next node, Ctrl+C to abort: \"".to_string());
     lines.push(String::new());
-    lines.push("  echo \"=== [$node] 유지보수 완료 ===\"".to_string());
+    lines.push("  echo \"=== [$node] maintenance complete ===\"".to_string());
     lines.push("done".to_string());
     lines.push(String::new());
-    lines.push("echo '✅ 모든 노드 유지보수 완료'".to_string());
+    lines.push("echo 'Maintenance complete on all nodes'".to_string());
 
     lines.join("\n")
 }
@@ -1003,7 +1003,7 @@ mod tests {
             );
         }
         assert!(script.contains("if ! pcs resource config"));
-        assert!(script.contains("이미 있어 건너뜁니다"));
+        assert!(script.contains("already exists, skipping"));
     }
 
     #[test]
@@ -1026,12 +1026,12 @@ mod tests {
         let script = generate_teardown_script(&config);
 
         let pos = |needle: &str| script.find(needle).unwrap_or_else(|| panic!("없음: {}", needle));
-        let constraints = pos("1. 제약조건 제거");
-        let groups = pos("2. 리소스 그룹 해체");
-        let systemd = pos("3. Systemd");
-        let fs = pos("4. Filesystem");
-        let drbd = pos("5. DRBD");
-        let stonith = pos("6. STONITH");
+        let constraints = pos("1. Remove constraints");
+        let groups = pos("2. Dissolve resource groups");
+        let systemd = pos("3. Remove systemd");
+        let fs = pos("4. Remove Filesystem");
+        let drbd = pos("5. Remove DRBD");
+        let stonith = pos("6. Remove STONITH");
 
         assert!(constraints < groups);
         assert!(groups < systemd);
@@ -1047,7 +1047,7 @@ mod tests {
     #[test]
     fn teardown_skips_missing_items() {
         let script = generate_teardown_script(&full_config());
-        assert!(script.contains("없음 (건너뜀)"));
+        assert!(script.contains("not found (skipped)"));
         assert!(script.contains("if pcs resource config"));
     }
 
@@ -1124,7 +1124,7 @@ mod tests {
         let script = generate_pcs_script(&config);
 
         assert!(script.contains("stonith-enabled=false"));
-        assert!(script.contains("on-fail 을 조용히 stop 으로 격하"));
+        assert!(script.contains("silently downgrades on-fail to stop"));
         assert!(script.contains(&config.drbd_resources[0].resource_name));
     }
 
@@ -1133,7 +1133,7 @@ mod tests {
         let mut config = config_with_nodes(3);
         config.cluster.stonith_enabled = true;
         config.drbd_resources[0].on_fail = "fence".to_string();
-        assert!(!generate_pcs_script(&config).contains("조용히 stop 으로 격하"));
+        assert!(!generate_pcs_script(&config).contains("silently downgrades on-fail to stop"));
     }
 
     #[test]
@@ -1141,7 +1141,7 @@ mod tests {
         let mut config = config_with_nodes(3);
         config.cluster.stonith_enabled = false;
         config.drbd_resources[0].on_fail = "restart".to_string();
-        assert!(!generate_pcs_script(&config).contains("조용히 stop 으로 격하"));
+        assert!(!generate_pcs_script(&config).contains("silently downgrades on-fail to stop"));
     }
 
     #[test]

@@ -78,7 +78,7 @@ async fn fetch_linstor_resources(base_url: &str) -> anyhow::Result<Vec<serde_jso
     let url = format!("{}/v1/view/resources", base_url.trim_end_matches('/'));
     let resp = client.get(&url).send().await?;
     if !resp.status().is_success() {
-        anyhow::bail!("LINSTOR API {} 응답: HTTP {}", url, resp.status());
+        anyhow::bail!("LINSTOR API {} returned HTTP {}", url, resp.status());
     }
     let rows: Vec<serde_json::Value> = resp.json().await?;
     Ok(aggregate_linstor_rows(&rows))
@@ -207,12 +207,14 @@ pub async fn api_list_drbd_resources(State(state): State<AppState>) -> impl Into
         Err(e) => {
             // 컨트롤러에 못 붙어도 200으로 응답하되 이유를 남긴다. 스캔으로
             // 들어온 .res 기반 목록이 있으면 그거라도 보여준다.
-            tracing::warn!("LINSTOR 리소스 조회 실패({}): {}", state.linstor_url, e);
+            tracing::warn!("failed to query LINSTOR resources ({}): {}", state.linstor_url, e);
             Json(serde_json::json!({
                 "backend": "linstor",
                 "resources": db_items,
                 "warning": format!(
-                    "LINSTOR 컨트롤러({})에 연결하지 못했습니다: {}.                      아래 목록은 /etc/drbd.d 스캔 결과이며 LINSTOR가 관리하는                      리소스가 빠져 있을 수 있습니다.",
+                    "Could not connect to the LINSTOR controller ({}): {}. The list below \
+                     comes from scanning /etc/drbd.d and may be missing resources \
+                     managed by LINSTOR.",
                     state.linstor_url, e
                 ),
             }))
@@ -255,7 +257,7 @@ pub async fn generate(
     };
 
     if selected.is_empty() {
-        ctx.insert("error", "생성할 볼륨이 없습니다.");
+        ctx.insert("error", "No volumes to generate.");
         ctx.insert("result", &serde_json::Value::Null);
         let rendered = state.tera.render("volume/result.html", &ctx)
             .unwrap_or_else(|e| format!("<pre>Template error: {}</pre>", e));
@@ -282,7 +284,7 @@ pub async fn generate(
 fn build_volume_ansible_playbook(files: &[(String, String)]) -> String {
     let install_path = "/etc/containers/systemd";
     let mut tasks = vec![
-        format!("    - name: Quadlet 디렉토리 생성\n      file:\n        path: {}\n        state: directory\n        mode: '0755'", install_path),
+        format!("    - name: Create the Quadlet directory\n      file:\n        path: {}\n        state: directory\n        mode: '0755'", install_path),
     ];
     for (filename, content) in files {
         let indented = content.lines()
@@ -290,14 +292,14 @@ fn build_volume_ansible_playbook(files: &[(String, String)]) -> String {
             .collect::<Vec<_>>()
             .join("\n");
         tasks.push(format!(
-            "    - name: {} 배포\n      copy:\n        dest: {}/{}\n        content: |\n{}\n        mode: '0644'",
+            "    - name: Deploy {}\n      copy:\n        dest: {}/{}\n        content: |\n{}\n        mode: '0644'",
             filename, install_path, filename, indented
         ));
     }
-    tasks.push("    - name: systemd 데몬 리로드\n      systemd:\n        daemon_reload: yes".to_string());
+    tasks.push("    - name: Reload the systemd daemon\n      systemd:\n        daemon_reload: yes".to_string());
 
     format!(
-        "---\n- name: Quadlet Volume 유닛 배포\n  hosts: all\n  become: yes\n  tasks:\n{}",
+        "---\n- name: Deploy the Quadlet volume units\n  hosts: all\n  become: yes\n  tasks:\n{}",
         tasks.join("\n\n")
     )
 }

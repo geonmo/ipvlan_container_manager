@@ -259,7 +259,7 @@ pub async fn api_collect_interfaces(
         let nodes = list_nodes(&conn).map_err(|e| e500(e.to_string()))?;
         if nodes.is_empty() {
             return Err((StatusCode::BAD_REQUEST,
-                "수집할 노드가 없습니다. 먼저 노드 풀에 노드를 추가하세요.".to_string()));
+                "No nodes to collect from. Add nodes to the node pool first.".to_string()));
         }
         let all_profiles = list_ansible_profiles(&conn).map_err(|e| e500(e.to_string()))?;
         let profile = if let Some(ref name) = input.profile_name {
@@ -271,15 +271,15 @@ pub async fn api_collect_interfaces(
     };
 
     // 임시 디렉토리 생성
-    std::fs::create_dir_all(&temp_dir).map_err(|e| e500(format!("temp_dir 생성: {}", e)))?;
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e500(format!("creating temp_dir: {}", e)))?;
 
     // Ansible 인벤토리 + 플레이북 생성
     let inv_path = format!("{}/collect_inventory.ini", temp_dir);
     let pb_path  = format!("{}/collect_interfaces.yml", temp_dir);
     write_ansible_inventory(&nodes, &profile, &inv_path)
-        .map_err(|e| e500(format!("인벤토리 생성: {}", e)))?;
+        .map_err(|e| e500(format!("creating the inventory: {}", e)))?;
     write_collect_playbook(&temp_dir, &pb_path)
-        .map_err(|e| e500(format!("플레이북 생성: {}", e)))?;
+        .map_err(|e| e500(format!("creating the playbook: {}", e)))?;
 
     // ansible-playbook 실행
     let mut cmd = tokio::process::Command::new("ansible-playbook");
@@ -299,8 +299,8 @@ pub async fn api_collect_interfaces(
         std::time::Duration::from_secs(120),
         cmd.output(),
     ).await
-     .map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Ansible 타임아웃 (120초)".into()))?
-     .map_err(|e| e500(format!("ansible-playbook 실행 실패: {}\n(ansible-playbook 설치 여부를 확인하세요)", e)))?;
+     .map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Ansible timed out (120s)".into()))?
+     .map_err(|e| e500(format!("failed to run ansible-playbook: {}\n(check that ansible-playbook is installed)", e)))?;
 
     let stdout = String::from_utf8_lossy(&result.stdout).to_string();
     let stderr = String::from_utf8_lossy(&result.stderr).to_string();
@@ -308,7 +308,7 @@ pub async fn api_collect_interfaces(
 
     if !result.status.success() {
         return Err((StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Ansible 실패:\n{}", ansible_output)));
+            format!("Ansible failed:\n{}", ansible_output)));
     }
 
     // 결과 파일 파싱 및 DB 저장
@@ -328,10 +328,10 @@ pub async fn api_collect_interfaces(
                                 }
                             }
                         }
-                        Err(e) => tracing::warn!("노드 {} 파싱 실패: {}", node.hostname, e),
+                        Err(e) => tracing::warn!("failed to parse node {}: {}", node.hostname, e),
                     }
                 }
-                Err(e) => tracing::warn!("파일 읽기 실패 {}: {}", file, e),
+                Err(e) => tracing::warn!("failed to read file {}: {}", file, e),
             }
         }
         let matched = auto_match_network_interfaces(&conn);
@@ -382,7 +382,7 @@ pub async fn api_detect_storage_backend(
         let nodes = list_nodes(&conn).map_err(|e| e500(e.to_string()))?;
         if nodes.is_empty() {
             return Err((StatusCode::BAD_REQUEST,
-                "감지할 노드가 없습니다. 먼저 노드 풀에 노드를 추가하세요.".to_string()));
+                "No nodes to detect on. Add nodes to the node pool first.".to_string()));
         }
         let all_profiles = list_ansible_profiles(&conn).map_err(|e| e500(e.to_string()))?;
         let profile = if let Some(ref name) = input.profile_name {
@@ -393,14 +393,14 @@ pub async fn api_detect_storage_backend(
         (nodes, profile)
     };
 
-    std::fs::create_dir_all(&temp_dir).map_err(|e| e500(format!("temp_dir 생성: {}", e)))?;
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e500(format!("creating temp_dir: {}", e)))?;
 
     let inv_path = format!("{}/linstor_detect_inventory.ini", temp_dir);
     let pb_path  = format!("{}/linstor_detect.yml", temp_dir);
     write_ansible_inventory(&nodes, &profile, &inv_path)
-        .map_err(|e| e500(format!("인벤토리 생성: {}", e)))?;
+        .map_err(|e| e500(format!("creating the inventory: {}", e)))?;
     write_storage_backend_detect_playbook(&temp_dir, &pb_path)
-        .map_err(|e| e500(format!("플레이북 생성: {}", e)))?;
+        .map_err(|e| e500(format!("creating the playbook: {}", e)))?;
 
     let mut cmd = tokio::process::Command::new("ansible-playbook");
     cmd.arg("-i").arg(&inv_path).arg(&pb_path)
@@ -419,8 +419,8 @@ pub async fn api_detect_storage_backend(
         std::time::Duration::from_secs(120),
         cmd.output(),
     ).await
-     .map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Ansible 타임아웃 (120초)".into()))?
-     .map_err(|e| e500(format!("ansible-playbook 실행 실패: {}\n(ansible-playbook 설치 여부를 확인하세요)", e)))?;
+     .map_err(|_| (StatusCode::GATEWAY_TIMEOUT, "Ansible timed out (120s)".into()))?
+     .map_err(|e| e500(format!("failed to run ansible-playbook: {}\n(check that ansible-playbook is installed)", e)))?;
 
     let stdout = String::from_utf8_lossy(&result.stdout).to_string();
     let stderr = String::from_utf8_lossy(&result.stderr).to_string();
@@ -428,7 +428,7 @@ pub async fn api_detect_storage_backend(
 
     if !result.status.success() {
         return Err((StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Ansible 실패:\n{}", ansible_output)));
+            format!("Ansible failed:\n{}", ansible_output)));
     }
 
     let mut per_node = Vec::new();
@@ -441,7 +441,7 @@ pub async fn api_detect_storage_backend(
                 let has_sat  = v["satellite"].as_bool().unwrap_or(false);
                 per_node.push((node.hostname.clone(), has_ctrl, has_sat));
             }
-            Err(e) => tracing::warn!("노드 {} 감지 결과 읽기 실패: {}", node.hostname, e),
+            Err(e) => tracing::warn!("failed to read the detection result for node {}: {}", node.hostname, e),
         }
     }
 
@@ -467,21 +467,21 @@ pub async fn api_detect_storage_backend(
 
 fn write_storage_backend_detect_playbook(temp_dir: &str, path: &str) -> anyhow::Result<()> {
     let content = format!(r#"---
-- name: LINSTOR 설치 여부 감지 (PLAN.md D.1)
+- name: Detect whether LINSTOR is installed (PLAN.md D.1)
   hosts: all
   gather_facts: no
   tasks:
-    - name: linstor-controller systemd 유닛 확인
+    - name: Check for the linstor-controller systemd unit
       ansible.builtin.stat:
         path: /usr/lib/systemd/system/linstor-controller.service
       register: _linstor_ctrl_stat
 
-    - name: linstor-satellite systemd 유닛 확인
+    - name: Check for the linstor-satellite systemd unit
       ansible.builtin.stat:
         path: /usr/lib/systemd/system/linstor-satellite.service
       register: _linstor_sat_stat
 
-    - name: 감지 결과 로컬 저장
+    - name: Save the detection result locally
       local_action:
         module: copy
         content: "{{{{ {{'controller': _linstor_ctrl_stat.stat.exists, 'satellite': _linstor_sat_stat.stat.exists}} | to_json }}}}"
@@ -580,16 +580,16 @@ fn write_ansible_inventory(
 
 fn write_collect_playbook(temp_dir: &str, path: &str) -> anyhow::Result<()> {
     let content = format!(r#"---
-- name: 노드 네트워크 인터페이스 정보 수집
+- name: Collect network interface information from the nodes
   hosts: all
   gather_facts: no
   tasks:
-    - name: IP 주소 정보 수집 (JSON)
+    - name: Collect IP address information (JSON)
       command: ip -j addr show
       register: ip_json
       changed_when: false
 
-    - name: 수집 결과 로컬 저장
+    - name: Save the collected data locally
       local_action:
         module: copy
         content: "{{{{ ip_json.stdout }}}}"
@@ -611,7 +611,7 @@ fn is_virtual_iface(name: &str) -> bool {
 fn parse_ip_addr_json(hostname: &str, json: &str) -> anyhow::Result<Vec<DbNodeInterface>> {
     let data: serde_json::Value = serde_json::from_str(json)?;
     let arr = data.as_array()
-        .ok_or_else(|| anyhow::anyhow!("JSON 배열이 아닙니다"))?;
+        .ok_or_else(|| anyhow::anyhow!("not a JSON array"))?;
 
     let mut result = Vec::new();
     for iface in arr {

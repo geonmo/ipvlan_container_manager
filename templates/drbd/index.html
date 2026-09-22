@@ -1,44 +1,44 @@
 {% extends "base.html" %}
-{% block title %}DRBD 설정 - IPVLAN Container Manager{% endblock %}
+{% block title %}DRBD - IPVLAN Container Manager{% endblock %}
 {% block nav_drbd %}active{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-10">
-    <h2 class="fw-bold mb-1"><i class="bi bi-database-fill text-primary"></i> DRBD 리소스 설정</h2>
-    <p class="text-muted mb-4">DRBD <code>.res</code> 파일과 Ansible 플레이북을 생성하여 클러스터 노드에 배포합니다.</p>
+    <h2 class="fw-bold mb-1"><i class="bi bi-database-fill text-primary"></i> DRBD Resources</h2>
+    <p class="text-muted mb-4">Generate a DRBD <code>.res</code> file and an Ansible playbook to deploy it to the cluster nodes.</p>
 
     <form action="/drbd/generate" method="post" id="drbdForm" onsubmit="return serializeNodes()">
       <input type="hidden" name="nodes_json" id="nodesJson">
 
-      <!-- 리소스 기본 정보 -->
+      <!-- Resource basics -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-primary text-white fw-bold d-flex align-items-center">
-          <span><i class="bi bi-gear-fill"></i> 리소스 기본 정보</span>
+          <span><i class="bi bi-gear-fill"></i> Resource basics</span>
           <button type="button" class="btn btn-sm btn-light ms-auto" onclick="scanDrbd()" id="btnScan">
-            <i class="bi bi-search"></i> /etc/drbd.d 스캔 &amp; DB 조회
+            <i class="bi bi-search"></i> Scan /etc/drbd.d &amp; DB
           </button>
         </div>
         <div class="card-body">
 
-          <!-- 스캔 결과 패널 -->
+          <!-- Scan results -->
           <div id="scanPanel" class="d-none mb-3">
             <div class="border rounded p-3 bg-light">
               <div class="d-flex align-items-center mb-2">
-                <span class="fw-semibold text-success me-2"><i class="bi bi-check-circle-fill"></i> 스캔 결과</span>
+                <span class="fw-semibold text-success me-2"><i class="bi bi-check-circle-fill"></i> Scan results</span>
                 <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" onclick="closeScan()">
-                  <i class="bi bi-x"></i> 닫기
+                  <i class="bi bi-x"></i> Close
                 </button>
               </div>
               <div class="row g-2">
                 <div class="col-md-8">
                   <select class="form-select" id="scannedSelect" onchange="loadScanned(this.value)">
-                    <option value="">-- 리소스 선택 --</option>
+                    <option value="">-- select resource --</option>
                   </select>
                 </div>
                 <div class="col-md-4">
                   <button type="button" class="btn btn-success w-100" onclick="loadScanned('__new__')">
-                    <i class="bi bi-plus-circle-fill"></i> 새 리소스 생성
+                    <i class="bi bi-plus-circle-fill"></i> New resource
                   </button>
                 </div>
               </div>
@@ -48,77 +48,78 @@
 
           <div class="row g-3">
             <div class="col-md-4">
-              <label class="form-label fw-semibold">리소스 Name <span class="text-danger">*</span></label>
+              <label class="form-label fw-semibold">Resource name <span class="text-danger">*</span></label>
               <input type="text" class="form-control" name="resource_name" id="resourceName" value="r0" required
-                     placeholder="예: r0, drbd0" oninput="updateLvPreviews()">
-              <div class="form-text">생성될 파일명: <code>&lt;name&gt;.res</code></div>
+                     placeholder="e.g. r0, drbd0" oninput="updateLvPreviews()">
+              <div class="form-text">Creates <code>&lt;name&gt;.res</code></div>
             </div>
             <div class="col-md-4">
-              <label class="form-label fw-semibold">프로토콜</label>
+              <label class="form-label fw-semibold">Protocol</label>
               <select class="form-select" name="protocol" id="protocol">
-                <option value="C" selected>C - 동기식 (권장, HA 환경)</option>
-                <option value="B">B - 반동기식</option>
-                <option value="A">A - 비동기식</option>
+                <option value="C" selected>C - synchronous (recommended for HA)</option>
+                <option value="B">B - semi-synchronous</option>
+                <option value="A">A - asynchronous</option>
               </select>
             </div>
             <div class="col-md-4">
-              <label class="form-label fw-semibold">Minor 번호</label>
+              <label class="form-label fw-semibold">Minor number</label>
               <input type="number" class="form-control" name="minor" id="minor" value="0" min="0" max="255">
-              <div class="form-text">장치: <code>/dev/drbd&lt;minor&gt;</code></div>
+              <div class="form-text">Device: <code>/dev/drbd&lt;minor&gt;</code></div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- 클러스터 노드 설정 (셔틀) -->
+      <!-- Cluster nodes -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
-          <span><i class="bi bi-pc-display-horizontal"></i> 클러스터 노드 설정</span>
-          <span class="ms-3 badge bg-light text-dark" id="nodeCountBadge">0 노드</span>
+          <span><i class="bi bi-pc-display-horizontal"></i> Cluster nodes</span>
+          <span class="ms-3 badge bg-light text-dark" id="nodeCountBadge">0 nodes</span>
           <a href="/nodes/" class="btn btn-sm btn-light ms-auto" target="_blank">
-            <i class="bi bi-pencil-fill"></i> Node Pool 편집
+            <i class="bi bi-pencil-fill"></i> Edit node pool
           </a>
         </div>
         <div class="card-body">
           <div class="row g-2">
-            <!-- 왼쪽: 풀 -->
+            <!-- left: pool -->
             <div class="col-md-4">
               <div class="fw-semibold small text-muted mb-1">Node Pool <span class="badge bg-secondary" id="poolBadge">0</span></div>
               <ul class="list-group" id="nodePoolList" style="min-height:120px;max-height:280px;overflow-y:auto"></ul>
             </div>
-            <!-- 가운데: 버튼 -->
+            <!-- middle: buttons -->
             <div class="col-md-1 d-flex flex-column justify-content-center align-items-center gap-2">
-              <button type="button" class="btn btn-outline-success btn-sm" id="nodePoolList_add" title="선택 Add">
+              <button type="button" class="btn btn-outline-success btn-sm" id="nodePoolList_add" title="Add selected">
                 <i class="bi bi-arrow-right"></i>
               </button>
             </div>
-            <!-- 오른쪽: 선택된 노드 + disk 설정 -->
+            <!-- right: selected nodes + disk settings -->
             <div class="col-md-7">
-              <div class="fw-semibold small text-muted mb-1">선택된 노드 (디스크 설정 포함)</div>
+              <div class="fw-semibold small text-muted mb-1">Selected nodes (with disk settings)</div>
               <ul class="list-group" id="nodeSelectedList" style="min-height:120px;max-height:280px;overflow-y:auto"></ul>
             </div>
           </div>
         </div>
         <div class="card-footer text-muted small">
           <i class="bi bi-info-circle"></i>
-          최소 2개, 최대 7개. 3개 이상 시 DRBD 9 <code>connection-mesh</code> 자동 생성.
-          Node Pool이 비어있으면 <a href="/nodes/" target="_blank">Node Pool 편집</a>에서 먼저 노드를 Add하세요.
+          Two to seven nodes. With three or more, a DRBD 9 <code>connection-mesh</code> is generated
+          automatically. If the node pool is empty, add nodes on the
+          <a href="/nodes/" target="_blank">Node Pool</a> page first.
         </div>
       </div>
 
-      <!-- 고급 옵션 -->
+      <!-- Advanced options -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-secondary text-white fw-bold">
           <button class="btn btn-link text-white p-0 text-decoration-none" type="button"
                   data-bs-toggle="collapse" data-bs-target="#advancedOpts">
-            <i class="bi bi-sliders"></i> 고급 옵션 (Net / Disk / Startup)
+            <i class="bi bi-sliders"></i> Advanced (Net / Disk / Startup)
           </button>
         </div>
         <div class="collapse" id="advancedOpts">
           <div class="card-body">
             <div class="row g-3">
               <div class="col-md-4">
-                <h6 class="fw-semibold">Net 옵션</h6>
+                <h6 class="fw-semibold">Net options</h6>
                 <div class="form-check mb-2">
                   <input class="form-check-input" type="checkbox" name="allow_two_primaries" id="allowTwoPrimaries">
                   <label class="form-check-label" for="allowTwoPrimaries">allow-two-primaries</label>
@@ -151,11 +152,11 @@
                 </div>
               </div>
               <div class="col-md-4">
-                <h6 class="fw-semibold">Disk 옵션</h6>
+                <h6 class="fw-semibold">Disk options</h6>
                 <div class="mb-2">
                   <label class="form-label">on-io-error</label>
                   <select class="form-select form-select-sm" name="on_io_error" id="onIoError">
-                    <option value="detach" selected>detach (권장)</option>
+                    <option value="detach" selected>detach (recommended)</option>
                     <option value="pass_on">pass_on</option>
                     <option value="call-local-io-error">call-local-io-error</option>
                   </select>
@@ -168,33 +169,32 @@
                     <option value="dont-care">dont-care</option>
                   </select>
                   <div class="form-text">
-                    <code>resource-only</code> 선택 시 <code>/etc/drbd.d/global_common.conf</code>에
-                    fence-peer 핸들러(<code>crm-fence-peer.9.sh</code>)가 자동으로 함께 배포됩니다.
-                    이 핸들러가 없으면 피어 단절 시 promote가 응답 없이 hang 되다가 실패 처리됩니다.
+                    With <code>resource-only</code>, the fence-peer handler
+                    (<code>crm-fence-peer.9.sh</code>) is deployed alongside it in
+                    <code>/etc/drbd.d/global_common.conf</code>. Without it, a promote hangs with no response after a peer disconnect and is eventually treated as a failure.
                   </div>
                 </div>
               </div>
               <div class="col-md-4">
-                <h6 class="fw-semibold">Startup 옵션</h6>
+                <h6 class="fw-semibold">Startup options</h6>
                 <div class="mb-2">
-                  <label class="form-label">wfc-timeout (초)</label>
+                  <label class="form-label">wfc-timeout (seconds)</label>
                   <input type="number" class="form-control form-control-sm" name="wfc_timeout" id="wfcTimeout" value="15">
                 </div>
                 <div class="mb-2">
-                  <label class="form-label">degr-wfc-timeout (초)</label>
+                  <label class="form-label">degr-wfc-timeout (seconds)</label>
                   <input type="number" class="form-control form-control-sm" name="degr_wfc_timeout" id="degrWfcTimeout" value="60">
                 </div>
                 <div class="form-text">
-                  두 값은 부팅 시 drbd init 스크립트의 피어 대기 시간만 바꿉니다.
-                  Pacemaker가 리소스를 올리는 경로에는 영향이 없습니다.
+                  These only affect how long the drbd init script waits for peers at boot. They have no
+                  effect on the path Pacemaker uses to bring the resource up.
                 </div>
                 <div class="alert alert-secondary py-2 px-3 small mt-2 mb-0">
                   <i class="bi bi-info-circle"></i>
-                  <code>become-primary-on</code>은 DRBD 9에서 제거된 키워드라
-                  <code>drbdadm</code>이 조용히 무시합니다. Primary 승격은
-                  Pacemaker promotable clone이 결정하므로, 선호 노드는
-                  <a href="/pacemaker/" target="_blank">Pacemaker 설정</a>의
-                  location 제약조건에서 지정하세요.
+                  <code>become-primary-on</code> was removed in DRBD 9, so <code>drbdadm</code> silently
+                  ignores it. Promotion is decided by the Pacemaker promotable clone &mdash; set
+                  your preferred node with a location constraint on the
+                  <a href="/pacemaker/" target="_blank">Pacemaker</a> page.
                 </div>
               </div>
             </div>
@@ -202,7 +202,7 @@
         </div>
       </div>
 
-      <!-- Ansible 설정 -->
+      <!-- Ansible settings -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-warning text-dark fw-bold">
           <i class="bi bi-send-fill"></i> Ansible Deployment
@@ -214,14 +214,14 @@
               <input type="text" class="form-control" name="ansible_user" value="root">
             </div>
             <div class="col-md-4">
-              <label class="form-label fw-semibold">SSH private key 경로</label>
+              <label class="form-label fw-semibold">SSH private key path</label>
               <input type="text" class="form-control" name="ansible_ssh_key" value="~/.ssh/id_rsa">
             </div>
             <div class="col-md-4">
-              <label class="form-label fw-semibold">옵션</label>
+              <label class="form-label fw-semibold">Options</label>
               <div class="form-check mt-2">
                 <input class="form-check-input" type="checkbox" name="ansible_become" id="ansibleBecome" checked>
-                <label class="form-check-label" for="ansibleBecome">sudo (become) 사용</label>
+                <label class="form-check-label" for="ansibleBecome">Use sudo (become)</label>
               </div>
             </div>
           </div>
@@ -230,10 +230,10 @@
 
       <div class="d-flex gap-2">
         <button type="submit" class="btn btn-primary btn-lg">
-          <i class="bi bi-gear-fill"></i> 설정 파일 생성
+          <i class="bi bi-gear-fill"></i> Generate configuration
         </button>
         <button type="button" class="btn btn-outline-secondary btn-lg" onclick="loadExample()">
-          <i class="bi bi-lightning-fill"></i> Example 값 입력
+          <i class="bi bi-lightning-fill"></i> Fill with example values
         </button>
       </div>
     </form>
@@ -287,19 +287,19 @@ function renderSelectedNodes() {
       <div class="d-flex align-items-center mb-1">
         <span class="fw-semibold me-2">${esc(node.hostname)}</span>
         <small class="text-muted me-auto">${esc(node.ip)}</small>
-        <button type="button" class="btn btn-sm btn-outline-danger shuttle-remove ms-1" title="제거">
+        <button type="button" class="btn btn-sm btn-outline-danger shuttle-remove ms-1" title="Remove">
           <i class="bi bi-arrow-left"></i>
         </button>
       </div>
       <div class="row gx-2 gy-1">
         <div class="col-4">
           <select class="form-select form-select-sm" onchange="setNodeField(${i},'disk_type',this.value);renderSelectedNodes()">
-            <option value="block" ${!isLvm?'selected':''}>블록 장치</option>
+            <option value="block" ${!isLvm?'selected':''}>block device</option>
             <option value="lvm"   ${isLvm?'selected':''}>LVM</option>
           </select>
         </div>
         <div class="col-3">
-          <input type="number" class="form-control form-control-sm" placeholder="포트"
+          <input type="number" class="form-control form-control-sm" placeholder="Port"
             value="${node.port}" oninput="setNodeField(${i},'port',parseInt(this.value)||7789)">
         </div>
         <div class="col-5">
@@ -313,7 +313,7 @@ function renderSelectedNodes() {
             value="${esc(node.lvm_vg)}" oninput="setNodeField(${i},'lvm_vg',this.value)">
         </div>
         <div class="col-4">
-          <input class="form-control form-control-sm" placeholder="LV 크기 (10G)"
+          <input class="form-control form-control-sm" placeholder="LV size (10G)"
             id="lvm_size_${i}"
             value="${esc(node.lvm_size)}" oninput="setNodeField(${i},'lvm_size',this.value)">
         </div>
@@ -337,7 +337,7 @@ function renderSelectedNodes() {
 }
 
 function updateNodeCountBadge() {
-  document.getElementById('nodeCountBadge').textContent = `${nodes.length} 노드`;
+  document.getElementById('nodeCountBadge').textContent = `${nodes.length} nodes`;
 }
 
 function setNodeField(i, field, value) { nodes[i][field] = value; }
@@ -461,7 +461,7 @@ function autoFillLvmSizes(nodeArr) {
 async function scanDrbd() {
   const btn = document.getElementById('btnScan');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 스캔 중...';
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Scanning...';
   try {
     // DRBD 스캔과 lvscan 병렬 실행
     const [scanRes, lvRes] = await Promise.all([
@@ -478,18 +478,18 @@ async function scanDrbd() {
     }
 
     const sel = document.getElementById('scannedSelect');
-    sel.innerHTML = '<option value="">-- 리소스 선택 (로드) --</option>';
+    sel.innerHTML = '<option value="">-- select a resource to load --</option>';
 
     // 파일 그룹
     const fileRes = scanData.resources.filter(r => r.source === 'file');
     if (fileRes.length) {
       const grp = document.createElement('optgroup');
-      grp.label = '📁 /etc/drbd.d 파일';
+      grp.label = '📁 /etc/drbd.d files';
       fileRes.forEach((r, _) => {
         const opt = document.createElement('option');
         opt.value = r.resource_name;
-        const dbBadge = r.in_db ? ' [DBSave됨]' : '';
-        opt.textContent = `${r.resource_name}  (minor=${r.minor}, ${r.nodes.length}노드)${dbBadge}`;
+        const dbBadge = r.in_db ? ' [in DB]' : '';
+        opt.textContent = `${r.resource_name}  (minor=${r.minor}, ${r.nodes.length} nodes)${dbBadge}`;
         grp.appendChild(opt);
       });
       sel.appendChild(grp);
@@ -499,27 +499,27 @@ async function scanDrbd() {
     const dbOnly = scanData.resources.filter(r => r.source === 'db');
     if (dbOnly.length) {
       const grp = document.createElement('optgroup');
-      grp.label = '🗄️ DB Save 리소스';
+      grp.label = '🗄️ Saved in DB';
       dbOnly.forEach(r => {
         const opt = document.createElement('option');
         opt.value = r.resource_name;
-        opt.textContent = `${r.resource_name}  (minor=${r.minor}, ${r.nodes.length}노드)  ${r.updated_at.slice(0,10)}`;
+        opt.textContent = `${r.resource_name}  (minor=${r.minor}, ${r.nodes.length} nodes)  ${r.updated_at.slice(0,10)}`;
         grp.appendChild(opt);
       });
       sel.appendChild(grp);
     }
 
     if (!scanData.resources.length) {
-      sel.innerHTML += '<option disabled>스캔 결과 없음</option>';
+      sel.innerHTML += '<option disabled>no scan results</option>';
     }
 
     document.getElementById('scanPanel').classList.remove('d-none');
     document.getElementById('scanEntryInfo').classList.add('d-none');
   } catch (e) {
-    alert('스캔 실패: ' + e.message);
+    alert('Scan failed: ' + e.message);
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-search"></i> /etc/drbd.d 스캔 &amp; DB 조회';
+    btn.innerHTML = '<i class="bi bi-search"></i> Scan /etc/drbd.d &amp; DB';
   }
 }
 
@@ -535,7 +535,7 @@ function loadScanned(name) {
     nodes = [];
     renderSelectedNodes();
     rebuildPoolList();
-    showInfo(`✨ 신규 리소스: minor=${scanData.next_minor}, 시작 포트=${basePort}`);
+    showInfo(`✨ New resource: minor=${scanData.next_minor}, starting port=${basePort}`);
     return;
   }
 
@@ -590,9 +590,9 @@ function loadScanned(name) {
   renderSelectedNodes();
   rebuildPoolList();
 
-  const srcLabel = r.source === 'db' ? '🗄️ DB' : '📁 파일';
-  const dbInfo   = r.in_db ? ` · DB 업데이트: ${r.updated_at.slice(0,10)}` : '';
-  showInfo(`${srcLabel}: ${r.resource_name} · minor=${r.minor} · ${r.nodes.length}노드${dbInfo}`);
+  const srcLabel = r.source === 'db' ? '🗄️ DB' : '📁 file';
+  const dbInfo   = r.in_db ? ` · DB updated: ${r.updated_at.slice(0,10)}` : '';
+  showInfo(`${srcLabel}: ${r.resource_name} · minor=${r.minor} · ${r.nodes.length} nodes${dbInfo}`);
 }
 
 function showInfo(msg) {

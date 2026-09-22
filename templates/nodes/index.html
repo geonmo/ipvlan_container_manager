@@ -5,22 +5,22 @@
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-11">
-    <h2 class="fw-bold mb-1"><i class="bi bi-server text-primary"></i> Node Pool &amp; 네트워크 풀</h2>
-    <p class="text-muted mb-4">클러스터 노드, 네트워크, Ansible 배포 프로파일을 관리합니다. 여기서 정의한 정보는 DRBD/Quadlet/Pacemaker 설정 탭에서 사용됩니다.</p>
+    <h2 class="fw-bold mb-1"><i class="bi bi-server text-primary"></i> Node Pool &amp; Network Pool</h2>
+    <p class="text-muted mb-4">Manage cluster nodes, networks and Ansible deployment profiles. Everything defined here is used by the DRBD / Quadlet / Pacemaker tabs.</p>
 
-    <!-- 스캔 버튼 -->
+    <!-- scan button -->
     <div class="d-flex gap-2 mb-4 align-items-center">
       <button class="btn btn-outline-primary" onclick="doScan()">
-        <i class="bi bi-radar"></i> 시스템 재스캔
+        <i class="bi bi-radar"></i> Rescan system
       </button>
-      <small class="text-muted">DRBD &amp; Quadlet 디렉토리를 다시 스캔하여 노드/네트워크를 갱신합니다.</small>
+      <small class="text-muted">Rescans the DRBD and Quadlet directories and refreshes nodes/networks.</small>
       <span id="scanMsg" class="ms-2"></span>
     </div>
 
-    <!-- 노드 목록 -->
+    <!-- node list -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-primary text-white fw-bold d-flex align-items-center">
-        <span><i class="bi bi-pc-display-horizontal"></i> 클러스터 노드</span>
+        <span><i class="bi bi-pc-display-horizontal"></i> Cluster nodes</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="openNodeModal()">
           <i class="bi bi-plus-circle"></i> Add
         </button>
@@ -32,7 +32,7 @@
               <th>Hostname</th>
               <th>IP address</th>
               <th>SSH user</th>
-              <th>출처</th>
+              <th>Source</th>
               <th style="width:80px"></th>
             </tr>
           </thead>
@@ -40,24 +40,24 @@
         </table>
       </div>
       <div class="card-footer small text-muted">
-        <i class="bi bi-info-circle"></i> 스캔된(scanned) 노드는 수동 삭제 전까지 유지됩니다.
+        <i class="bi bi-info-circle"></i> Scanned nodes are kept until you delete them manually.
       </div>
     </div>
 
-    <!-- 네트워크 풀 -->
+    <!-- network pool -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-info text-white fw-bold d-flex align-items-center">
-        <span><i class="bi bi-diagram-3-fill"></i> 네트워크 풀</span>
+        <span><i class="bi bi-diagram-3-fill"></i> Network pool</span>
         <div class="ms-auto d-flex gap-2 align-items-center">
           <button class="btn btn-sm btn-light" onclick="toggleIfaceCollect()">
-            <i class="bi bi-cpu"></i> Interface 자동감지
+            <i class="bi bi-cpu"></i> Auto-detect interfaces
           </button>
           <button class="btn btn-sm btn-light" onclick="openNetModal()">
             <i class="bi bi-plus-circle"></i> Add
           </button>
         </div>
       </div>
-      <!-- Interface 자동감지 패널 -->
+      <!-- interface auto-detect panel -->
       <div id="ifaceCollectPanel" class="d-none border-bottom px-3 py-2 bg-light">
         <div class="d-flex gap-2 align-items-center flex-wrap">
           <small class="text-muted">Ansible Profile:</small>
@@ -65,7 +65,7 @@
             <option value="">-- select --</option>
           </select>
           <button class="btn btn-sm btn-info text-white" onclick="collectInterfaces()">
-            <i class="bi bi-play-fill"></i> 수집 시작
+            <i class="bi bi-play-fill"></i> Start collection
           </button>
           <span id="collectMsg" class="ms-1"></span>
         </div>
@@ -78,13 +78,13 @@
           <thead class="table-light">
             <tr>
               <th>Name</th>
-              <th>드라이버</th>
-              <th>스택</th>
-              <th>Interface <small class="text-muted fw-normal">(자동감지)</small></th>
-              <th>IPv4 서브넷 / 게이트웨이</th>
-              <th>IPv6 서브넷 / 게이트웨이</th>
-              <th>모드</th>
-              <th>출처</th>
+              <th>Driver</th>
+              <th>Stack</th>
+              <th>Interface <small class="text-muted fw-normal">(auto-detected)</small></th>
+              <th>IPv4 subnet / gateway</th>
+              <th>IPv6 subnet / gateway</th>
+              <th>Mode</th>
+              <th>Source</th>
               <th style="width:80px"></th>
             </tr>
           </thead>
@@ -93,10 +93,10 @@
       </div>
     </div>
 
-    <!-- 노드 Interface 정보 -->
+    <!-- node interface info -->
     <div class="card shadow-sm mb-4" id="ifacesCard" style="display:none!important">
       <div class="card-header bg-secondary text-white fw-bold d-flex align-items-center">
-        <span><i class="bi bi-hdd-network"></i> 수집된 노드 Interface 정보</span>
+        <span><i class="bi bi-hdd-network"></i> Collected node interfaces</span>
         <button class="btn btn-sm btn-light ms-auto" onclick="loadNodeInterfaces()">
           <i class="bi bi-arrow-clockwise"></i>
         </button>
@@ -104,57 +104,57 @@
       <div class="card-body p-0">
         <table class="table table-sm table-hover mb-0">
           <thead class="table-light">
-            <tr><th>Hostname</th><th>Interface</th><th>IP address</th><th>프리픽스</th><th>패밀리</th></tr>
+            <tr><th>Hostname</th><th>Interface</th><th>IP address</th><th>Prefix</th><th>Family</th></tr>
           </thead>
-          <tbody id="ifacesTbody"><tr><td colspan="5" class="text-center text-muted py-3">없음</td></tr></tbody>
+          <tbody id="ifacesTbody"><tr><td colspan="5" class="text-center text-muted py-3">None</td></tr></tbody>
         </table>
       </div>
     </div>
 
-    <!-- 스토리지 백엔드 감지 (PLAN.md D.1) -->
+    <!-- storage backend detection (PLAN.md D.1) -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-dark text-white fw-bold d-flex align-items-center">
-        <span><i class="bi bi-hdd-stack-fill"></i> 스토리지 백엔드</span>
-        <span class="badge ms-2" id="storageBackendBadge">확인 중...</span>
+        <span><i class="bi bi-hdd-stack-fill"></i> Storage backend</span>
+        <span class="badge ms-2" id="storageBackendBadge">Checking...</span>
         <div class="ms-auto d-flex align-items-center gap-2">
           <small class="text-white-50" id="storageBackendDetectedAt"></small>
           <select class="form-select form-select-sm w-auto" id="storageProfileSel">
             <option value="">-- Ansible Profile --</option>
           </select>
           <button class="btn btn-sm btn-light" onclick="detectStorageBackend()">
-            <i class="bi bi-search"></i> 지금 다시 감지
+            <i class="bi bi-search"></i> Detect now
           </button>
         </div>
       </div>
       <div class="card-body">
         <p class="small text-muted mb-2">
-          클러스터 노드에 <code>linstor-controller</code>/<code>linstor-satellite</code> systemd 유닛이
-          설치돼 있는지 확인해 순수 DRBD 커널모듈 방식인지 LINSTOR 방식인지 판정합니다
-          (클러스터 전체 기준 하나의 전역 설정 — 노드별 혼재는 다루지 않습니다).
-          <a href="/linstor/">LINSTOR 배포 탭</a>에서 감지 결과를 참고해 폼을 선택하세요.
+          Checks whether the <code>linstor-controller</code> / <code>linstor-satellite</code> systemd
+          units are installed on the cluster nodes to decide between the plain DRBD kernel-module
+          setup and LINSTOR (one cluster-wide setting &mdash; mixing per node is not supported).
+          Use the result to pick the right form on the <a href="/linstor/">LINSTOR</a> tab.
         </p>
         <div id="storageBackendDetail" class="small"></div>
       </div>
     </div>
 
-    <!-- 활성 Ansible Profile 선택 -->
+    <!-- active Ansible profile -->
     <div class="card shadow-sm mb-3">
       <div class="card-header bg-warning text-dark fw-bold">
-        <i class="bi bi-person-badge-fill"></i> 기본 Ansible Profile
+        <i class="bi bi-person-badge-fill"></i> Default Ansible profile
       </div>
       <div class="card-body d-flex align-items-center gap-3">
-        <label class="form-label mb-0 fw-semibold text-nowrap">활성 프로파일:</label>
+        <label class="form-label mb-0 fw-semibold text-nowrap">Active profile:</label>
         <select class="form-select form-select-sm w-auto" id="activeProfileSel" style="min-width:200px">
           <option value="">-- none --</option>
         </select>
-        <small class="text-muted">다른 탭(Pod Settings, 컨테이너, Pacemaker 등)의 Ansible 배포에 이 프로파일이 사용됩니다.</small>
+        <small class="text-muted">This profile is used for Ansible deployment on the other tabs (Pod Settings, Container, Pacemaker, ...).</small>
       </div>
     </div>
 
     <!-- Ansible Profile -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-warning text-dark fw-bold d-flex align-items-center">
-        <span><i class="bi bi-send-fill"></i> Ansible 배포 프로파일</span>
+        <span><i class="bi bi-send-fill"></i> Ansible deployment profiles</span>
         <button class="btn btn-sm btn-outline-dark ms-auto" onclick="openProfileModal()">
           <i class="bi bi-plus-circle"></i> Add
         </button>
@@ -163,10 +163,10 @@
         <table class="table table-sm table-hover mb-0">
           <thead class="table-light">
             <tr>
-              <th>프로파일명</th>
-              <th>인증 방식</th>
+              <th>Profile name</th>
+              <th>Auth method</th>
               <th>SSH user</th>
-              <th>키/비밀번호</th>
+              <th>Key / password</th>
               <th>become</th>
               <th style="width:80px"></th>
             </tr>
@@ -175,18 +175,18 @@
         </table>
       </div>
       <div class="card-footer small text-muted">
-        <i class="bi bi-shield-lock"></i> 비밀번호는 서버 DB에 평문 Save됩니다. 테스트/로컬 환경에만 사용하세요.
+        <i class="bi bi-shield-lock"></i> Passwords are stored in plain text in the server DB. Use this only in test/local environments.
       </div>
     </div>
 
   </div>
 </div>
 
-<!-- 노드 Add/편집 모달 -->
+<!-- node add/edit modal -->
 <div class="modal fade" id="nodeModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
-      <div class="modal-header"><h5 class="modal-title">노드 Add</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-header"><h5 class="modal-title">Add node</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
       <div class="modal-body">
         <div class="mb-3"><label class="form-label">Hostname <span class="text-danger">*</span></label>
           <input class="form-control" id="nHostname" placeholder="node1.ha.local"></div>
@@ -203,64 +203,64 @@
   </div>
 </div>
 
-<!-- 네트워크 Add/편집 모달 -->
+<!-- network add/edit modal -->
 <div class="modal fade" id="netModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
-      <div class="modal-header"><h5 class="modal-title">네트워크 Add</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-header"><h5 class="modal-title">Add network</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
       <div class="modal-body row g-3">
-        <!-- 기본 정보 -->
+        <!-- basics -->
         <div class="col-md-5"><label class="form-label">Name <span class="text-danger">*</span></label>
           <input class="form-control" id="netName" placeholder="public-ipvlan"></div>
-        <div class="col-md-4"><label class="form-label">드라이버</label>
+        <div class="col-md-4"><label class="form-label">Driver</label>
           <select class="form-select" id="netDriver">
             <option value="ipvlan" selected>ipvlan</option>
             <option value="macvlan">macvlan</option>
             <option value="bridge">bridge</option>
           </select></div>
-        <div class="col-md-3"><label class="form-label">IPVLAN 모드</label>
+        <div class="col-md-3"><label class="form-label">IPVLAN mode</label>
           <select class="form-select" id="netIpvlanMode">
             <option value="l2" selected>l2</option>
             <option value="l3">l3</option>
             <option value="l3s">l3s</option>
           </select></div>
 
-        <!-- IP 스택 타입 선택 -->
+        <!-- IP stack type -->
         <div class="col-12">
-          <label class="form-label fw-semibold">IP 스택 타입</label>
+          <label class="form-label fw-semibold">IP stack type</label>
           <div class="btn-group w-100" role="group">
             <input type="radio" class="btn-check" name="netStack" id="stackV4" value="ipv4" checked>
             <label class="btn btn-outline-primary" for="stackV4">
-              <i class="bi bi-4-circle"></i> IPv4 전용
+              <i class="bi bi-4-circle"></i> IPv4 only
             </label>
             <input type="radio" class="btn-check" name="netStack" id="stackDual" value="dual">
             <label class="btn btn-outline-success" for="stackDual">
-              <i class="bi bi-46-square"></i> IPv4 + IPv6 듀얼스택
+              <i class="bi bi-46-square"></i> IPv4 + IPv6 dual stack
             </label>
             <input type="radio" class="btn-check" name="netStack" id="stackV6" value="ipv6">
             <label class="btn btn-outline-info" for="stackV6">
-              <i class="bi bi-6-circle"></i> IPv6 전용
+              <i class="bi bi-6-circle"></i> IPv6 only
             </label>
           </div>
         </div>
 
-        <!-- IPv4 필드 -->
+        <!-- IPv4 fields -->
         <div id="netV4Fields" class="col-12 row g-3 m-0 p-0">
-          <div class="col-md-6"><label class="form-label">IPv4 서브넷 <span class="text-danger">*</span></label>
+          <div class="col-md-6"><label class="form-label">IPv4 subnet <span class="text-danger">*</span></label>
             <input class="form-control font-monospace" id="netSubnet" placeholder="203.0.113.0/24"></div>
-          <div class="col-md-6"><label class="form-label">IPv4 게이트웨이</label>
+          <div class="col-md-6"><label class="form-label">IPv4 gateway</label>
             <input class="form-control font-monospace" id="netGateway" placeholder="203.0.113.1"></div>
         </div>
 
-        <!-- IPv6 필드 -->
+        <!-- IPv6 fields -->
         <div id="netV6Fields" class="col-12 row g-3 m-0 p-0 d-none">
-          <div class="col-md-6"><label class="form-label">IPv6 서브넷 <span class="text-danger">*</span></label>
+          <div class="col-md-6"><label class="form-label">IPv6 subnet <span class="text-danger">*</span></label>
             <input class="form-control font-monospace" id="netSubnet6" placeholder="2001:db8::/64"></div>
-          <div class="col-md-6"><label class="form-label">IPv6 게이트웨이</label>
+          <div class="col-md-6"><label class="form-label">IPv6 gateway</label>
             <input class="form-control font-monospace" id="netGateway6" placeholder="2001:db8::1"></div>
         </div>
 
-        <div class="col-12"><small class="text-muted"><i class="bi bi-info-circle"></i> 호스트 Interface는 Ansible 수집을 통해 자동감지됩니다.</small></div>
+        <div class="col-12"><small class="text-muted"><i class="bi bi-info-circle"></i> The host interface is auto-detected by the Ansible collection run.</small></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -270,30 +270,30 @@
   </div>
 </div>
 
-<!-- Ansible Profile 모달 -->
+<!-- Ansible profile modal -->
 <div class="modal fade" id="profileModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header"><h5 class="modal-title">Ansible Profile Add</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
       <div class="modal-body row g-3">
-        <div class="col-md-6"><label class="form-label">프로파일명 <span class="text-danger">*</span></label>
+        <div class="col-md-6"><label class="form-label">Profile name <span class="text-danger">*</span></label>
           <input class="form-control" id="profName" placeholder="default"></div>
-        <div class="col-md-6"><label class="form-label">인증 방식</label>
+        <div class="col-md-6"><label class="form-label">Auth method</label>
           <select class="form-select" id="profAuthMethod" onchange="toggleAuthFields()">
-            <option value="key" selected>SSH 키</option>
-            <option value="password">비밀번호</option>
+            <option value="key" selected>SSH key</option>
+            <option value="password">Password</option>
           </select></div>
         <div class="col-md-6"><label class="form-label">SSH user</label>
           <input class="form-control" id="profSshUser" value="root"></div>
-        <div class="col-md-6 auth-key-field"><label class="form-label">SSH private key 경로</label>
+        <div class="col-md-6 auth-key-field"><label class="form-label">SSH private key path</label>
           <input class="form-control" id="profSshKey" value="~/.ssh/id_rsa"></div>
-        <div class="col-md-6 auth-pass-field d-none"><label class="form-label">SSH 비밀번호</label>
+        <div class="col-md-6 auth-pass-field d-none"><label class="form-label">SSH password</label>
           <input class="form-control" type="password" id="profSshPassword"></div>
-        <div class="col-12"><hr class="my-1"><small class="text-muted fw-semibold">Become (권한 상승)</small></div>
+        <div class="col-12"><hr class="my-1"><small class="text-muted fw-semibold">Become (privilege escalation)</small></div>
         <div class="col-md-4">
           <div class="form-check mt-2">
             <input class="form-check-input" type="checkbox" id="profBecome" checked>
-            <label class="form-check-label" for="profBecome">become 활성화</label>
+            <label class="form-check-label" for="profBecome">Enable become</label>
           </div>
         </div>
         <div class="col-md-4"><label class="form-label">become_method</label>
@@ -304,7 +304,7 @@
             <option value="pfexec">pfexec</option>
             <option value="doas">doas</option>
           </select></div>
-        <div class="col-md-4"><label class="form-label">become 비밀번호 (옵션)</label>
+        <div class="col-md-4"><label class="form-label">Become password (optional)</label>
           <input class="form-control" type="password" id="profBecomePassword"></div>
       </div>
       <div class="modal-footer">
@@ -351,9 +351,9 @@ function renderStorageBackendBadge(backend, detectedAt) {
     badge.textContent = 'LINSTOR';
   } else {
     badge.className = 'badge ms-2 bg-secondary';
-    badge.textContent = '커널모듈 (DRBD)';
+    badge.textContent = 'Kernel module (DRBD)';
   }
-  at.textContent = detectedAt ? `마지막 감지: ${detectedAt}` : '아직 감지되지 않음';
+  at.textContent = detectedAt ? `Last detected: ${detectedAt}` : 'Not detected yet';
 }
 
 async function loadStorageBackend() {
@@ -371,7 +371,7 @@ async function detectStorageBackend() {
   const detail = document.getElementById('storageBackendDetail');
   const badge = document.getElementById('storageBackendBadge');
   badge.className = 'badge ms-2 bg-warning text-dark';
-  badge.textContent = '감지 중...';
+  badge.textContent = 'Detecting...';
   detail.innerHTML = '';
   try {
     const resp = await fetch('/api/storage-backend/detect', {
@@ -388,12 +388,12 @@ async function detectStorageBackend() {
     } else {
       const errText = await resp.text();
       badge.className = 'badge ms-2 bg-danger';
-      badge.textContent = '감지 실패';
+      badge.textContent = 'Detection failed';
       detail.innerHTML = `<span class="text-danger">${esc(errText || resp.statusText)}</span>`;
     }
   } catch (e) {
     badge.className = 'badge ms-2 bg-danger';
-    badge.textContent = '감지 실패';
+    badge.textContent = 'Detection failed';
     detail.innerHTML = `<span class="text-danger">${esc(String(e))}</span>`;
   }
 }
@@ -459,7 +459,7 @@ document.getElementById('activeProfileSel')?.addEventListener('change', function
 function renderNodes(nodes) {
   const tbody = document.getElementById('nodesTbody');
   if (!nodes.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">노드 없음</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No nodes</td></tr>';
     return;
   }
   tbody.innerHTML = nodes.map(n => `
@@ -479,7 +479,7 @@ function renderNodes(nodes) {
 function renderNetworks(nets) {
   const tbody = document.getElementById('netsTbody');
   if (!nets.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">네트워크 없음</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">No networks</td></tr>';
     return;
   }
   tbody.innerHTML = nets.map(n => {
@@ -487,7 +487,7 @@ function renderNetworks(nets) {
     const hasV6 = !!n.subnet6;
     let stackBadge;
     if (hasV4 && hasV6) {
-      stackBadge = '<span class="badge bg-success">듀얼스택</span>';
+      stackBadge = '<span class="badge bg-success">Dual stack</span>';
     } else if (hasV6) {
       stackBadge = '<span class="badge bg-info">IPv6</span>';
     } else {
@@ -500,7 +500,7 @@ function renderNetworks(nets) {
       : '<span class="text-muted">-</span>';
     const ifaceCell = n.interface
       ? `<span class="badge bg-success">${esc(n.interface)}</span>`
-      : '<span class="text-muted small"><i class="bi bi-question-circle"></i> 미감지</span>';
+      : '<span class="text-muted small"><i class="bi bi-question-circle"></i> not detected</span>';
     return `
     <tr>
       <td><strong>${esc(n.name)}</strong></td>
@@ -523,15 +523,15 @@ function renderNetworks(nets) {
 function renderProfiles(profiles) {
   const tbody = document.getElementById('profilesTbody');
   if (!profiles.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">프로파일 없음</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No profiles</td></tr>';
     return;
   }
   tbody.innerHTML = profiles.map(p => `
     <tr>
       <td><strong>${esc(p.name)}</strong></td>
-      <td><span class="badge ${p.auth_method==='key'?'bg-success':'bg-warning text-dark'}">${p.auth_method==='key'?'SSH 키':'비밀번호'}</span></td>
+      <td><span class="badge ${p.auth_method==='key'?'bg-success':'bg-warning text-dark'}">${p.auth_method==='key'?'SSH key':'Password'}</span></td>
       <td>${esc(p.ssh_user)}</td>
-      <td class="text-muted small">${p.auth_method==='key' ? esc(p.ssh_key) : '(비밀번호 설정됨)'}</td>
+      <td class="text-muted small">${p.auth_method==='key' ? esc(p.ssh_key) : '(password set)'}</td>
       <td>${p['become'] ? `<span class="badge bg-secondary">${esc(p.become_method)}</span>` : '<span class="text-muted">-</span>'}</td>
       <td>
         <button class="btn btn-sm btn-outline-danger" onclick="deleteProfile(${p.id})">
@@ -554,7 +554,7 @@ function openNodeModal() {
 
 async function saveNode() {
   const hostname = document.getElementById('nHostname').value.trim();
-  if (!hostname) { alert('Hostname을 입력하세요.'); return; }
+  if (!hostname) { alert('Enter a hostname.'); return; }
   await fetch('/api/nodes', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({
@@ -569,7 +569,7 @@ async function saveNode() {
 }
 
 async function deleteNode(id) {
-  if (!confirm('노드를 삭제하시겠습니까?')) return;
+  if (!confirm('Delete this node?')) return;
   await fetch(`/api/nodes/${id}`, { method: 'DELETE' });
   await loadNodes();
   syncLocalStorage();
@@ -605,7 +605,7 @@ function openNetModal() {
 
 async function saveNetwork() {
   const name = document.getElementById('netName').value.trim();
-  if (!name) { alert('네트워크 Name을 입력하세요.'); return; }
+  if (!name) { alert('Enter a network name.'); return; }
 
   const stack   = getNetStack();
   const useV4   = stack !== 'ipv6';
@@ -615,8 +615,8 @@ async function saveNetwork() {
   const subnet6  = useV6 ? document.getElementById('netSubnet6').value.trim()  : '';
   const gateway6 = useV6 ? document.getElementById('netGateway6').value.trim() : '';
 
-  if (useV4 && !subnet)  { alert('IPv4 서브넷을 입력하세요.'); return; }
-  if (useV6 && !subnet6) { alert('IPv6 서브넷을 입력하세요.'); return; }
+  if (useV4 && !subnet)  { alert('Enter an IPv4 subnet.'); return; }
+  if (useV6 && !subnet6) { alert('Enter an IPv6 subnet.'); return; }
 
   await fetch('/api/networks', {
     method: 'POST', headers: {'Content-Type':'application/json'},
@@ -637,7 +637,7 @@ async function saveNetwork() {
 }
 
 async function deleteNetwork(id) {
-  if (!confirm('네트워크를 삭제하시겠습니까?')) return;
+  if (!confirm('Delete this network?')) return;
   await fetch(`/api/networks/${id}`, { method: 'DELETE' });
   await loadNetworks();
   syncLocalStorage();
@@ -668,7 +668,7 @@ function toggleAuthFields() {
 
 async function saveProfile() {
   const name = document.getElementById('profName').value.trim();
-  if (!name) { alert('프로파일명을 입력하세요.'); return; }
+  if (!name) { alert('Enter a profile name.'); return; }
   await fetch('/api/ansible-profiles', {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({
@@ -687,7 +687,7 @@ async function saveProfile() {
 }
 
 async function deleteProfile(id) {
-  if (!confirm('프로파일을 삭제하시겠습니까?')) return;
+  if (!confirm('Delete this profile?')) return;
   await fetch(`/api/ansible-profiles/${id}`, { method: 'DELETE' });
   await loadProfiles();
 }
@@ -716,7 +716,7 @@ async function collectInterfaces() {
   const msg = document.getElementById('collectMsg');
   const outDiv = document.getElementById('collectOutput');
   const log = document.getElementById('collectLog');
-  msg.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 수집 중...';
+  msg.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Collecting...';
   outDiv.classList.add('d-none');
   try {
     const resp = await fetch('/api/collect-interfaces', {
@@ -725,7 +725,7 @@ async function collectInterfaces() {
     });
     if (resp.ok) {
       const data = await resp.json();
-      msg.innerHTML = `<span class="text-success">Interface ${data.interfaces_imported}개 수집, 네트워크 ${data.networks_matched}개 매칭 완료</span>`;
+      msg.innerHTML = `<span class="text-success">Collected ${data.interfaces_imported} interfaces, matched ${data.networks_matched} networks</span>`;
       if (data.ansible_output) {
         log.textContent = data.ansible_output;
         outDiv.classList.remove('d-none');
@@ -738,7 +738,7 @@ async function collectInterfaces() {
       msg.innerHTML = `<span class="text-danger">Error: ${esc(errText || resp.statusText)}</span>`;
     }
   } catch(e) {
-    msg.innerHTML = `<span class="text-danger">수집 실패: ${e}</span>`;
+    msg.innerHTML = `<span class="text-danger">Collection failed: ${e}</span>`;
   }
   setTimeout(() => { msg.innerHTML = ''; }, 6000);
 }
@@ -762,7 +762,7 @@ async function loadNodeInterfaces() {
 function renderNodeInterfaces(ifaces) {
   const tbody = document.getElementById('ifacesTbody');
   if (!ifaces.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">없음</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">None</td></tr>';
     return;
   }
   tbody.innerHTML = ifaces.map(i => `
@@ -779,14 +779,14 @@ function renderNodeInterfaces(ifaces) {
 
 async function doScan() {
   const msg = document.getElementById('scanMsg');
-  msg.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 스캔 중...';
+  msg.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Scanning...';
   try {
     const resp = await fetch('/nodes/scan', { method: 'POST' });
     const data = await resp.json();
-    msg.innerHTML = `<span class="text-success">노드 ${data.nodes_added}개, 네트워크 ${data.networks_added}개 갱신 완료</span>`;
+    msg.innerHTML = `<span class="text-success">Updated ${data.nodes_added} nodes and ${data.networks_added} networks</span>`;
     await loadAll();
   } catch(e) {
-    msg.innerHTML = `<span class="text-danger">스캔 실패: ${e}</span>`;
+    msg.innerHTML = `<span class="text-danger">Scan failed: ${e}</span>`;
   }
   setTimeout(() => { msg.innerHTML = ''; }, 4000);
 }

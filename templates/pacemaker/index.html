@@ -1,30 +1,30 @@
 {% extends "base.html" %}
-{% block title %}Pacemaker 설정 - IPVLAN Container Manager{% endblock %}
+{% block title %}Pacemaker - IPVLAN Container Manager{% endblock %}
 {% block nav_pacemaker %}active{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-10">
-    <h2 class="fw-bold mb-1"><i class="bi bi-heart-pulse-fill text-danger"></i> Pacemaker 설정</h2>
-    <p class="text-muted mb-4">DRBD Promotable Clone 및 Quadlet Systemd 리소스를 Pacemaker에 등록하는 <code>pcs</code> generates the script.</p>
+    <h2 class="fw-bold mb-1"><i class="bi bi-heart-pulse-fill text-danger"></i> Pacemaker</h2>
+    <p class="text-muted mb-4">Generates a <code>pcs</code> script that registers DRBD Promotable Clones and Quadlet systemd resources with Pacemaker.</p>
 
-    <!-- pcsd 동기화 카드 (폼 외부) -->
+    <!-- pcsd sync card (outside the form) -->
     <div class="card shadow-sm mb-4 border-info">
       <div class="card-header bg-info text-white fw-bold">
-        <i class="bi bi-cloud-download-fill"></i> pcsd 현재 설정 가져오기
+        <i class="bi bi-cloud-download-fill"></i> Import current pcsd configuration
       </div>
       <div class="card-body">
         <div class="row g-2 align-items-end">
           <div class="col-md-8">
             <label class="form-label fw-semibold small mb-1">pcsd URL</label>
             <input type="text" class="form-control form-control-sm" id="pcsdUrl" value="https://localhost:2224">
-            <div class="form-text">서버의 <code>/var/lib/pcsd/known-hosts</code> uses the node token automatically.
-              <a href="/cluster/" class="ms-2"><i class="bi bi-diagram-3-fill"></i> 클러스터 현황 탭에서 전체 토폴로지 확인</a>
+            <div class="form-text">Uses the node token from <code>/var/lib/pcsd/known-hosts</code> on the server automatically.
+              <a href="/cluster/" class="ms-2"><i class="bi bi-diagram-3-fill"></i> See the full topology on the Cluster Status tab</a>
             </div>
           </div>
           <div class="col-md-4">
             <button type="button" class="btn btn-info btn-sm w-100" onclick="pcsdFetch()">
-              <i class="bi bi-cloud-download"></i> 클러스터 설정 가져오기
+              <i class="bi bi-cloud-download"></i> Import cluster configuration
             </button>
           </div>
         </div>
@@ -37,24 +37,24 @@
 
       <div class="accordion" id="pmAccordion">
 
-        <!-- ① 클러스터 기본 설정 -->
+        <!-- (1) cluster basics -->
         <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
           <h2 class="accordion-header" id="pmHeadBasic">
             <button class="accordion-button" type="button"
                     data-bs-toggle="collapse" data-bs-target="#pmSecBasic" aria-expanded="true">
               <i class="bi bi-diagram-2-fill text-danger me-2"></i>
-              <span class="fw-semibold">클러스터 기본 설정</span>
+              <span class="fw-semibold">Cluster basics</span>
             </button>
           </h2>
           <div id="pmSecBasic" class="accordion-collapse collapse show">
             <div class="accordion-body pt-3">
               <div class="row g-3">
                 <div class="col-md-3">
-                  <label class="form-label fw-semibold">클러스터 Name</label>
+                  <label class="form-label fw-semibold">Cluster name</label>
                   <input type="text" class="form-control" name="cluster_name" value="ha-cluster" required>
                 </div>
                 <div class="col-12">
-                  <label class="form-label fw-semibold">클러스터 노드 선택</label>
+                  <label class="form-label fw-semibold">Cluster nodes</label>
                   <input type="hidden" name="nodes_json" id="pmNodesJson" value="[]">
                   <div class="row g-2">
                     <div class="col-md-5">
@@ -65,7 +65,7 @@
                       <button type="button" class="btn btn-outline-primary btn-sm" id="pmPoolList_add"><i class="bi bi-arrow-right"></i></button>
                     </div>
                     <div class="col-md-6">
-                      <div class="small text-muted mb-1">선택된 노드 <span class="badge bg-secondary" id="pmNodeCount">0</span></div>
+                      <div class="small text-muted mb-1">Selected nodes <span class="badge bg-secondary" id="pmNodeCount">0</span></div>
                       <ul class="list-group" id="pmSelectedList" style="min-height:80px;max-height:180px;overflow-y:auto"></ul>
                     </div>
                   </div>
@@ -73,7 +73,7 @@
                 <div class="col-md-3">
                   <label class="form-label fw-semibold">No-Quorum Policy</label>
                   <select class="form-select" name="no_quorum_policy">
-                    <option value="stop" selected>stop (권장)</option>
+                    <option value="stop" selected>stop (recommended)</option>
                     <option value="freeze">freeze</option>
                     <option value="ignore">ignore</option>
                   </select>
@@ -90,12 +90,12 @@
                   <label class="form-label fw-semibold">STONITH</label>
                   <div class="form-check mt-2">
                     <input class="form-check-input" type="checkbox" name="stonith_enabled" id="stonithEnabled">
-                    <label class="form-check-label" for="stonithEnabled">STONITH 활성화</label>
-                    <div class="form-text text-warning">&#9888; 테스트 환경에서는 비활성화 권장</div>
+                    <label class="form-check-label" for="stonithEnabled">Enable STONITH</label>
+                    <div class="form-text text-warning">&#9888; Recommended off in test environments</div>
                     <div class="form-text">
-                      끄면 DRBD 리소스의 <code>on-fail=fence</code> 가 런타임에 조용히
-                      <code>stop</code> 으로 격하됩니다(펜싱 안 일어남). 생성된 스크립트에
-                      경고가 함께 출력됩니다.
+                      When off, <code>on-fail=fence</code> on the DRBD resource is silently
+                      downgraded to <code>stop</code> at runtime (no fencing happens). The
+                      generated script prints a warning about this.
                     </div>
                   </div>
                 </div>
@@ -104,13 +104,13 @@
           </div>
         </div>
 
-        <!-- ② DRBD + Filesystem 볼륨 리소스 -->
+        <!-- (2) DRBD + Filesystem volume resources -->
         <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
           <h2 class="accordion-header" id="pmHeadDrbd">
             <button class="accordion-button collapsed" type="button"
                     data-bs-toggle="collapse" data-bs-target="#pmSecDrbd" aria-expanded="false">
               <i class="bi bi-database-fill text-primary me-2"></i>
-              <span class="fw-semibold">DRBD Promotable Clone + Filesystem 리소스</span>
+              <span class="fw-semibold">DRBD Promotable Clone + Filesystem resources</span>
               <span class="badge bg-primary ms-2" id="drbdGroupBadge">0</span>
             </button>
           </h2>
@@ -123,29 +123,29 @@
                 </button>
                 <select class="form-select form-select-sm w-auto" id="drbdQuickSel"
                         onchange="if(this.value){addDrbdGroup(this.value);this.value='';}">
-                  <option value="">-- 등록된 리소스에서 Add --</option>
+                  <option value="">-- add from a registered resource --</option>
                 </select>
               </div>
               <div id="drbdResourceWarning" class="alert alert-warning py-2 px-3 small d-none"></div>
               <div id="drbdGroupList"></div>
               <div class="text-center mt-2 text-muted small" id="drbdGroupEmpty">
-                DRBD 볼륨을 Add하거나 위 드롭다운에서 선택하세요.
+                Add a DRBD volume or pick one from the dropdown above.
               </div>
               <div class="mt-3 p-2 bg-light rounded small text-muted">
-                각 DRBD Promotable Clone 리소스마다 Filesystem 마운트가 연결됩니다.
-                DRBD Primary 승격 → FS 마운트 → 서비스 시작 순서로 자동 제약조건이 생성됩니다.
+                Every DRBD Promotable Clone has a Filesystem mount attached to it. Constraints are
+                generated automatically in the order: DRBD promote &rarr; FS mount &rarr; service start.
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ③ 리소스 그룹 (Pod + Container) -->
+        <!-- (3) resource groups (pod + container) -->
         <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
           <h2 class="accordion-header" id="pmHeadGrp">
             <button class="accordion-button collapsed" type="button"
                     data-bs-toggle="collapse" data-bs-target="#pmSecGrp" aria-expanded="false">
               <i class="bi bi-collection-fill me-2" style="color:#0d9488"></i>
-              <span class="fw-semibold">리소스 그룹 (Pod + Container)</span>
+              <span class="fw-semibold">Resource groups (pod + container)</span>
             </button>
           </h2>
           <div id="pmSecGrp" class="accordion-collapse collapse">
@@ -158,21 +158,21 @@
               <textarea id="grpJson" name="resource_groups_json" class="code-editor"
                         data-mode="javascript" style="min-height:160px">[]</textarea>
               <div class="px-3 py-2 small text-muted bg-light border-top">
-                <code>group_name</code>: 그룹 Name (예: <code>grp-myapp</code>),
-                <code>members</code>: 리소스 Name 순서 목록 — Pod를 첫 번째로,
-                <code>after_fs</code>: 선행 FS 리소스 Name
+                <code>group_name</code>: group name (e.g. <code>grp-myapp</code>),
+                <code>members</code>: ordered list of resource names &mdash; pod first,
+                <code>after_fs</code>: name of the preceding FS resource
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ④ Systemd 리소스 (Quadlet) -->
+        <!-- (4) systemd resources (Quadlet) -->
         <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
           <h2 class="accordion-header" id="pmHeadSvc">
             <button class="accordion-button collapsed" type="button"
                     data-bs-toggle="collapse" data-bs-target="#pmSecSvc" aria-expanded="false">
               <i class="bi bi-boxes text-success me-2"></i>
-              <span class="fw-semibold">Quadlet Systemd 리소스 목록</span>
+              <span class="fw-semibold">Quadlet systemd resources</span>
             </button>
           </h2>
           <div id="pmSecSvc" class="accordion-collapse collapse">
@@ -185,21 +185,21 @@
               <textarea id="svcJson" name="systemd_resources_json" class="code-editor"
                         data-mode="javascript" style="min-height:200px">[]</textarea>
               <div class="px-3 py-2 small text-muted bg-light border-top">
-                <code>resource_name</code>: Pacemaker 리소스 Name,
-                <code>systemd_unit</code>: systemd 유닛 Name (예: <code>myapp.service</code>),
+                <code>resource_name</code>: Pacemaker resource name,
+                <code>systemd_unit</code>: systemd unit name (e.g. <code>myapp.service</code>),
                 <code>resource_type</code>: container | pod | volume
               </div>
             </div>
           </div>
         </div>
 
-        <!-- ⑤ 제약조건 -->
+        <!-- (5) constraints -->
         <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
           <h2 class="accordion-header" id="pmHeadCons">
             <button class="accordion-button collapsed" type="button"
                     data-bs-toggle="collapse" data-bs-target="#pmSecCons" aria-expanded="false">
               <i class="bi bi-link-45deg text-secondary me-2"></i>
-              <span class="fw-semibold">리소스 제약조건</span>
+              <span class="fw-semibold">Resource constraints</span>
             </button>
           </h2>
           <div id="pmSecCons" class="accordion-collapse collapse">
@@ -208,36 +208,36 @@
                 <input class="form-check-input" type="checkbox" name="auto_constraints"
                        id="autoConstraints" checked>
                 <label class="form-check-label fw-semibold" for="autoConstraints">
-                  자동 제약조건 생성
+                  Generate constraints automatically
                 </label>
                 <div class="form-text">
-                  DRBD Promoted 후 서비스 시작 (Order) +
-                  동일 노드 실행 (Colocation: INFINITY) 규칙을 자동 생성합니다.
+                  Automatically creates the &quot;start the service after DRBD is promoted&quot;
+                  (order) and &quot;run on the same node&quot; (colocation: INFINITY) rules.
                 </div>
               </div>
               <div class="mb-3">
-                <label class="form-label fw-semibold">수동 Order 제약조건 (JSON, 선택)</label>
+                <label class="form-label fw-semibold">Manual order constraints (JSON, optional)</label>
                 <textarea name="order_constraints_json" class="code-editor" data-mode="javascript"
                           style="min-height:80px">[]</textarea>
                 <div class="form-text">
-                  예: <code>[{"id":"ord-1","first":"drbd-r0-clone","first_action":"promote","then":"myapp","then_action":"start","kind":"Mandatory"}]</code>
+                  Example: <code>[{"id":"ord-1","first":"drbd-r0-clone","first_action":"promote","then":"myapp","then_action":"start","kind":"Mandatory"}]</code>
                 </div>
               </div>
               <div class="mb-3">
-                <label class="form-label fw-semibold">수동 Colocation 제약조건 (JSON, 선택)</label>
+                <label class="form-label fw-semibold">Manual colocation constraints (JSON, optional)</label>
                 <textarea id="colJson" name="colocation_constraints_json" class="code-editor" data-mode="javascript"
                           style="min-height:80px">[]</textarea>
                 <div class="border rounded p-2 mt-2 bg-light">
                   <div class="small fw-semibold mb-2">
-                    <i class="bi bi-link-45deg"></i> DRBD-DRBD anchor/follower 결합 빠른 Add
+                    <i class="bi bi-link-45deg"></i> Quick add: DRBD-DRBD anchor/follower pairing
                   </div>
                   <div class="row g-2 align-items-end">
                     <div class="col-md-5">
-                      <label class="form-label small mb-1">Anchor Clone (기준 — 이동시킬 땐 이 쪽을 옮기세요)</label>
+                      <label class="form-label small mb-1">Anchor clone (the reference &mdash; move this one when relocating)</label>
                       <select class="form-select form-select-sm" id="anchorCloneSel"></select>
                     </div>
                     <div class="col-md-5">
-                      <label class="form-label small mb-1">Follower Clone (anchor를 따라감)</label>
+                      <label class="form-label small mb-1">Follower clone (follows the anchor)</label>
                       <select class="form-select form-select-sm" id="followerCloneSel"></select>
                     </div>
                     <div class="col-md-2">
@@ -247,16 +247,15 @@
                     </div>
                   </div>
                   <div class="form-text mt-1">
-                    두 DRBD Promotable Clone을 항상 같은 노드에서 Promoted 상태로 묶습니다.
-                    관계에는 방향이 있습니다 — <code>Promoted follower with Promoted anchor</code>
-                    (반대로 생성하면 follower만 옮기려 할 때 promotion score가
-                    <code>-INFINITY</code>로 막히는 사고가 납니다). 노드를 옮길 때는
-                    항상 anchor 쪽을 옮기세요.
+                    Keeps two DRBD Promotable Clones promoted on the same node. The relation has a
+                    direction &mdash; <code>Promoted follower with Promoted anchor</code>. Creating it
+                    the other way round means that moving only the follower gets blocked by a
+                    <code>-INFINITY</code> promotion score. Always relocate the anchor side.
                   </div>
                 </div>
               </div>
               <div class="mb-3">
-                <label class="form-label fw-semibold">Location 제약조건 (선호 노드, JSON, 선택)</label>
+                <label class="form-label fw-semibold">Location constraints (preferred node, JSON, optional)</label>
                 <textarea name="location_constraints_json" class="code-editor" data-mode="javascript"
                           style="min-height:80px">[]</textarea>
               </div>
@@ -264,13 +263,13 @@
           </div>
         </div>
 
-        <!-- ⑥ STONITH(펜싱) 장치 -->
+        <!-- (6) STONITH (fencing) devices -->
         <div class="accordion-item shadow-sm mb-3 border-0 rounded overflow-hidden">
           <h2 class="accordion-header" id="pmHeadStonith">
             <button class="accordion-button collapsed" type="button"
                     data-bs-toggle="collapse" data-bs-target="#pmSecStonith" aria-expanded="false">
               <i class="bi bi-lightning-charge-fill text-danger me-2"></i>
-              <span class="fw-semibold">STONITH(펜싱) 장치 — IPMI</span>
+              <span class="fw-semibold">STONITH (fencing) devices &mdash; IPMI</span>
               <span class="badge bg-danger ms-2" id="stonithBadge">0</span>
             </button>
           </h2>
@@ -279,17 +278,17 @@
               <input type="hidden" name="stonith_devices_json" id="stonithDevicesJson" value="[]">
               <div class="d-flex gap-2 mb-3">
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="addStonithDevice()">
-                  <i class="bi bi-plus-lg"></i> STONITH 장치 Add
+                  <i class="bi bi-plus-lg"></i> Add STONITH device
                 </button>
               </div>
               <div id="stonithDeviceList"></div>
               <div class="text-center mt-2 text-muted small" id="stonithDeviceEmpty">
-                노드별 IPMI(fence_ipmilan) 펜싱 장치를 Add하세요. 노드마다 하나씩 등록합니다.
+                Add an IPMI (fence_ipmilan) fencing device per node &mdash; one entry for each node.
               </div>
               <div class="mt-3 p-2 bg-light rounded small text-muted">
                 <code>pcs stonith create stonith-ipmi-&lt;node&gt; fence_ipmilan pcmk_host_list=&lt;node&gt;
-                ip=&lt;ipmi_ip&gt; user=&lt;ipmi_user&gt; password=&lt;ipmi_password&gt; ...</code> 패턴으로 생성됩니다.
-                위 ①에서 STONITH를 활성화한 경우에만 실제로 사용됩니다.
+                ip=&lt;ipmi_ip&gt; user=&lt;ipmi_user&gt; password=&lt;ipmi_password&gt; ...</code> is the generated pattern.
+                It is only used if STONITH is enabled in section (1) above.
               </div>
             </div>
           </div>
@@ -308,7 +307,7 @@
             <div class="accordion-body">
               <div class="row g-3">
                 <div class="col-md-4">
-                  <label class="form-label">대상 호스트 (첫 번째 노드에서 실행됨)</label>
+                  <label class="form-label">Target host (runs on the first node)</label>
                   <input type="text" class="form-control" name="ansible_hosts" placeholder="all">
                 </div>
                 <div class="col-md-4">
@@ -338,10 +337,10 @@
 
       <div class="d-flex gap-2 mt-2">
         <button type="submit" class="btn btn-danger btn-lg">
-          <i class="bi bi-gear-fill"></i> pcs 스크립트 생성
+          <i class="bi bi-gear-fill"></i> Generate pcs script
         </button>
         <button type="button" class="btn btn-outline-secondary btn-lg" onclick="loadExample()">
-          <i class="bi bi-lightning-fill"></i> Example 값 입력
+          <i class="bi bi-lightning-fill"></i> Fill with example values
         </button>
       </div>
     </form>
@@ -418,7 +417,7 @@ async function pmLoadDrbdResources() {
     }
   } catch (e) {
     pmDrbdResources = [];
-    warning = 'DRBD 리소스 목록을 불러오지 못했습니다: ' + e;
+    warning = 'Could not load the DRBD resource list: ' + e;
   }
 
   // 조회 실패를 "리소스 없음"과 구분해서 보여준다 — 조용히 빈 드롭다운을
@@ -507,9 +506,9 @@ function renderDrbdGroups() {
     div.className = 'border rounded p-3 mb-3 position-relative';
     div.innerHTML = `
       <div class="d-flex align-items-center mb-2 gap-2">
-        <span class="fw-bold text-primary"><i class="bi bi-database-fill"></i> DRBD 볼륨 #${idx+1}</span>
+        <span class="fw-bold text-primary"><i class="bi bi-database-fill"></i> DRBD volume #${idx+1}</span>
         <select class="form-select form-select-sm w-auto" onchange="fillDrbdGroupFromRes(${idx}, this.value)">
-          <option value="">-- 등록된 리소스 선택 --</option>
+          <option value="">-- select a registered resource --</option>
           ${pmDrbdResources.map(r=>`<option value="${r.name}"${g.drbd_resource_name===r.name?' selected':''}>${pmDrbdLabel(r)}</option>`).join('')}
         </select>
         <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="removeDrbdGroup(${idx})">
@@ -519,7 +518,7 @@ function renderDrbdGroups() {
 
       <div class="row g-2 mb-2">
         <div class="col-md-3">
-          <label class="form-label small fw-semibold mb-1">Pacemaker 리소스 Name</label>
+          <label class="form-label small fw-semibold mb-1">Pacemaker resource name</label>
           <input type="text" class="form-control form-control-sm" value="${g.resource_name}"
             oninput="drbdGroups[${idx}].resource_name=this.value; syncDrbdJson()">
         </div>
@@ -534,9 +533,9 @@ function renderDrbdGroups() {
             oninput="drbdGroups[${idx}].clone_name=this.value; syncDrbdJson()">
         </div>
         <div class="col-md-3">
-          <label class="form-label small fw-semibold mb-1">선호 Primary 노드</label>
+          <label class="form-label small fw-semibold mb-1">Preferred primary node</label>
           <select class="form-select form-select-sm" onchange="drbdGroups[${idx}].target_role_master_node=this.value; syncDrbdJson()">
-            <option value="">-- 자동 --</option>
+            <option value="">-- automatic --</option>
             ${nodeOpts}
           </select>
         </div>
@@ -580,27 +579,27 @@ function renderDrbdGroups() {
 
       <div class="border-top pt-2 mt-1">
         <div class="small fw-semibold text-warning mb-2">
-          <i class="bi bi-hdd-fill"></i> Filesystem 마운트 (ocf:heartbeat:Filesystem)
-          <span class="text-muted fw-normal">— 이 DRBD Clone이 Promoted될 때 마운트</span>
+          <i class="bi bi-hdd-fill"></i> Filesystem mount (ocf:heartbeat:Filesystem)
+          <span class="text-muted fw-normal">&mdash; mounted when this DRBD clone is promoted</span>
         </div>
         <div class="row g-2">
           <div class="col-md-3">
-            <label class="form-label small mb-1">리소스 Name</label>
+            <label class="form-label small mb-1">Resource name</label>
             <input type="text" class="form-control form-control-sm" value="${g.fs.resource_name}"
               oninput="drbdGroups[${idx}].fs.resource_name=this.value; syncDrbdJson()">
           </div>
           <div class="col-md-4">
-            <label class="form-label small mb-1">디바이스 경로</label>
+            <label class="form-label small mb-1">Device path</label>
             <input type="text" class="form-control form-control-sm" value="${g.fs.device}"
               oninput="drbdGroups[${idx}].fs.device=this.value; syncDrbdJson()">
           </div>
           <div class="col-md-3">
-            <label class="form-label small mb-1">마운트포인트</label>
+            <label class="form-label small mb-1">Mount point</label>
             <input type="text" class="form-control form-control-sm" value="${g.fs.directory}"
               oninput="drbdGroups[${idx}].fs.directory=this.value; syncDrbdJson()">
           </div>
           <div class="col-md-2">
-            <label class="form-label small mb-1">파일시스템</label>
+            <label class="form-label small mb-1">Filesystem</label>
             <select class="form-select form-select-sm" onchange="drbdGroups[${idx}].fs.fstype=this.value; syncDrbdJson()">
               <option value="xfs"${g.fs.fstype==='xfs'?' selected':''}>xfs</option>
               <option value="ext4"${g.fs.fstype==='ext4'?' selected':''}>ext4</option>
@@ -631,8 +630,8 @@ function refreshCloneSelectors() {
 function addAnchorFollowerConstraint() {
   const anchor = document.getElementById('anchorCloneSel').value;
   const follower = document.getElementById('followerCloneSel').value;
-  if (!anchor || !follower) { alert('Anchor Clone과 Follower Clone을 모두 선택하세요.'); return; }
-  if (anchor === follower) { alert('Anchor와 Follower는 서로 다른 clone이어야 합니다.'); return; }
+  if (!anchor || !follower) { alert('Select both an anchor clone and a follower clone.'); return; }
+  if (anchor === follower) { alert('Anchor and follower must be different clones.'); return; }
 
   const el = document.getElementById('colJson');
   const raw = el._cmEditor ? el._cmEditor.getValue() : el.value;
@@ -840,14 +839,14 @@ function renderStonithDevices() {
     div.className = 'border rounded p-3 mb-3 position-relative';
     div.innerHTML = `
       <div class="d-flex align-items-center mb-2 gap-2">
-        <span class="fw-bold text-danger"><i class="bi bi-lightning-charge-fill"></i> STONITH 장치 #${idx+1}</span>
+        <span class="fw-bold text-danger"><i class="bi bi-lightning-charge-fill"></i> STONITH device #${idx+1}</span>
         <button type="button" class="btn btn-sm btn-outline-danger ms-auto" onclick="removeStonithDevice(${idx})">
           <i class="bi bi-trash"></i>
         </button>
       </div>
       <div class="row g-2">
         <div class="col-md-3">
-          <label class="form-label small fw-semibold mb-1">대상 노드</label>
+          <label class="form-label small fw-semibold mb-1">Target node</label>
           <select class="form-select form-select-sm" onchange="stonithDevices[${idx}].node=this.value; syncStonithJson()">
             <option value="">-- select --</option>
             ${nodeOpts}
@@ -859,17 +858,17 @@ function renderStonithDevices() {
             oninput="stonithDevices[${idx}].ipmi_ip=this.value; syncStonithJson()">
         </div>
         <div class="col-md-3">
-          <label class="form-label small fw-semibold mb-1">IPMI 사용자</label>
+          <label class="form-label small fw-semibold mb-1">IPMI user</label>
           <input type="text" class="form-control form-control-sm" value="${d.ipmi_user}"
             oninput="stonithDevices[${idx}].ipmi_user=this.value; syncStonithJson()">
         </div>
         <div class="col-md-3">
-          <label class="form-label small fw-semibold mb-1">IPMI 비밀번호</label>
+          <label class="form-label small fw-semibold mb-1">IPMI password</label>
           <input type="password" class="form-control form-control-sm" value="${d.ipmi_password}"
             oninput="stonithDevices[${idx}].ipmi_password=this.value; syncStonithJson()">
         </div>
         <div class="col-12">
-          <label class="form-label small mb-1">Add 옵션 (공백으로 구분, 선택 — 예: <code>lanplus=1</code>)</label>
+          <label class="form-label small mb-1">Extra options (space-separated, optional &mdash; e.g. <code>lanplus=1</code>)</label>
           <input type="text" class="form-control form-control-sm" value="${(d.extra_opts||[]).join(' ')}"
             oninput="stonithDevices[${idx}].extra_opts=this.value.split(/\\s+/).filter(Boolean); syncStonithJson()">
         </div>
@@ -931,7 +930,7 @@ async function pcsdFetch() {
   const resultEl = document.getElementById('pcsdResult');
 
   statusEl.className = 'mt-2 small text-warning';
-  statusEl.textContent = '연결 중...';
+  statusEl.textContent = 'Connecting...';
   statusEl.classList.remove('d-none');
   resultEl.classList.add('d-none');
 
@@ -950,7 +949,7 @@ async function pcsdFetch() {
     }
 
     statusEl.className = 'mt-2 small text-success';
-    statusEl.textContent = '✓ pcsd 연결 성공 — 클러스터 설정을 가져왔습니다.';
+    statusEl.textContent = '\u2713 Connected to pcsd \u2014 cluster configuration imported.';
 
     renderPcsdResult(json.data);
     resultEl.classList.remove('d-none');
@@ -990,10 +989,10 @@ function renderPcsdResult(data) {
       `<span class="badge bg-secondary me-1">${escHtml(n.name)}</span>`).join('');
     html += `<div class="mb-3 p-2 border rounded bg-light">
       <div class="d-flex align-items-center gap-2 mb-1">
-        <span class="fw-semibold small"><i class="bi bi-server"></i> 클러스터 노드 (${nodes.length}개)</span>
+        <span class="fw-semibold small"><i class="bi bi-server"></i> Cluster nodes (${nodes.length})</span>
         <button type="button" class="btn btn-outline-primary btn-sm py-0 px-2"
                 onclick='applyPcsdNodes(${nodeArr})'>
-          <i class="bi bi-arrow-down-circle"></i> 노드 적용
+          <i class="bi bi-arrow-down-circle"></i> Apply nodes
         </button>
       </div>
       <div>${badges}</div>
@@ -1001,7 +1000,7 @@ function renderPcsdResult(data) {
   }
 
   if (!resources.length) {
-    html += '<div class="text-muted small">리소스 데이터 없음.</div>';
+    html += '<div class="text-muted small">No resource data.</div>';
     el.innerHTML = html;
     return;
   }
@@ -1011,8 +1010,8 @@ function renderPcsdResult(data) {
   const orders = constraints.rsc_order || [];
 
   html += `<div class="fw-semibold small mb-2 text-secondary">
-    <i class="bi bi-diagram-3"></i> 독립 서비스 ${services.length}개 감지됨
-    <a href="/cluster/" class="ms-2 small"><i class="bi bi-box-arrow-up-right"></i> 클러스터 현황 탭에서 전체 토폴로지 확인</a>
+    <i class="bi bi-diagram-3"></i> ${services.length} independent service(s) detected
+    <a href="/cluster/" class="ms-2 small"><i class="bi bi-box-arrow-up-right"></i> See the full topology on the Cluster Status tab</a>
   </div>`;
 
   services.forEach((svcResources, idx) => {
@@ -1030,7 +1029,7 @@ function renderPcsdResult(data) {
       <span class="badge bg-primary">#${idx+1}</span>
       <span class="small flex-grow-1 text-truncate">${idList}</span>
       <button type="button" class="btn btn-sm btn-warning py-0" onclick="applyServiceToForm('${applyData}')">
-        <i class="bi bi-arrow-down-circle"></i> 폼에 적용
+        <i class="bi bi-arrow-down-circle"></i> Apply to form
       </button>
     </div>`;
   });

@@ -1,52 +1,52 @@
 {% extends "base.html" %}
-{% block title %}방화벽 - IPVLAN Container Manager{% endblock %}
+{% block title %}Firewall - IPVLAN Container Manager{% endblock %}
 {% block nav_nft %}active{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-11">
     <div class="d-flex align-items-center mb-1">
-      <h2 class="fw-bold me-3"><i class="bi bi-shield-fill-check text-danger"></i> 방화벽 설정</h2>
+      <h2 class="fw-bold me-3"><i class="bi bi-shield-fill-check text-danger"></i> Firewall</h2>
       <div class="ms-auto d-flex align-items-center gap-2">
         <select id="nftScanProfileSel" class="form-select form-select-sm" style="min-width:160px">
-          <option value="">로컬 실행</option>
+          <option value="">Run locally</option>
         </select>
         <button class="btn btn-outline-secondary" onclick="loadNftConfig()" id="scanBtn">
-          <i class="bi bi-arrow-clockwise"></i> 설정 불러오기
+          <i class="bi bi-arrow-clockwise"></i> Load configuration
         </button>
       </div>
     </div>
-    <p class="text-muted mb-2">서브넷 그룹과 서비스를 DB에 관리하고, Pod 대상 기반으로 nftables 규칙을 생성합니다.</p>
+    <p class="text-muted mb-2">Manage subnet groups and services in the DB, then generate nftables rules per pod target.</p>
 
     <div id="scanAlert" class="alert d-none mb-3" role="alert"></div>
 
-    <!-- 탭 -->
+    <!-- tabs -->
     <ul class="nav nav-tabs mb-4" id="nftTab">
       <li class="nav-item">
         <a class="nav-link active" data-bs-toggle="tab" href="#subnetGroupsTab" onclick="loadSubnetGroups()">
-          <i class="bi bi-diagram-3-fill"></i> 서브넷 그룹
+          <i class="bi bi-diagram-3-fill"></i> Subnet groups
         </a>
       </li>
       <li class="nav-item">
         <a class="nav-link" data-bs-toggle="tab" href="#servicesTab" onclick="loadServices()">
-          <i class="bi bi-collection-fill"></i> 서비스
+          <i class="bi bi-collection-fill"></i> Services
         </a>
       </li>
       <li class="nav-item">
         <a class="nav-link" data-bs-toggle="tab" href="#ruleGenTab" onclick="loadRuleGenData()">
-          <i class="bi bi-gear-fill"></i> 규칙 생성
+          <i class="bi bi-gear-fill"></i> Generate rules
         </a>
       </li>
     </ul>
 
     <div class="tab-content">
 
-      <!-- ═══ Tab 1: 서브넷 그룹 ═══════════════════════════════════════════ -->
+      <!-- ═══ Tab 1: subnet groups ═══════════════════════════════════════════ -->
       <div class="tab-pane fade show active" id="subnetGroupsTab">
         <div class="d-flex align-items-center mb-3">
-          <h5 class="fw-bold mb-0">서브넷 그룹 목록</h5>
+          <h5 class="fw-bold mb-0">Subnet groups</h5>
           <button class="btn btn-sm btn-success ms-auto" onclick="openGroupModal()">
-            <i class="bi bi-plus-circle"></i> 그룹 Add
+            <i class="bi bi-plus-circle"></i> Add group
           </button>
         </div>
         <div class="table-responsive">
@@ -57,7 +57,7 @@
                 <th>Description</th>
                 <th>IPv4 CIDR</th>
                 <th>IPv6 CIDR</th>
-                <th style="width:120px">작업</th>
+                <th style="width:120px">Actions</th>
               </tr>
             </thead>
             <tbody id="groupTbody">
@@ -67,10 +67,10 @@
         </div>
       </div>
 
-      <!-- ═══ Tab 2: 서비스 ════════════════════════════════════════════════ -->
+      <!-- ═══ Tab 2: services ════════════════════════════════════════════════ -->
       <div class="tab-pane fade" id="servicesTab">
         <div class="d-flex align-items-center mb-3">
-          <h5 class="fw-bold mb-0">서비스 목록</h5>
+          <h5 class="fw-bold mb-0">Services</h5>
           <button class="btn btn-sm btn-success ms-auto" onclick="openServiceModal()">
             <i class="bi bi-plus-circle"></i> Add service
           </button>
@@ -83,7 +83,7 @@
                 <th>Description</th>
                 <th>TCP ports</th>
                 <th>UDP ports</th>
-                <th style="width:120px">작업</th>
+                <th style="width:120px">Actions</th>
               </tr>
             </thead>
             <tbody id="serviceTbody">
@@ -93,48 +93,48 @@
         </div>
       </div>
 
-      <!-- ═══ Tab 3: 규칙 생성 ═════════════════════════════════════════════ -->
+      <!-- ═══ Tab 3: rule generation ═════════════════════════════════════════════ -->
       <div class="tab-pane fade" id="ruleGenTab">
         <form action="/nft/generate" method="post" id="nftGenForm">
           <input type="hidden" name="targets_json" id="targetsJson" value="[]">
 
-          <!-- 숨겨진 필드 -->
+          <!-- hidden fields -->
           <input type="hidden" name="global_rules_json" id="globalRulesJson" value="[]">
           <input type="hidden" name="traceroute_start" value="0">
           <input type="hidden" name="traceroute_end" value="0">
 
-          <!-- 전역 설정 -->
+          <!-- global settings -->
           <div class="card shadow-sm mb-4">
             <div class="card-header bg-dark text-white fw-bold d-flex align-items-center">
-              <span><i class="bi bi-gear-fill"></i> 전역 설정</span>
+              <span><i class="bi bi-gear-fill"></i> Global settings</span>
             </div>
             <div class="card-body">
               <div class="row g-3 mb-3">
                 <div class="col-md-3">
-                  <label class="form-label fw-semibold">테이블 Name</label>
+                  <label class="form-label fw-semibold">Table name</label>
                   <input type="text" class="form-control" name="table_name" value="filter_ingress" placeholder="filter_ingress">
-                  <div class="form-text">생성 파일: <code>&lt;table_name&gt;.nft</code></div>
+                  <div class="form-text">Creates: <code>&lt;table_name&gt;.nft</code></div>
                 </div>
                 <div class="col-md-3">
                   <label class="form-label fw-semibold">Interface (device)</label>
                   <select class="form-select" name="device_name" id="deviceNameSel">
-                    <option value="">-- Interface 선택 --</option>
+                    <option value="">-- select interface --</option>
                   </select>
-                  <div class="form-text">ingress hook 대상 물리 Interface</div>
+                  <div class="form-text">Physical interface for the ingress hook</div>
                 </div>
                 <div class="col-md-3">
-                  <label class="form-label fw-semibold">체인 Name</label>
+                  <label class="form-label fw-semibold">Chain name</label>
                   <input type="text" class="form-control" name="chain_name" placeholder="ingress_eno1np0">
-                  <div class="form-text">비워두면 <code>ingress_&lt;device&gt;</code> 자동 설정</div>
+                  <div class="form-text">Leave blank to use <code>ingress_&lt;device&gt;</code></div>
                 </div>
               </div>
 
-              <!-- 전역 허용 규칙 목록 -->
+              <!-- global allow rules -->
               <div class="d-flex align-items-center mb-2">
-                <label class="fw-semibold mb-0">전역 허용 규칙</label>
-                <small class="text-muted ms-2">모든 대상 IP에 적용됩니다 (ICMP는 항상 허용)</small>
+                <label class="fw-semibold mb-0">Global allow rules</label>
+                <small class="text-muted ms-2">Applied to every target IP (ICMP is always allowed)</small>
                 <button type="button" class="btn btn-sm btn-outline-dark ms-auto" onclick="addGlobalRule()">
-                  <i class="bi bi-plus-circle"></i> 규칙 Add
+                  <i class="bi bi-plus-circle"></i> Add rule
                 </button>
               </div>
               <div id="globalRuleRows"></div>
@@ -148,15 +148,15 @@
             </div>
             <div class="card-body">
               <p class="text-muted small mb-3">
-                생성된 <code>.nft</code> 파일을 클러스터 전 노드에 동일하게 배포합니다.
-                서비스(pod)가 failover로 다른 노드로 옮겨가도 목적지 IP 허용 규칙이
-                이미 모든 노드에 있어야 하기 때문입니다.
+                The generated <code>.nft</code> file is deployed identically to every cluster
+                node, because when a service (pod) fails over to another node the destination-IP
+                allow rules must already be present there.
               </p>
               <div class="row g-3">
                 <div class="col-md-4">
-                  <label class="form-label">대상 호스트</label>
+                  <label class="form-label">Target hosts</label>
                   <input type="text" class="form-control" name="ansible_hosts" placeholder="all">
-                  <div class="form-text">개별 노드가 아니라 클러스터 전체 노드 그룹을 지정하세요.</div>
+                  <div class="form-text">Specify the whole cluster node group, not an individual node.</div>
                 </div>
                 <div class="col-md-4">
                   <label class="form-label">Ansible Profile</label>
@@ -180,10 +180,10 @@
             </div>
           </div>
 
-          <!-- 대상 (Pod) 목록 -->
+          <!-- target pod list -->
           <div class="card shadow-sm mb-4">
             <div class="card-header bg-primary text-white fw-bold d-flex align-items-center">
-              <span><i class="bi bi-hdd-network-fill"></i> 대상 Pod / 컨테이너 목록</span>
+              <span><i class="bi bi-hdd-network-fill"></i> Target pods / containers</span>
               <button type="button" class="btn btn-sm btn-light ms-auto" onclick="openTargetModal()">
                 <i class="bi bi-plus-circle"></i> Add target
               </button>
@@ -192,7 +192,7 @@
               <div id="targetList">
                 <div class="text-center py-5 text-muted" id="targetEmptyMsg">
                   <i class="bi bi-inbox fs-2"></i><br>
-                  대상을 Add하세요. 각 대상은 IP address와 허용 규칙(서비스+소스)을 가집니다.
+                  Add a target. Each target has an IP address and allow rules (service + source).
                 </div>
               </div>
             </div>
@@ -200,10 +200,10 @@
 
           <div class="d-flex gap-2 justify-content-end mb-5">
             <button type="button" class="btn btn-outline-secondary" onclick="resetRuleGen()">
-              <i class="bi bi-arrow-counterclockwise"></i> 초기화
+              <i class="bi bi-arrow-counterclockwise"></i> Reset
             </button>
             <button type="submit" class="btn btn-danger" onclick="serializeTargets()">
-              <i class="bi bi-shield-fill-check"></i> nft 파일 생성
+              <i class="bi bi-shield-fill-check"></i> Generate nft file
             </button>
           </div>
         </form>
@@ -213,13 +213,13 @@
   </div>
 </div>
 
-<!-- ═══ 서브넷 그룹 모달 ══════════════════════════════════════════════════════ -->
+<!-- === subnet group modal ══════════════════════════════════════════════════════ -->
 <div class="modal fade" id="groupModal" tabindex="-1">
   <div class="modal-dialog modal-lg">
     <div class="modal-content">
       <div class="modal-header bg-primary text-white">
         <h5 class="modal-title fw-bold" id="groupModalTitle">
-          <i class="bi bi-plus-circle"></i> 서브넷 그룹 Add
+          <i class="bi bi-plus-circle"></i> Add subnet group
         </h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
@@ -227,22 +227,22 @@
         <input type="hidden" id="groupEditId" value="0">
         <div class="row g-3">
           <div class="col-md-4">
-            <label class="form-label fw-semibold">그룹 Name <span class="text-danger">*</span></label>
+            <label class="form-label fw-semibold">Group name <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="groupName" placeholder="trusted">
-            <div class="form-text">set Name으로 사용됩니다 (예: sg_trusted_v4)</div>
+            <div class="form-text">Used as the set name (e.g. sg_trusted_v4)</div>
           </div>
           <div class="col-md-8">
             <label class="form-label fw-semibold">Description</label>
-            <input type="text" class="form-control" id="groupDesc" placeholder="관리자 대역">
+            <input type="text" class="form-control" id="groupDesc" placeholder="Admin range">
           </div>
           <div class="col-md-6">
-            <label class="form-label fw-semibold">IPv4 CIDR 목록</label>
+            <label class="form-label fw-semibold">IPv4 CIDRs</label>
             <textarea class="form-control font-monospace" id="groupCidrsV4" rows="5"
-              placeholder="10.0.0.0/8&#10;192.168.100.0/24&#10;# 주석은 무시됩니다"></textarea>
-            <div class="form-text">한 줄에 하나씩</div>
+              placeholder="10.0.0.0/8&#10;192.168.100.0/24&#10;# comments are ignored"></textarea>
+            <div class="form-text">One per line</div>
           </div>
           <div class="col-md-6">
-            <label class="form-label fw-semibold">IPv6 CIDR 목록</label>
+            <label class="form-label fw-semibold">IPv6 CIDRs</label>
             <textarea class="form-control font-monospace" id="groupCidrsV6" rows="5"
               placeholder="fd00::/8&#10;2001:db8::/32"></textarea>
           </div>
@@ -258,7 +258,7 @@
   </div>
 </div>
 
-<!-- ═══ 서비스 모달 ══════════════════════════════════════════════════════════ -->
+<!-- === service modal ══════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="serviceModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -272,24 +272,24 @@
         <input type="hidden" id="serviceEditId" value="0">
         <div class="row g-3">
           <div class="col-md-5">
-            <label class="form-label fw-semibold">서비스 Name <span class="text-danger">*</span></label>
+            <label class="form-label fw-semibold">Service name <span class="text-danger">*</span></label>
             <input type="text" class="form-control" id="serviceName" placeholder="http">
           </div>
           <div class="col-md-7">
             <label class="form-label fw-semibold">Description</label>
-            <input type="text" class="form-control" id="serviceDesc" placeholder="HTTP/HTTPS 웹 서비스">
+            <input type="text" class="form-control" id="serviceDesc" placeholder="HTTP/HTTPS web service">
           </div>
           <div class="col-md-6">
             <label class="form-label fw-semibold">TCP ports</label>
             <input type="text" class="form-control font-monospace" id="serviceTcpPorts"
               placeholder="80, 443, 8000-9000">
-            <div class="form-text">쉼표 구분. 범위: <code>8000-9000</code></div>
+            <div class="form-text">Comma-separated. Range: <code>8000-9000</code></div>
           </div>
           <div class="col-md-6">
             <label class="form-label fw-semibold">UDP ports</label>
             <input type="text" class="form-control font-monospace" id="serviceUdpPorts"
               placeholder="53, 161">
-            <div class="form-text">쉼표 구분</div>
+            <div class="form-text">Comma-separated</div>
           </div>
         </div>
       </div>
@@ -303,7 +303,7 @@
   </div>
 </div>
 
-<!-- ═══ 대상 모달 ══════════════════════════════════════════════════════════ -->
+<!-- === target modal ══════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="targetModal" tabindex="-1">
   <div class="modal-dialog modal-xl">
     <div class="modal-content">
@@ -317,40 +317,40 @@
         <input type="hidden" id="targetEditIdx" value="-1">
         <div class="row g-3 mb-3">
           <div class="col-md-6">
-            <label class="form-label fw-semibold">Pod 선택 <span class="text-danger">*</span></label>
+            <label class="form-label fw-semibold">Pod <span class="text-danger">*</span></label>
             <select class="form-select" id="targetPodSel" onchange="onTargetPodChange()">
-              <option value="">-- Pod 선택 --</option>
+              <option value="">-- select pod --</option>
             </select>
             <div class="form-text">
-              Pod의 IP address가 자동으로 사용됩니다.
+              The pod's IP address is used automatically.
               <a href="/quadlet/" target="_blank"><i class="bi bi-box-seam-fill"></i> Pod Settings</a>
             </div>
           </div>
           <div class="col-md-6">
-            <label class="form-label fw-semibold text-muted">할당된 IP address</label>
+            <label class="form-label fw-semibold text-muted">Assigned IP addresses</label>
             <div id="targetIpPreview" class="p-2 bg-light border rounded small font-monospace text-muted">
-              Pod를 선택하면 IP address가 표시됩니다.
+              Select a pod to see its IP addresses.
             </div>
           </div>
         </div>
 
-        <!-- 규칙 목록 -->
+        <!-- rule list -->
         <div class="d-flex align-items-center mb-2">
-          <h6 class="fw-bold mb-0">허용 규칙</h6>
+          <h6 class="fw-bold mb-0">Allow rules</h6>
           <button type="button" class="btn btn-sm btn-outline-success ms-auto" onclick="addRuleRow()">
-            <i class="bi bi-plus"></i> 규칙 Add
+            <i class="bi bi-plus"></i> Add rule
           </button>
         </div>
         <table class="table table-sm table-bordered" id="ruleTable">
           <thead class="table-secondary">
             <tr>
-              <th>서비스</th>
-              <th>소스 (서브넷 그룹)</th>
-              <th style="width:60px">삭제</th>
+              <th>Service</th>
+              <th>Source (subnet group)</th>
+              <th style="width:60px">Delete</th>
             </tr>
           </thead>
           <tbody id="ruleTbody">
-            <tr id="ruleEmptyRow"><td colspan="3" class="text-center text-muted">규칙을 Add하세요</td></tr>
+            <tr id="ruleEmptyRow"><td colspan="3" class="text-center text-muted">Add a rule</td></tr>
           </tbody>
         </table>
       </div>
@@ -395,7 +395,7 @@ async function loadSubnetGroups() {
 function renderGroupTable() {
   const tbody = document.getElementById('groupTbody');
   if (!nftGroups.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><i class="bi bi-inbox"></i> 그룹이 없습니다</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><i class="bi bi-inbox"></i> No groups</td></tr>';
     return;
   }
   tbody.innerHTML = nftGroups.map(g => `
@@ -420,7 +420,7 @@ function openGroupModal(id) {
   const g = id ? nftGroups.find(x => x.id === id) : null;
   document.getElementById('groupEditId').value   = g ? g.id : 0;
   document.getElementById('groupModalTitle').innerHTML =
-    g ? '<i class="bi bi-pencil"></i> 서브넷 그룹 편집' : '<i class="bi bi-plus-circle"></i> 서브넷 그룹 Add';
+    g ? '<i class="bi bi-pencil"></i> Edit subnet group' : '<i class="bi bi-plus-circle"></i> Add subnet group';
   document.getElementById('groupName').value     = g ? g.name : '';
   document.getElementById('groupDesc').value     = g ? g.description : '';
   document.getElementById('groupCidrsV4').value  = g ? g.cidrs_v4.join('\n') : '';
@@ -430,7 +430,7 @@ function openGroupModal(id) {
 
 async function saveGroup() {
   const name = document.getElementById('groupName').value.trim();
-  if (!name) { alert('그룹 Name은 필수입니다.'); return; }
+  if (!name) { alert('Group name is required.'); return; }
   const body = {
     id:          parseInt(document.getElementById('groupEditId').value) || 0,
     name,
@@ -449,9 +449,9 @@ async function saveGroup() {
 }
 
 async function deleteGroup(id, name) {
-  if (!confirm(`"${name}" 그룹을 삭제하시겠습니까?`)) return;
+  if (!confirm(`Delete group "${name}"?`)) return;
   const resp = await fetch(`/api/nft/subnet-groups/${id}`, { method: 'DELETE' });
-  if (!resp.ok) { alert('삭제 실패: ' + await resp.text()); return; }
+  if (!resp.ok) { alert('Delete failed: ' + await resp.text()); return; }
   await loadSubnetGroups();
 }
 
@@ -465,7 +465,7 @@ async function loadServices() {
 function renderServiceTable() {
   const tbody = document.getElementById('serviceTbody');
   if (!nftServices.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><i class="bi bi-inbox"></i> 서비스가 없습니다</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><i class="bi bi-inbox"></i> No services</td></tr>';
     return;
   }
   tbody.innerHTML = nftServices.map(s => `
@@ -490,7 +490,7 @@ function openServiceModal(id) {
   const s = id ? nftServices.find(x => x.id === id) : null;
   document.getElementById('serviceEditId').value   = s ? s.id : 0;
   document.getElementById('serviceModalTitle').innerHTML =
-    s ? '<i class="bi bi-pencil"></i> 서비스 편집' : '<i class="bi bi-plus-circle"></i> Add service';
+    s ? '<i class="bi bi-pencil"></i> Edit service' : '<i class="bi bi-plus-circle"></i> Add service';
   document.getElementById('serviceName').value     = s ? s.name : '';
   document.getElementById('serviceDesc').value     = s ? s.description : '';
   document.getElementById('serviceTcpPorts').value = s ? s.tcp_ports.join(', ') : '';
@@ -500,7 +500,7 @@ function openServiceModal(id) {
 
 async function saveService() {
   const name = document.getElementById('serviceName').value.trim();
-  if (!name) { alert('서비스 Name은 필수입니다.'); return; }
+  if (!name) { alert('Service name is required.'); return; }
   const body = {
     id:          parseInt(document.getElementById('serviceEditId').value) || 0,
     name,
@@ -519,9 +519,9 @@ async function saveService() {
 }
 
 async function deleteService(id, name) {
-  if (!confirm(`"${name}" 서비스를 삭제하시겠습니까?`)) return;
+  if (!confirm(`Delete service "${name}"?`)) return;
   const resp = await fetch(`/api/nft/services/${id}`, { method: 'DELETE' });
-  if (!resp.ok) { alert('삭제 실패: ' + await resp.text()); return; }
+  if (!resp.ok) { alert('Delete failed: ' + await resp.text()); return; }
   await loadServices();
 }
 
@@ -530,7 +530,7 @@ function renderGlobalRules() {
   const container = document.getElementById('globalRuleRows');
   if (!container) return;
   if (globalRules.length === 0) {
-    container.innerHTML = '<div class="text-muted small py-1">규칙 없음 (ICMP만 허용됩니다)</div>';
+    container.innerHTML = '<div class="text-muted small py-1">No rules (ICMP only)</div>';
     document.getElementById('globalRulesJson').value = '[]';
     return;
   }
@@ -592,7 +592,7 @@ async function initDeviceDropdown() {
     const ifaces = await fetch('/api/node-interfaces').then(r => r.json());
     const unique = [...new Set(ifaces.map(i => i.interface))].filter(Boolean).sort();
     const savedDevice = document.querySelector('[name=device_name]')?.value || '';
-    sel.innerHTML = '<option value="">-- Interface 선택 --</option>';
+    sel.innerHTML = '<option value="">-- select interface --</option>';
     unique.forEach(iface => {
       const opt = document.createElement('option');
       opt.value = iface;
@@ -623,10 +623,10 @@ async function loadScannedPods() {
 }
 
 function buildPodOptions(selectedName) {
-  const opts = ['<option value="">-- Pod 선택 --</option>'];
+  const opts = ['<option value="">-- select pod --</option>'];
   // 스캔된 Pod
   scannedPods.forEach(p => {
-    opts.push(`<option value="${escHtml(p.name)}" ${p.name===selectedName?'selected':''}>${escHtml(p.name)} (스캔됨)</option>`);
+    opts.push(`<option value="${escHtml(p.name)}" ${p.name===selectedName?'selected':''}>${escHtml(p.name)} (scanned)</option>`);
   });
   return opts.join('');
 }
@@ -636,12 +636,12 @@ function onTargetPodChange() {
   const podName = sel?.value || '';
   const preview = document.getElementById('targetIpPreview');
   if (!podName) {
-    if (preview) preview.innerHTML = '<span class="text-muted">Pod를 선택하면 IP address가 표시됩니다.</span>';
+    if (preview) preview.innerHTML = '<span class="text-muted">Select a pod to see its IP addresses.</span>';
     return;
   }
   const pod = scannedPods.find(p => p.name === podName);
   if (!pod) {
-    if (preview) preview.innerHTML = '<span class="text-muted">IP 정보 없음</span>';
+    if (preview) preview.innerHTML = '<span class="text-muted">No IP information</span>';
     return;
   }
   const v4s = pod.networks.filter(n => n.ip).map(n => n.ip);
@@ -649,7 +649,7 @@ function onTargetPodChange() {
   let html = '';
   if (v4s.length) html += `<div><span class="text-muted">IPv4:</span> ${v4s.map(a => escHtml(a)).join(', ')}</div>`;
   if (v6s.length) html += `<div><span class="text-muted">IPv6:</span> ${v6s.map(a => escHtml(a)).join(', ')}</div>`;
-  if (!html) html = '<span class="text-muted">할당된 IP 없음</span>';
+  if (!html) html = '<span class="text-muted">No IP assigned</span>';
   if (preview) preview.innerHTML = html;
 }
 
@@ -719,7 +719,7 @@ async function loadGlobalConfig() {
 async function loadNftConfig() {
   const btn = document.getElementById('scanBtn');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 불러오는 중...';
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Loading...';
 
   const profileName = document.getElementById('nftScanProfileSel')?.value || null;
 
@@ -732,7 +732,7 @@ async function loadNftConfig() {
     const data = await resp.json();
     const alertEl = document.getElementById('scanAlert');
     alertEl.className = 'alert ' + (data.ok ? 'alert-success' : 'alert-warning');
-    alertEl.innerHTML = `<strong>${data.ok ? '완료' : '오류'}:</strong> ${escHtml(data.message)}`;
+    alertEl.innerHTML = `<strong>${data.ok ? 'Done' : 'Error'}:</strong> ${escHtml(data.message)}`;
     if (data.ansible_output) {
       alertEl.innerHTML += `<pre class="mt-2 small mb-0">${escHtml(data.ansible_output)}</pre>`;
     }
@@ -753,7 +753,7 @@ async function loadNftConfig() {
     alertEl.classList.remove('d-none');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 설정 불러오기';
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Load configuration';
   }
 }
 
@@ -787,10 +787,10 @@ function renderTargets() {
               <span class="badge bg-light text-dark border">
                 <i class="bi bi-shield-check text-success"></i>
                 ${escHtml(r.service_name)}
-                ${r.subnet_group ? `<span class="text-primary ms-1">@ ${escHtml(r.subnet_group)}</span>` : '<span class="text-muted ms-1">(전체)</span>'}
+                ${r.subnet_group ? `<span class="text-primary ms-1">@ ${escHtml(r.subnet_group)}</span>` : '<span class="text-muted ms-1">(all)</span>'}
               </span>
             `).join('')}
-          </div>` : '<span class="text-muted small">규칙 없음</span>'}
+          </div>` : '<span class="text-muted small">No rules</span>'}
         </div>
         <div class="ms-3 d-flex gap-2">
           <button class="btn btn-sm btn-outline-primary" type="button" onclick="openTargetModal(${i})">
@@ -810,7 +810,7 @@ function openTargetModal(idx) {
   const t = (idx !== undefined) ? targets[idx] : null;
   document.getElementById('targetEditIdx').value = (idx !== undefined) ? idx : -1;
   document.getElementById('targetModalTitle').innerHTML =
-    t ? '<i class="bi bi-pencil"></i> 대상 편집' : '<i class="bi bi-plus-circle"></i> Add target';
+    t ? '<i class="bi bi-pencil"></i> Edit target' : '<i class="bi bi-plus-circle"></i> Add target';
 
   // Pod 드롭다운 채우기
   const podSel = document.getElementById('targetPodSel');
@@ -821,7 +821,7 @@ function openTargetModal(idx) {
 
   // 규칙 초기화
   document.getElementById('ruleTbody').innerHTML =
-    '<tr id="ruleEmptyRow"><td colspan="3" class="text-center text-muted">규칙을 Add하세요</td></tr>';
+    '<tr id="ruleEmptyRow"><td colspan="3" class="text-center text-muted">Add a rule</td></tr>';
 
   if (t && t.rules.length) {
     document.getElementById('ruleEmptyRow').style.display = 'none';
@@ -838,7 +838,7 @@ function addRuleRow(svcName, grpName) {
     `<option value="${escHtml(s.name)}" ${s.name === svcName ? 'selected' : ''}>${escHtml(s.name)}${s.description ? ' – ' + escHtml(s.description) : ''}</option>`
   ).join('');
 
-  const grpOptions = `<option value="" ${!grpName ? 'selected' : ''}>모든 소스 (open)</option>` +
+  const grpOptions = `<option value="" ${!grpName ? 'selected' : ''}>All sources (open)</option>` +
     nftGroups.map(g =>
       `<option value="${escHtml(g.name)}" ${g.name === grpName ? 'selected' : ''}>${escHtml(g.name)}${g.description ? ' – ' + escHtml(g.description) : ''}</option>`
     ).join('');
@@ -847,7 +847,7 @@ function addRuleRow(svcName, grpName) {
   tr.innerHTML = `
     <td>
       <select class="form-select form-select-sm rule-svc">
-        ${svcOptions || '<option value="">서비스 없음</option>'}
+        ${svcOptions || '<option value="">No services</option>'}
       </select>
     </td>
     <td>
@@ -866,7 +866,7 @@ function addRuleRow(svcName, grpName) {
 
 function saveTarget() {
   const podName = document.getElementById('targetPodSel')?.value?.trim() || '';
-  if (!podName) { alert('Pod를 선택하세요.'); return; }
+  if (!podName) { alert('Select a pod.'); return; }
 
   // Pod에서 IP address 추출
   const pod = scannedPods.find(p => p.name === podName);
@@ -900,7 +900,7 @@ function saveTarget() {
 }
 
 function deleteTarget(idx) {
-  if (!confirm(`"${targets[idx].name}" 대상을 삭제하시겠습니까?`)) return;
+  if (!confirm(`Delete target "${targets[idx].name}"?`)) return;
   targets.splice(idx, 1);
   renderTargets();
 }
@@ -910,7 +910,7 @@ function serializeTargets() {
 }
 
 function resetRuleGen() {
-  if (targets.length > 0 && !confirm('대상 목록과 입력을 초기화하시겠습니까?')) return;
+  if (targets.length > 0 && !confirm('Reset the target list and all inputs?')) return;
   targets = [];
   renderTargets();
   document.getElementById('nftGenForm').reset();

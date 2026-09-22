@@ -75,7 +75,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
     out.push_str(&format!("table netdev {} {{\n", policy.table_name));
 
     // ── 1. 대상 IP set (target_<name>_v4/v6) ────────────────────────────
-    out.push_str("    # --- 1. 대상 Pod/컨테이너 IP 그룹 (Targets) ---\n");
+    out.push_str("    # --- 1. Target pod/container IP groups ---\n");
     for target in &policy.targets {
         let tname = set_name(&target_names, &target.name);
         if !target.ipv4_addrs.is_empty() {
@@ -107,7 +107,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
         .collect();
 
     if !used_groups.is_empty() {
-        out.push_str("\n    # --- 2. 서브넷 그룹 (Subnet Groups) ---\n");
+        out.push_str("\n    # --- 2. Subnet groups ---\n");
         for grp in &used_groups {
             let gname = set_name(&group_names, &grp.name);
             if !grp.cidrs_v4.is_empty() {
@@ -129,7 +129,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
 
     // ── 3. 전역 규칙 포트 set ────────────────────────────────────────────
     if !policy.global_rules.is_empty() {
-        out.push_str("\n    # --- 3. 전역 허용 규칙 포트 집합 ---\n");
+        out.push_str("\n    # --- 3. Port sets for the global allow rules ---\n");
         for (idx, grule) in policy.global_rules.iter().enumerate() {
             let range = if grule.port_start == grule.port_end {
                 format!("{}", grule.port_start)
@@ -143,7 +143,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
         }
     } else {
         // 전역 규칙 없으면 traceroute 기본값
-        out.push_str("\n    # --- 3. 공통 설정 (Tools) ---\n");
+        out.push_str("\n    # --- 3. Shared settings (tools) ---\n");
         out.push_str("    set traceroute_udp_ports {\n");
         out.push_str("        type inet_service; flags interval\n");
         out.push_str(&format!(
@@ -178,7 +178,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
     // 공통 허용: ICMP + 전역 규칙
     if !all_v4.is_empty() || !all_v6.is_empty() {
         out.push_str("\n        # ==================================================\n");
-        out.push_str("        # 공통 허용 규칙 (Global Open: ICMP & 전역 규칙)\n");
+        out.push_str("        # Shared allow rules (global open: ICMP and the global rules)\n");
         out.push_str("        # ==================================================\n");
     }
     if !all_v4.is_empty() {
@@ -214,7 +214,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
     // 서비스별 허용 규칙 (대상별로)
     if !policy.targets.is_empty() {
         out.push_str("\n        # ==================================================\n");
-        out.push_str("        # 서비스별 상세 규칙\n");
+        out.push_str("        # Per-service rules\n");
         out.push_str("        # ==================================================\n");
     }
 
@@ -324,7 +324,7 @@ pub fn generate_nft_policy(policy: &NftPolicy) -> String {
     // 대상별 차단 로그 (명시적 drop)
     if !policy.targets.is_empty() {
         out.push_str("\n        # ==================================================\n");
-        out.push_str("        # 대상별 개별 차단 로그\n");
+        out.push_str("        # Per-target drop logging\n");
         out.push_str("        # ==================================================\n");
         for target in &policy.targets {
             let tname     = set_name(&target_names, &target.name);
@@ -383,7 +383,7 @@ pub fn generate_nft_ansible_playbook(
 
     let mut out = String::new();
     out.push_str("---\n");
-    out.push_str("- name: nftables netdev ingress 필터 배포 (클러스터 전 노드 동일 적용)\n");
+    out.push_str("- name: Deploy the nftables netdev ingress filter (identical on every cluster node)\n");
     out.push_str(&format!("  hosts: {}\n", hosts));
     out.push_str(&format!("  remote_user: {}\n", user));
     out.push_str("  become: yes\n");
@@ -391,7 +391,7 @@ pub fn generate_nft_ansible_playbook(
     out.push_str(&format!("    ansible_ssh_private_key_file: {}\n", key));
     out.push_str("  tasks:\n");
 
-    out.push_str(&format!("    - name: {} 배포\n", NFT_DEST_PATH));
+    out.push_str(&format!("    - name: Deploy {}\n", NFT_DEST_PATH));
     out.push_str("      ansible.builtin.copy:\n");
     out.push_str(&format!("        dest: {}\n", NFT_DEST_PATH));
     out.push_str("        backup: yes\n");
@@ -402,7 +402,7 @@ pub fn generate_nft_ansible_playbook(
     }
     out.push_str("      notify: restart nftables service\n\n");
 
-    out.push_str("    - name: /etc/sysconfig/nftables.conf에 include 보장\n");
+    out.push_str("    - name: Ensure the include line exists in /etc/sysconfig/nftables.conf\n");
     out.push_str("      ansible.builtin.lineinfile:\n");
     out.push_str("        path: /etc/sysconfig/nftables.conf\n");
     out.push_str(&format!("        line: 'include \"{}\"'\n", NFT_DEST_PATH));

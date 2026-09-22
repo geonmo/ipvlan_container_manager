@@ -298,7 +298,7 @@ pub async fn generate(
 
     if nodes.len() < 2 {
         let mut ctx = Context::new();
-        ctx.insert("error", "노드를 최소 2개 이상 입력해야 합니다.");
+        ctx.insert("error", "At least two nodes are required.");
         let rendered = state.tera.render("drbd/result.html", &ctx)
             .unwrap_or_else(|e| format!("<pre>Template error: {}</pre>", e));
         return Html(rendered);
@@ -416,11 +416,11 @@ pub async fn save(
     match result {
         Ok(_) => Json(serde_json::json!({
             "ok": true,
-            "message": format!("'{}' 저장 완료", form.resource_name)
+            "message": format!("'{}' saved", form.resource_name)
         })),
         Err(e) => Json(serde_json::json!({
             "ok": false,
-            "message": format!("저장 실패: {}", e)
+            "message": format!("Save failed: {}", e)
         })),
     }
 }
@@ -438,9 +438,9 @@ pub async fn delete_saved(
         db::delete_resource(&conn, &name)
     };
     match result {
-        Ok(n) if n > 0 => Json(serde_json::json!({ "ok": true, "message": format!("'{}' 삭제됨", name) })),
-        Ok(_)          => Json(serde_json::json!({ "ok": false, "message": "해당 리소스 없음" })),
-        Err(e)         => Json(serde_json::json!({ "ok": false, "message": format!("삭제 실패: {}", e) })),
+        Ok(n) if n > 0 => Json(serde_json::json!({ "ok": true, "message": format!("'{}' deleted", name) })),
+        Ok(_)          => Json(serde_json::json!({ "ok": false, "message": "resource not found" })),
+        Err(e)         => Json(serde_json::json!({ "ok": false, "message": format!("Delete failed: {}", e) })),
     }
 }
 

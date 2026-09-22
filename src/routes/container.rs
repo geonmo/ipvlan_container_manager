@@ -80,7 +80,7 @@ pub async fn generate(
                 Ok(c) => c,
                 Err(e) => {
                     let mut ctx = Context::new();
-                    ctx.insert("error", &format!("JSON 파싱 오류: {}", e));
+                    ctx.insert("error", &format!("JSON parse error: {}", e));
                     let rendered = state.tera.render("container/result.html", &ctx)
                         .unwrap_or_else(|e2| format!("<pre>Template error: {}</pre>", e2));
                     return Html(rendered);

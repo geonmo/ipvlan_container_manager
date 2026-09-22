@@ -47,7 +47,7 @@ pub async fn generate(
     let mut targets: Vec<NftTarget> = match serde_json::from_str(&form.targets_json) {
         Ok(t) => t,
         Err(e) => {
-            ctx.insert("error", &format!("대상 JSON 파싱 오류: {}", e));
+            ctx.insert("error", &format!("target JSON parse error: {}", e));
             ctx.insert("result", &serde_json::Value::Null);
             let rendered = state.tera.render("nft/result.html", &ctx)
                 .unwrap_or_else(|e2| format!("<pre>Template error: {}</pre>", e2));
@@ -105,7 +105,7 @@ pub async fn generate(
     let subnet_groups = match db::get_nft_subnet_groups_by_names(&conn, &group_names) {
         Ok(g) => g,
         Err(e) => {
-            ctx.insert("error", &format!("서브넷 그룹 조회 오류: {}", e));
+            ctx.insert("error", &format!("failed to load the subnet groups: {}", e));
             ctx.insert("result", &serde_json::Value::Null);
             let rendered = state.tera.render("nft/result.html", &ctx)
                 .unwrap_or_else(|e2| format!("<pre>Template error: {}</pre>", e2));
@@ -115,7 +115,7 @@ pub async fn generate(
     let services = match db::get_nft_services_by_names(&conn, &service_names) {
         Ok(s) => s,
         Err(e) => {
-            ctx.insert("error", &format!("서비스 조회 오류: {}", e));
+            ctx.insert("error", &format!("failed to load the services: {}", e));
             ctx.insert("result", &serde_json::Value::Null);
             let rendered = state.tera.render("nft/result.html", &ctx)
                 .unwrap_or_else(|e2| format!("<pre>Template error: {}</pre>", e2));

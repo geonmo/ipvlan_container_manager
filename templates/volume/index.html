@@ -153,7 +153,7 @@ function renderTable() {
       <td class="font-monospace small">${esc(v.host_path) || '<span class="text-muted">-</span>'}</td>
       <td>${v.drbd_resource ? '<span class="badge bg-primary">' + esc(v.drbd_resource) + '</span>' : '<span class="text-muted small">-</span>'}</td>
       <td class="small text-muted">${esc(v.description)}</td>
-      <td class="small">${v.drbd_resource ? '<span class="badge bg-warning text-dark"><i class="bi bi-skip-forward-fill"></i> Quadlet skipped</span>' : '<span class="badge bg-success"><i class="bi bi-file-earmark-code"></i> Quadlet 생성</span>'}</td>
+      <td class="small">${v.drbd_resource ? '<span class="badge bg-warning text-dark"><i class="bi bi-skip-forward-fill"></i> Quadlet skipped</span>' : '<span class="badge bg-success"><i class="bi bi-file-earmark-code"></i> Quadlet generated</span>'}</td>
       <td class="text-end">
         <button class="btn btn-sm btn-outline-secondary me-1" onclick='editVolume(${JSON.stringify(v)})'>
           <i class="bi bi-pencil"></i>

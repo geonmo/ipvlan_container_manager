@@ -275,7 +275,7 @@ pub fn generate_quadlet_ansible_playbook(
                 .map(|n| if !n.subnet.is_empty() { n.subnet.as_str() } else { n.subnet6.as_str() })
                 .unwrap_or("0.0.0.0/0");
             iface_detect_tasks.push(format!(
-                "    - name: {} 부모 인터페이스 감지\n      shell: ip route show to match {} | grep -oP 'dev \\K\\S+' | head -1\n      register: {}\n      changed_when: false\n      failed_when: false",
+                "    - name: Detect the parent interface for {}\n      shell: ip route show to match {} | grep -oP 'dev \\K\\S+' | head -1\n      register: {}\n      changed_when: false\n      failed_when: false",
                 net_name, subnet, var_name
             ));
             // __PARENT_IFACE__ 만 교체 — "Options=parent=__PARENT_IFACE__,mode=l2" 등도 처리
@@ -291,7 +291,7 @@ pub fn generate_quadlet_ansible_playbook(
 
     let mut tasks: Vec<String> = Vec::new();
     tasks.push(format!(
-        "    - name: Quadlet 디렉토리 생성\n      file:\n        path: {}\n        state: directory\n        mode: '0755'",
+        "    - name: Create the Quadlet directory\n      file:\n        path: {}\n        state: directory\n        mode: '0755'",
         config.install_path
     ));
 
@@ -300,7 +300,7 @@ pub fn generate_quadlet_ansible_playbook(
 
     for (filename, content) in &resolved_files {
         tasks.push(format!(
-            "    - name: {} 배포\n      copy:\n        dest: {}/{}\n        content: |\n{}",
+            "    - name: Deploy {}\n      copy:\n        dest: {}/{}\n        content: |\n{}",
             filename,
             config.install_path,
             filename,
@@ -313,11 +313,11 @@ pub fn generate_quadlet_ansible_playbook(
     }
 
     tasks.push(
-        "    - name: systemd 데몬 리로드\n      systemd:\n        daemon_reload: yes".to_string(),
+        "    - name: Reload the systemd daemon\n      systemd:\n        daemon_reload: yes".to_string(),
     );
 
     format!(
-        "---\n- name: Quadlet 유닛 배포\n  hosts: {}\n  remote_user: {}\n  become: yes\n  vars:\n    ansible_ssh_private_key_file: {}\n  tasks:\n{}",
+        "---\n- name: Deploy the Quadlet units\n  hosts: {}\n  remote_user: {}\n  become: yes\n  vars:\n    ansible_ssh_private_key_file: {}\n  tasks:\n{}",
         hosts,
         user,
         key,

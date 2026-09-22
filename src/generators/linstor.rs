@@ -6,7 +6,7 @@ use crate::models::linstor::LinstorConfig;
 pub fn generate_linstor_requirements_yml() -> String {
     r#"---
 # ansible-galaxy collection install -r requirements.yml
-# LINBIT이 아직 Ansible Galaxy에 게시하지 않아 git 소스로 설치한다.
+# LINBIT has not published these on Ansible Galaxy yet, so install from git.
 collections:
   - name: linbit.common
     source: https://github.com/LINBIT/ansible-common-collection.git
@@ -153,69 +153,69 @@ pub fn generate_linstor_ansible_playbook(
     let mut out = String::new();
 
     out.push_str("---\n");
-    out.push_str("# LINSTOR 배포 플레이북 (PLAN.md D.2)\n");
-    out.push_str("# 사전 준비: `ansible-galaxy collection install -r requirements.yml`\n");
-    out.push_str("# (함께 생성된 requirements.yml 참고). rpm_dir에는 gsdc-linbit-build가\n");
-    out.push_str("# 만든 linstor-*.rpm 파일들이 있어야 한다 — LINBIT 공식 EL9 저장소는\n");
-    out.push_str("# 구독 고객 전용이라 이 앱은 이미 빌드된 RPM을 로컬 설치하는 것을\n");
-    out.push_str("# 전제로 cluster_init_repo_access: none으로 role을 호출한다.\n\n");
+    out.push_str("# LINSTOR deployment playbook (PLAN.md D.2)\n");
+    out.push_str("# Prerequisite: `ansible-galaxy collection install -r requirements.yml`\n");
+    out.push_str("# (see the requirements.yml generated alongside this file). rpm_dir must contain\n");
+    out.push_str("# the linstor-*.rpm files built by gsdc-linbit-build -- LINBIT's official EL9\n");
+    out.push_str("# repositories are subscription-only, so this app installs pre-built RPMs locally\n");
+    out.push_str("# and calls the role with cluster_init_repo_access: none.\n\n");
 
     // ── Play 0: Pacemaker 관리 전제조건 ────────────────────────────────
     // 3노드 실클러스터 검증에서 이것들이 빠지면 각각 다른 증상으로 실패했다.
     // Pacemaker가 리소스를 관리하지 않는 구성이면 생략한다.
     if config.pacemaker_managed {
-        out.push_str("- name: Pacemaker 관리 전제조건 (DRBD 모듈 / SELinux)\n");
+        out.push_str("- name: Prerequisites for Pacemaker management (DRBD module / SELinux)\n");
         out.push_str("  hosts: linstor_cluster\n");
         out.push_str(&format!("  remote_user: {}\n", ansible_user));
         out.push_str("  become: yes\n");
-        out.push_str("  # ansible_facts['selinux'] 가 필요하다\n");
+        out.push_str("  # ansible_facts['selinux'] is required\n");
         out.push_str("  gather_facts: yes\n");
         out.push_str("  vars:\n");
         out.push_str(&format!("    ansible_ssh_private_key_file: {}\n", ansible_ssh_key));
         out.push_str("  tasks:\n");
 
         // (a) DRBD 커널 모듈
-        out.push_str("    # linbit.drbd.drbd_install(satellite_install 의 meta 의존성)은\n");
-        out.push_str("    # /sys/module/drbd/version 으로 설치 여부를 판단하는데, 이 경로는\n");
-        out.push_str("    # 모듈이 **로드돼 있을 때만** 존재한다. 패키지만 깔려 있고 로드가\n");
-        out.push_str("    # 안 돼 있으면 role 이 LINBIT 자체 패키지명(kmod-drbd)을 설치하려다\n");
-        out.push_str("    # \"No package kmod-drbd available.\" 로 실패한다.\n");
-        out.push_str("    - name: 부팅 시 DRBD 모듈 자동 로드 설정\n");
+        out.push_str("    # linbit.drbd.drbd_install (a meta dependency of satellite_install) decides\n");
+        out.push_str("    # whether DRBD is installed by looking at /sys/module/drbd/version, which only\n");
+        out.push_str("    # exists while the module is loaded. If the package is installed but the module\n");
+        out.push_str("    # is not loaded, the role tries to install LINBIT's own package name (kmod-drbd)\n");
+        out.push_str("    # and fails with \"No package kmod-drbd available.\"\n");
+        out.push_str("    - name: Load the DRBD module automatically at boot\n");
         out.push_str("      ansible.builtin.copy:\n");
         out.push_str("        content: \"drbd\\n\"\n");
         out.push_str("        dest: /etc/modules-load.d/drbd.conf\n");
         out.push_str("        mode: '0644'\n\n");
-        out.push_str("    - name: DRBD 모듈 즉시 로드\n");
+        out.push_str("    - name: Load the DRBD module now\n");
         out.push_str("      community.general.modprobe:\n");
         out.push_str("        name: drbd\n");
         out.push_str("        state: present\n\n");
 
         // (b) drbd-selinux
-        out.push_str("    # SELinux Enforcing 에서 ocf:linbit:drbd RA 는 drbd_t 도메인으로\n");
-        out.push_str("    # 실행된다. 이 정책 모듈이 없으면 drbdsetup 이 커널과 통신할\n");
-        out.push_str("    # netlink_generic_socket 조차 만들지 못해 RA 가 리소스를 찾지 못한다.\n");
-        out.push_str("    - name: drbd-selinux 설치 (SELinux 정책 모듈)\n");
+        out.push_str("    # Under SELinux enforcing, the ocf:linbit:drbd RA runs in the drbd_t domain.\n");
+        out.push_str("    # Without this policy module, drbdsetup cannot even create the\n");
+        out.push_str("    # netlink_generic_socket it needs to talk to the kernel, so the RA finds no resource.\n");
+        out.push_str("    - name: Install drbd-selinux (SELinux policy module)\n");
         out.push_str("      ansible.builtin.dnf:\n");
         out.push_str("        name: drbd-selinux\n");
         out.push_str("        state: present\n");
         out.push_str("      when: ansible_facts['selinux']['status'] | default('disabled') != 'disabled'\n\n");
 
         // (c) /var/lib/linstor.d 라벨
-        out.push_str("    # LINSTOR 는 .res 파일을 /var/lib/linstor.d/ 에 쓰는데 그건 var_lib_t\n");
-        out.push_str("    # 로 라벨된다. DRBD 정책은 /etc/drbd.d(etc_t)만 읽도록 돼 있어서\n");
-        out.push_str("    # drbd_t 가 읽지 못하고, 증상은 엉뚱하게 나온다:\n");
+        out.push_str("    # LINSTOR writes its .res files into /var/lib/linstor.d/, which is labelled\n");
+        out.push_str("    # var_lib_t. The DRBD policy only allows reading /etc/drbd.d (etc_t), so\n");
+        out.push_str("    # drbd_t cannot read them and the symptom is misleading:\n");
         out.push_str("    #   avc: denied { read } comm=\"drbdadm\" scontext=drbd_t tcontext=var_lib_t\n");
         out.push_str("    #   -> \"DRBD resource <name> not found in configuration file /etc/drbd.conf.\"\n");
-        out.push_str("    # 셸에서 root 로 drbdadm 을 치면 unconfined_t 라 잘 되기 때문에\n");
-        out.push_str("    # AVC 로그를 보지 않으면 원인을 찾기 어렵다.\n");
-        out.push_str("    - name: /var/lib/linstor.d 를 etc_t 로 라벨링\n");
+        out.push_str("    # Running drbdadm as root from a shell works (unconfined_t), so the cause is\n");
+        out.push_str("    # hard to find unless you look at the AVC log.\n");
+        out.push_str("    - name: Label /var/lib/linstor.d as etc_t\n");
         out.push_str("      community.general.sefcontext:\n");
         out.push_str("        target: '/var/lib/linstor\\.d(/.*)?'\n");
         out.push_str("        setype: etc_t\n");
         out.push_str("        state: present\n");
         out.push_str("      when: ansible_facts['selinux']['status'] | default('disabled') != 'disabled'\n");
         out.push_str("      register: _linstor_fcontext\n\n");
-        out.push_str("    - name: 기존 파일에 라벨 적용\n");
+        out.push_str("    - name: Apply the label to existing files\n");
         out.push_str("      ansible.builtin.command:\n");
         out.push_str("        cmd: restorecon -RF /var/lib/linstor.d\n");
         out.push_str("      when:\n");
@@ -225,62 +225,62 @@ pub fn generate_linstor_ansible_playbook(
     }
 
     // ── Play 1: RPM 로컬 설치 ──────────────────────────────────────────
-    out.push_str("- name: LINSTOR RPM 로컬 설치 (gsdc-linbit-build 산출물)\n");
+    out.push_str("- name: Install the LINSTOR RPMs locally (gsdc-linbit-build output)\n");
     out.push_str("  hosts: linstor_cluster\n");
     out.push_str(&format!("  remote_user: {}\n", ansible_user));
     out.push_str("  become: yes\n");
     out.push_str("  vars:\n");
     out.push_str(&format!("    ansible_ssh_private_key_file: {}\n", ansible_ssh_key));
     out.push_str("  tasks:\n");
-    out.push_str("    - name: 제어 노드의 로컬 RPM 목록 확인\n");
+    out.push_str("    - name: List the local RPMs on the control node\n");
     out.push_str("      ansible.builtin.find:\n");
     out.push_str(&format!("        paths: \"{}\"\n", config.rpm_dir));
     out.push_str("        patterns: \"*.rpm\"\n");
     out.push_str("      delegate_to: localhost\n");
     out.push_str("      run_once: true\n");
     out.push_str("      register: _linstor_rpms\n\n");
-    out.push_str("    - name: RPM 파일을 노드로 복사\n");
+    out.push_str("    - name: Copy the RPM files to the nodes\n");
     out.push_str("      ansible.builtin.copy:\n");
     out.push_str("        src: \"{{ item.path }}\"\n");
     out.push_str("        dest: \"/tmp/linstor-rpms/{{ item.path | basename }}\"\n");
     out.push_str("      loop: \"{{ _linstor_rpms.files }}\"\n");
     out.push_str("      loop_control:\n");
     out.push_str("        label: \"{{ item.path | basename }}\"\n\n");
-    out.push_str("    - name: LINSTOR RPM 설치 (dnf, 로컬 파일 트랜잭션)\n");
+    out.push_str("    - name: Install the LINSTOR RPMs (dnf, local file transaction)\n");
     out.push_str("      ansible.builtin.dnf:\n");
     out.push_str("        name: \"/tmp/linstor-rpms/*.rpm\"\n");
     out.push_str("        state: present\n");
     out.push_str("        disable_gpg_check: true\n\n");
 
     // ── Play 2: cluster_init ───────────────────────────────────────────
-    out.push_str("- name: LINSTOR 클러스터 설치/초기화 (linbit.linstor.cluster_init)\n");
+    out.push_str("- name: Install and initialize the LINSTOR cluster (linbit.linstor.cluster_init)\n");
     out.push_str("  hosts: linstor_cluster\n");
     out.push_str("  any_errors_fatal: true\n");
     out.push_str(&format!("  remote_user: {}\n", ansible_user));
     out.push_str("  become: yes\n");
     out.push_str("  vars:\n");
     out.push_str(&format!("    ansible_ssh_private_key_file: {}\n", ansible_ssh_key));
-    out.push_str("    # RPM은 위 play에서 이미 로컬 설치했으므로 repo 설정은 건너뛴다\n");
-    out.push_str("    # (customer/public 저장소 모두 이 앱의 대상인 EL9에서는 무료로 접근 불가 — PLAN.md D 범위 확정 참고)\n");
+    out.push_str("    # The RPMs were installed locally in the play above, so skip repo setup\n");
+    out.push_str("    # (neither the customer nor the public repo is freely accessible on EL9 -- see PLAN.md section D)\n");
     out.push_str("    cluster_init_repo_access: none\n");
     out.push_str(&format!("    cluster_init_deploy_storage: {}\n", config.deploy_storage));
     out.push_str(&format!("    cluster_init_ha_database: {}\n", config.ha_database));
     out.push_str(&format!("    cluster_init_token_auth: {}\n", config.token_auth));
     out.push_str("  tasks:\n");
-    out.push_str("    - name: LINSTOR 설치 및 클러스터 등록\n");
+    out.push_str("    - name: Install LINSTOR and register the cluster\n");
     out.push_str("      ansible.builtin.import_role:\n");
     out.push_str("        name: linbit.linstor.cluster_init\n\n");
 
     // ── Play 3: 리소스 그룹/리소스 프로비저닝 (선택) ───────────────────
     if !config.resource_groups.is_empty() || !config.resources.is_empty() {
-        out.push_str("- name: LINSTOR 리소스 그룹/리소스 프로비저닝\n");
+        out.push_str("- name: Provision LINSTOR resource groups and resources\n");
         out.push_str("  hosts: localhost\n");
         out.push_str("  gather_facts: false\n");
         out.push_str("  environment:\n");
         out.push_str("    LS_CONTROLLERS: \"{{ lookup('linbit.linstor.controller_env') }}\"\n");
         out.push_str("  tasks:\n");
         for rg in &config.resource_groups {
-            out.push_str(&format!("    - name: 리소스 그룹 생성 ({})\n", rg.name));
+            out.push_str(&format!("    - name: Create resource group ({})\n", rg.name));
             out.push_str("      linbit.linstor.resource_group:\n");
             out.push_str(&format!("        name: {}\n", rg.name));
             out.push_str(&format!("        storage_pool: {}\n", rg.storage_pool));
@@ -295,7 +295,7 @@ pub fn generate_linstor_ansible_playbook(
             out.push('\n');
         }
         for res in &config.resources {
-            out.push_str(&format!("    - name: 리소스 스폰 ({})\n", res.name));
+            out.push_str(&format!("    - name: Spawn resource ({})\n", res.name));
             out.push_str("      linbit.linstor.resource:\n");
             out.push_str(&format!("        name: {}\n", res.name));
             out.push_str("        mode: spawn\n");
@@ -395,7 +395,7 @@ mod tests {
         let config = sample_config();
         let pb = generate_linstor_ansible_playbook(&config, "deploy", "~/.ssh/id_rsa");
 
-        let rpm_pos = pb.find("LINSTOR RPM 로컬 설치").unwrap();
+        let rpm_pos = pb.find("Install the LINSTOR RPMs locally").unwrap();
         let init_pos = pb.find("linbit.linstor.cluster_init").unwrap();
         assert!(rpm_pos < init_pos);
         assert!(pb.contains("cluster_init_repo_access: none"));
@@ -424,8 +424,8 @@ mod tests {
 
         // 전제조건 play 는 RPM 설치보다 앞서야 한다 (satellite_install 이
         // drbd_install 을 meta 의존성으로 끌어오기 때문)
-        let prereq = pb.find("Pacemaker 관리 전제조건").expect("전제조건 play 없음");
-        let rpm = pb.find("LINSTOR RPM 로컬 설치").expect("RPM play 없음");
+        let prereq = pb.find("Prerequisites for Pacemaker management").expect("전제조건 play 없음");
+        let rpm = pb.find("Install the LINSTOR RPMs locally").expect("RPM play 없음");
         assert!(prereq < rpm, "전제조건 play 가 RPM 설치보다 앞에 와야 한다");
     }
 
@@ -435,7 +435,7 @@ mod tests {
         config.pacemaker_managed = false;
         let pb = generate_linstor_ansible_playbook(&config, "deploy", "~/.ssh/id_rsa");
 
-        assert!(!pb.contains("Pacemaker 관리 전제조건"));
+        assert!(!pb.contains("Prerequisites for Pacemaker management"));
         assert!(!pb.contains("drbd-selinux"));
         assert!(!pb.contains("sefcontext"));
         // LINSTOR 단독 운용이면 커널 자동 승격을 끄지 않는다
@@ -448,7 +448,7 @@ mod tests {
         config.resource_groups.clear();
         config.resources.clear();
         let pb = generate_linstor_ansible_playbook(&config, "deploy", "~/.ssh/id_rsa");
-        assert!(!pb.contains("리소스 그룹/리소스 프로비저닝"));
+        assert!(!pb.contains("Provision LINSTOR resource groups"));
     }
 
     #[test]

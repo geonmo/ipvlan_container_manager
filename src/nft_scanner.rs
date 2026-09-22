@@ -29,7 +29,7 @@ pub async fn ensure_and_scan(
 
     if !file_existed {
         if let Err(e) = std::fs::create_dir_all(temp_dir) {
-            return Err(anyhow::anyhow!("temp_dir 생성 실패: {}", e));
+            return Err(anyhow::anyhow!("failed to create temp_dir: {}", e));
         }
 
         let (hosts_block, become_val) = if let Some(p) = profile {
@@ -51,25 +51,25 @@ pub async fn ensure_and_scan(
         let playbook_path = format!("{}/setup_nftables.yml", temp_dir);
         let playbook_content = format!(
 r#"---
-- name: nftables ipvlan_l2 설정 초기화
+- name: Initialize the nftables ipvlan_l2 configuration
 {hosts_block}  become: {become_val}
   tasks:
-    - name: /etc/nftables 디렉토리 생성
+    - name: Create the /etc/nftables directory
       file:
         path: /etc/nftables
         state: directory
         mode: '0750'
 
-    - name: ipvlan_l2.nft 파일 생성 (없으면)
+    - name: Create ipvlan_l2.nft if it does not exist
       copy:
         dest: "{nft_file}"
         content: |
-          # nftables ipvlan L2 방화벽 규칙
-          # IPVLAN Container Manager에서 자동 관리됩니다
+          # nftables ipvlan L2 firewall rules
+          # Managed automatically by IPVLAN Container Manager
         mode: '0640'
         force: no
 
-    - name: /etc/sysconfig/nftables.conf에 include 추가
+    - name: Add the include line to /etc/sysconfig/nftables.conf
       lineinfile:
         path: /etc/sysconfig/nftables.conf
         line: 'include "{nft_file}"'
@@ -148,19 +148,19 @@ r#"---
                         services_updated: 0,
                         targets_updated: 0,
                         ansible_output,
-                        message: "Ansible 실행 실패 - 파일이 생성되지 않았을 수 있습니다".to_string(),
+                        message: "Ansible run failed - the file may not have been created".to_string(),
                     });
                 }
             }
             Err(e) => {
-                ansible_output = Some(format!("ansible-playbook 실행 오류: {}", e));
+                ansible_output = Some(format!("error running ansible-playbook: {}", e));
                 return Ok(NftScanResult {
                     file_existed: false,
                     groups_updated: 0,
                     services_updated: 0,
                     targets_updated: 0,
                     ansible_output,
-                    message: format!("Ansible 실행 실패: {}", e),
+                    message: format!("Ansible run failed: {}", e),
                 });
             }
         }
@@ -178,7 +178,7 @@ r#"---
                 services_updated: 0,
                 targets_updated: 0,
                 ansible_output,
-                message: format!("파일 읽기 실패 {}: {}", nft_file, e),
+                message: format!("failed to read file {}: {}", nft_file, e),
             });
         }
     };
@@ -222,7 +222,7 @@ r#"---
             let grp = NftSubnetGroup {
                 id:          0,
                 name:        name.clone(),
-                description: "자동 감지".to_string(),
+                description: "auto-detected".to_string(),
                 cidrs_v4:    cidrs_v4.clone(),
                 cidrs_v6:    cidrs_v6.clone(),
             };
@@ -253,8 +253,8 @@ r#"---
     }
 
     let msg = format!(
-        "스캔 완료 (파일 {}): 그룹 {}개, 서비스 {}개, 대상 {}개 업데이트",
-        if file_existed { "기존" } else { "신규 생성" },
+        "Scan complete ({} file): updated {} groups, {} services, {} targets",
+        if file_existed { "existing" } else { "newly created" },
         groups_updated, services_updated, targets_updated,
     );
 
@@ -643,7 +643,7 @@ fn parse_chain_rule(
         let svc = NftServiceDef {
             id:          0,
             name:        sn.clone(),
-            description: "자동 감지".to_string(),
+            description: "auto-detected".to_string(),
             tcp_ports:   if protocol == "tcp" { ports.clone() } else { Vec::new() },
             udp_ports:   if protocol == "udp" { ports.clone() } else { Vec::new() },
         };

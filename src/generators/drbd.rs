@@ -116,7 +116,7 @@ pub fn generate_res_file(resource: &DrbdResource) -> String {
     out.push_str("    }\n\n");
 
     // on <node> sections (node-id 포함)
-    out.push_str("    # 인벤토리 순서대로 node-id를 0, 1, 2... 순으로 부여합니다.\n");
+    out.push_str("    # node-id values are assigned 0, 1, 2 ... in inventory order.\n");
     for (idx, node) in resource.nodes.iter().enumerate() {
         let disk_path = node.effective_disk(&resource.resource_name);
         out.push_str(&format!("    on {} {{\n", node.hostname));
@@ -270,10 +270,10 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
 
     let mut out = String::new();
     out.push_str("---\n");
-    out.push_str(&format!("# DRBD 리소스 '{}' 배포 플레이북 (자동 생성)\n\n", res_name));
+    out.push_str(&format!("# Deployment playbook for DRBD resource '{}' (auto-generated)\n\n", res_name));
 
     // ── Play 1: DRBD 패키지 설치 (hosts: drbd) ─────────────────
-    out.push_str(&format!("- name: DRBD 패키지 설치\n"));
+    out.push_str(&format!("- name: Install DRBD packages\n"));
     out.push_str("  hosts: all\n");
     out.push_str("  become: true\n");
     out.push_str(&format!("  remote_user: {}\n", user));
@@ -288,59 +288,59 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
     out.push_str("      - drbd-selinux\n");
     out.push_str("  tasks:\n");
 
-    out.push_str("    - name: 1. ELRepo GPG 키 가져오기\n");
+    out.push_str("    - name: 1. Import the ELRepo GPG key\n");
     out.push_str("      ansible.builtin.rpm_key:\n");
     out.push_str("        state: present\n");
     out.push_str("        key: https://www.elrepo.org/RPM-GPG-KEY-elrepo.org\n\n");
 
-    out.push_str("    - name: 2. ELRepo 저장소 설치 (AlmaLinux 9용)\n");
+    out.push_str("    - name: 2. Install the ELRepo repository (AlmaLinux 9)\n");
     out.push_str("      ansible.builtin.dnf:\n");
     out.push_str("        name: https://www.elrepo.org/elrepo-release-9.el9.elrepo.noarch.rpm\n");
     out.push_str("        state: present\n");
     out.push_str("        disable_gpg_check: yes\n\n");
 
-    out.push_str("    - name: 3. dnf-plugin-versionlock 설치\n");
+    out.push_str("    - name: 3. Install dnf-plugin-versionlock\n");
     out.push_str("      ansible.builtin.dnf:\n");
     out.push_str("        name: python3-dnf-plugin-versionlock\n");
     out.push_str("        state: present\n\n");
 
-    out.push_str("    - name: 4. 커널 패키지 업데이트\n");
+    out.push_str("    - name: 4. Update kernel packages\n");
     out.push_str("      ansible.builtin.dnf:\n");
     out.push_str("        name: \"{{ kernel_packages }}\"\n");
     out.push_str("        state: latest\n");
     out.push_str("        enablerepo: baseos,appstream\n");
     out.push_str("      register: kernel_update_result\n\n");
 
-    out.push_str("    - name: 5. DRBD 관련 패키지 설치\n");
+    out.push_str("    - name: 5. Install the DRBD packages\n");
     out.push_str("      ansible.builtin.dnf:\n");
     out.push_str("        name: \"{{ drbd_packages }}\"\n");
     out.push_str("        state: latest\n");
     out.push_str("        enablerepo: elrepo\n\n");
 
-    out.push_str("    - name: 6. 설치된 커널 및 DRBD 모듈 버전 고정\n");
+    out.push_str("    - name: 6. Version-lock the installed kernel and DRBD modules\n");
     out.push_str("      ansible.builtin.command:\n");
     out.push_str("        cmd: \"dnf versionlock add {{ item }}\"\n");
     out.push_str("      loop: \"{{ kernel_packages + drbd_packages }}\"\n");
     out.push_str("      register: lock_result\n");
     out.push_str("      changed_when: \"'adding' in lock_result.stdout\"\n\n");
 
-    out.push_str("    - name: 7. 커널 업데이트 시에만 재부팅\n");
+    out.push_str("    - name: 7. Reboot only if the kernel was updated\n");
     out.push_str("      ansible.builtin.reboot:\n");
     out.push_str("        reboot_timeout: 1800\n");
     out.push_str("      when: kernel_update_result.changed\n\n");
 
-    out.push_str("    - name: 8. DRBD 커널 모듈 자동 로드 설정\n");
+    out.push_str("    - name: 8. Configure automatic DRBD kernel module loading\n");
     out.push_str("      ansible.builtin.copy:\n");
     out.push_str("        content: \"drbd\"\n");
     out.push_str("        dest: /etc/modules-load.d/drbd.conf\n");
     out.push_str("        mode: '0644'\n\n");
 
-    out.push_str("    - name: 9. DRBD 커널 모듈 즉시 로드\n");
+    out.push_str("    - name: 9. Load the DRBD kernel module now\n");
     out.push_str("      community.general.modprobe:\n");
     out.push_str("        name: drbd\n");
     out.push_str("        state: present\n\n");
 
-    out.push_str(&format!("    - name: 10. 방화벽 포트 허용 (DRBD {})\n", port_range));
+    out.push_str(&format!("    - name: 10. Open the firewall ports (DRBD {})\n", port_range));
     out.push_str("      ansible.posix.firewalld:\n");
     out.push_str("        zone: work\n");
     out.push_str(&format!("        port: \"{}\"\n", port_range));
@@ -352,9 +352,9 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
     // (핸들러가 없으면 피어 단절 시 promote가 op timeout까지 hang 됨)
     let needs_fence_peer_handler = resource.disk_options.fencing == "resource-only";
     if needs_fence_peer_handler {
-        out.push_str("    - name: 11. DRBD 전역 공통 설정(global_common.conf) 배포\n");
-        out.push_str("      # fencing resource-only 정책이 동작하려면 fence-peer 핸들러가 필요합니다.\n");
-        out.push_str("      # 핸들러가 없으면 피어 단절 시 promote가 op timeout까지 그대로 hang 됩니다.\n");
+        out.push_str("    - name: 11. Deploy the global DRBD settings (global_common.conf)\n");
+        out.push_str("      # The resource-only fencing policy needs a fence-peer handler.\n");
+        out.push_str("      # Without it, a promote hangs until the op timeout after a peer disconnect.\n");
         out.push_str("      ansible.builtin.copy:\n");
         out.push_str("        dest: /etc/drbd.d/global_common.conf\n");
         out.push_str("        content: |\n");
@@ -374,15 +374,15 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
 
     if needs_fence_peer_handler {
         out.push_str("    - name: Adjust DRBD config\n");
-        out.push_str("      # drbdadm adjust는 로컬 설정 파일과 커널 상태의 diff만 반영하는\n");
-        out.push_str("      # 멱등적 명령이라 변경이 없으면 no-op이며, 매 배포마다 재부팅 없이\n");
-        out.push_str("      # 안전하게 재실행할 수 있습니다.\n");
+        out.push_str("      # drbdadm adjust only applies the diff between the local config file\n");
+        out.push_str("      # and the kernel state, so it is a no-op when nothing changed and can\n");
+        out.push_str("      # be re-run safely on every deployment without a reboot.\n");
         out.push_str("      ansible.builtin.command: drbdadm adjust all\n");
         out.push_str("      changed_when: true\n\n");
     }
 
     // ── Play 2: LVM + .res 파일 배포 ──────────────────────────
-    out.push_str(&format!("- name: DRBD LVM 볼륨 및 리소스 설정\n"));
+    out.push_str(&format!("- name: Configure the DRBD LVM volumes and resource\n"));
     out.push_str("  hosts: all\n");
     out.push_str("  become: true\n");
     out.push_str(&format!("  remote_user: {}\n", user));
@@ -413,20 +413,20 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
     out.push_str("  tasks:\n");
 
     if has_lvm {
-        out.push_str("    - name: 1. LVM 논리 볼륨(LV) 생성\n");
+        out.push_str("    - name: 1. Create the LVM logical volumes\n");
         out.push_str("      community.general.lvol:\n");
         out.push_str("        vg: \"{{ item.vg }}\"\n");
         out.push_str("        lv: \"{{ item.lv_name }}\"\n");
         out.push_str("        size: \"{{ item.size }}\"\n");
         out.push_str("      loop: \"{{ drbd_resources }}\"\n");
-        out.push_str("      # 각 노드는 자기 몫의 VG에만 LV를 만든다 —\n");
-        out.push_str("      # 가드가 없으면 다른 노드의 VG 이름으로 lvol이 실패한다.\n");
+        out.push_str("      # Each node only creates an LV in its own VG --\n");
+        out.push_str("      # without this guard, lvol fails on another node's VG name.\n");
         out.push_str("      when: item.host == inventory_hostname\n");
         out.push_str("      loop_control:\n");
         out.push_str("        label: \"{{ item.host }}:{{ item.vg }}/{{ item.lv_name }}\"\n\n");
     }
 
-    out.push_str("    - name: DRBD 리소스 설정 파일(.res) 배포\n");
+    out.push_str("    - name: Deploy the DRBD resource file (.res)\n");
     out.push_str("      ansible.builtin.copy:\n");
     out.push_str(&format!("        dest: /etc/drbd.d/{}.res\n", res_name));
     out.push_str("        content: |\n");
@@ -435,28 +435,28 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
     }
     out.push_str("        mode: '0644'\n\n");
 
-    out.push_str("    - name: 장치 활성화 상태 확인 (drbdadm status)\n");
+    out.push_str("    - name: Check whether the device is up (drbdadm status)\n");
     out.push_str("      ansible.builtin.command:\n");
     out.push_str(&format!("        cmd: \"drbdadm status {}\"\n", res_name));
     out.push_str("      register: check_status\n");
     out.push_str("      failed_when: false\n");
     out.push_str("      changed_when: false\n\n");
 
-    out.push_str("    - name: 메타데이터 존재 여부 확인 (drbdadm dump-md)\n");
+    out.push_str("    - name: Check whether metadata exists (drbdadm dump-md)\n");
     out.push_str("      ansible.builtin.command:\n");
     out.push_str(&format!("        cmd: \"drbdadm dump-md {}\"\n", res_name));
     out.push_str("      register: check_md\n");
     out.push_str("      failed_when: false\n");
     out.push_str("      changed_when: false\n\n");
 
-    out.push_str("    - name: DRBD 메타데이터 생성 (미존재 시에만 실행)\n");
+    out.push_str("    - name: Create the DRBD metadata (only when missing)\n");
     out.push_str("      ansible.builtin.command:\n");
     out.push_str(&format!("        cmd: \"drbdadm create-md {}\"\n", res_name));
     out.push_str("      when:\n");
     out.push_str("        - check_md.rc != 0\n");
     out.push_str("        - check_status.rc != 0\n\n");
 
-    out.push_str("    - name: DRBD 리소스 Up (활성화)\n");
+    out.push_str("    - name: Bring the DRBD resource up\n");
     out.push_str("      ansible.builtin.command:\n");
     out.push_str(&format!("        cmd: \"drbdadm up {}\"\n", res_name));
     out.push_str("      register: up_result\n");
@@ -464,7 +464,7 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
     out.push_str("      failed_when: \"up_result.rc != 0 and 'already' not in up_result.stderr\"\n\n");
 
     out.push_str(&format!(
-        "    - name: 첫 번째 노드({})에서만 초기 Primary 강제 지정\n", first_node
+        "    - name: Force the initial Primary on the first node ({}) only\n", first_node
     ));
     out.push_str("      ansible.builtin.command:\n");
     out.push_str(&format!("        cmd: \"drbdadm primary --force {}\"\n", res_name));
@@ -475,7 +475,7 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
     out.push_str("        - primary_result.rc != 0\n");
     out.push_str("        - \"'already' not in primary_result.stderr\"\n\n");
 
-    out.push_str("    - name: 동기화 상태 확인\n");
+    out.push_str("    - name: Check the synchronization state\n");
     out.push_str("      ansible.builtin.command:\n");
     out.push_str(&format!("        cmd: \"drbdadm status {}\"\n", res_name));
     out.push_str("      changed_when: false\n");
@@ -492,21 +492,21 @@ pub fn generate_ansible_playbook(resource: &DrbdResource, inventory: &AnsibleInv
 
 pub fn generate_drbd_init_commands(resource: &DrbdResource) -> Vec<String> {
     let mut cmds = Vec::new();
-    cmds.push("# 모든 노드에서 실행: DRBD 메타데이터 초기화".to_string());
+    cmds.push("# Run on every node: initialize the DRBD metadata".to_string());
     for node in &resource.nodes {
         cmds.push(format!(
             "# [{}] drbdadm create-md {}",
             node.hostname, resource.resource_name
         ));
     }
-    cmds.push("# 모든 노드에서 실행: DRBD 서비스 시작".to_string());
+    cmds.push("# Run on every node: start the DRBD service".to_string());
     for node in &resource.nodes {
         cmds.push(format!(
             "# [{}] systemctl enable --now drbd",
             node.hostname
         ));
     }
-    cmds.push("# 첫 번째 노드에서 초기 동기화 강제 시작".to_string());
+    cmds.push("# Force the initial sync from the first node".to_string());
     if let Some(first) = resource.nodes.first() {
         cmds.push(format!(
             "# [{}] drbdadm -- --overwrite-data-of-peer primary {}",

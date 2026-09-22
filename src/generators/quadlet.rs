@@ -361,7 +361,7 @@ pub fn generate_all_units(config: &QuadletConfig) -> Vec<(String, String)> {
 /// podman 컨테이너 정보에서 QuadletContainer 자동 생성
 pub fn podman_inspect_to_quadlet(inspect_json: &str) -> anyhow::Result<Vec<QuadletContainer>> {
     let data: serde_json::Value = serde_json::from_str(inspect_json)?;
-    let arr = data.as_array().ok_or_else(|| anyhow::anyhow!("JSON 배열이 아닙니다"))?;
+    let arr = data.as_array().ok_or_else(|| anyhow::anyhow!("not a JSON array"))?;
 
     let mut containers = Vec::new();
     for item in arr {

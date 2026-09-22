@@ -421,9 +421,9 @@ pub(crate) fn generate_pacemaker_ansible_playbook(
 
     let mut out = String::new();
     out.push_str("---\n");
-    out.push_str("# 실행 전 확인 (PLAN.md A.8): `ansible-inventory -i <inventory> --graph`로\n");
-    out.push_str(&format!("# 아래 hosts 값(\"{}\")이 예상한 노드 수만큼 resolve되는지 확인하세요.\n", hosts));
-    out.push_str("# 그룹이 존재하지 않으면 ansible은 에러 없이 대상 0개로 조용히 끝납니다.\n");
+    out.push_str("# Before running (PLAN.md A.8): check with `ansible-inventory -i <inventory> --graph`\n");
+    out.push_str(&format!("# that the hosts value below (\"{}\") resolves to the expected number of nodes.\n", hosts));
+    out.push_str("# If the group does not exist, ansible silently finishes with zero hosts and no error.\n");
 
     let mut plays: Vec<String> = Vec::new();
     if let Some(play) = build_bootstrap_play(config, &hosts, &user, &key) {
@@ -447,7 +447,7 @@ fn build_bootstrap_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     }
 
     let mut out = String::new();
-    out.push_str("- name: Pacemaker 클러스터 부트스트랩 (설치 ~ cluster setup)\n");
+    out.push_str("- name: Bootstrap the Pacemaker cluster (install through cluster setup)\n");
     out.push_str(&format!("  hosts: {}\n", hosts));
     out.push_str(&format!("  remote_user: {}\n", user));
     out.push_str("  become: yes\n");
@@ -455,24 +455,24 @@ fn build_bootstrap_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     out.push_str(&format!("    ansible_ssh_private_key_file: {}\n", key));
     out.push_str("  vars_prompt:\n");
     out.push_str("    - name: hacluster_password\n");
-    out.push_str("      prompt: \"hacluster 계정 비밀번호 (신규 클러스터 생성 시에만 사용, Vault 사용 시 이 프롬프트 대신 vars로 전달 가능)\"\n");
+    out.push_str("      prompt: \"Password for the hacluster account (only used when creating a new cluster; with Vault you can pass it as a var instead of this prompt)\"\n");
     out.push_str("      private: yes\n");
     out.push_str("  tasks:\n");
 
     // 1. 저장소 활성화
-    out.push_str("    - name: epel-release 설치\n");
+    out.push_str("    - name: Install epel-release\n");
     out.push_str("      ansible.builtin.dnf:\n");
     out.push_str("        name: epel-release\n");
     out.push_str("        state: present\n\n");
-    out.push_str("    - name: crb 저장소 활성화\n");
+    out.push_str("    - name: Enable the crb repository\n");
     out.push_str("      ansible.builtin.command: dnf config-manager --set-enabled crb\n");
     out.push_str("      changed_when: true\n\n");
-    out.push_str("    - name: highavailability 저장소 활성화\n");
+    out.push_str("    - name: Enable the highavailability repository\n");
     out.push_str("      ansible.builtin.command: dnf config-manager --set-enabled highavailability\n");
     out.push_str("      changed_when: true\n\n");
 
     // 2. 패키지 설치
-    out.push_str("    - name: pacemaker/corosync/pcs/fence-agents-all 설치\n");
+    out.push_str("    - name: Install pacemaker/corosync/pcs/fence-agents-all\n");
     out.push_str("      ansible.builtin.dnf:\n");
     out.push_str("        name:\n");
     out.push_str("          - pacemaker\n");
@@ -482,11 +482,11 @@ fn build_bootstrap_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     out.push_str("        state: present\n\n");
 
     // A.5: versionlock — "유지보수 시에만"이 아니라 부트스트랩 직후 즉시.
-    out.push_str("    - name: dnf-plugin-versionlock 설치\n");
+    out.push_str("    - name: Install dnf-plugin-versionlock\n");
     out.push_str("      ansible.builtin.dnf:\n");
     out.push_str("        name: python3-dnf-plugin-versionlock\n");
     out.push_str("        state: present\n\n");
-    out.push_str("    - name: pacemaker/corosync/pcs versionlock 설정\n");
+    out.push_str("    - name: Version-lock pacemaker/corosync/pcs\n");
     out.push_str("      ansible.builtin.command: \"dnf versionlock add {{ item }}\"\n");
     out.push_str("      loop:\n");
     out.push_str("        - pacemaker\n");
@@ -496,14 +496,14 @@ fn build_bootstrap_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     out.push_str("      changed_when: \"'adding' in lock_result.stdout\"\n\n");
 
     // A.9: 방화벽
-    out.push_str("    - name: corosync 포트 허용 (5404-5405/udp)\n");
+    out.push_str("    - name: Open the corosync ports (5404-5405/udp)\n");
     out.push_str("      ansible.posix.firewalld:\n");
     out.push_str("        zone: work\n");
     out.push_str("        port: 5404-5405/udp\n");
     out.push_str("        permanent: yes\n");
     out.push_str("        immediate: yes\n");
     out.push_str("        state: enabled\n\n");
-    out.push_str("    - name: pcsd 포트 허용 (2224/tcp)\n");
+    out.push_str("    - name: Open the pcsd port (2224/tcp)\n");
     out.push_str("      ansible.posix.firewalld:\n");
     out.push_str("        zone: work\n");
     out.push_str("        port: 2224/tcp\n");
@@ -512,18 +512,18 @@ fn build_bootstrap_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     out.push_str("        state: enabled\n\n");
 
     // 3. pcsd
-    out.push_str("    - name: pcsd 서비스 시작 및 활성화\n");
+    out.push_str("    - name: Start and enable the pcsd service\n");
     out.push_str("      ansible.builtin.systemd:\n");
     out.push_str("        name: pcsd\n");
     out.push_str("        state: started\n");
     out.push_str("        enabled: yes\n\n");
 
     // 4. hacluster 계정 (no_log 필수 — 두 태스크 모두)
-    out.push_str("    - name: hacluster 비밀번호 해시 생성\n");
+    out.push_str("    - name: Generate the hacluster password hash\n");
     out.push_str("      ansible.builtin.set_fact:\n");
     out.push_str("        hacluster_password_hash: \"{{ hacluster_password | password_hash('sha512') }}\"\n");
     out.push_str("      no_log: true\n\n");
-    out.push_str("    - name: hacluster 계정 생성\n");
+    out.push_str("    - name: Create the hacluster account\n");
     out.push_str("      ansible.builtin.user:\n");
     out.push_str("        name: hacluster\n");
     out.push_str("        comment: \"pacemaker user\"\n");
@@ -535,7 +535,7 @@ fn build_bootstrap_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     out.push_str("      no_log: true\n\n");
 
     // 5. 멱등성 체크 — 대표 노드에서만
-    out.push_str("    - name: 클러스터 존재 여부 확인\n");
+    out.push_str("    - name: Check whether a cluster already exists\n");
     out.push_str("      ansible.builtin.command: pcs status\n");
     out.push_str("      run_once: true\n");
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
@@ -544,14 +544,14 @@ fn build_bootstrap_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     out.push_str("      changed_when: false\n\n");
 
     // 6. 클러스터가 아직 없을 때만 — 전부 대표 노드에서 실행
-    out.push_str("    - name: 노드 인증 (클러스터 미존재 시)\n");
+    out.push_str("    - name: Authenticate the nodes (only if no cluster exists)\n");
     out.push_str("      ansible.builtin.command: \"pcs host auth {{ ansible_play_batch | join(' ') }} -u hacluster -p {{ hacluster_password }}\"\n");
     out.push_str("      run_once: true\n");
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
     out.push_str("      when: pcs_status.rc != 0\n");
     out.push_str("      no_log: true\n\n");
 
-    out.push_str("    - name: 클러스터 생성 (클러스터 미존재 시)\n");
+    out.push_str("    - name: Create the cluster (only if no cluster exists)\n");
     out.push_str(&format!(
         "      ansible.builtin.command: \"pcs cluster setup {} {{{{ ansible_play_batch | join(' ') }}}}\"\n",
         yaml_dquote_inner(&config.cluster.cluster_name)
@@ -560,20 +560,20 @@ fn build_bootstrap_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
     out.push_str("      when: pcs_status.rc != 0\n\n");
 
-    out.push_str("    - name: 클러스터 시작 (클러스터 미존재 시)\n");
+    out.push_str("    - name: Start the cluster (only if no cluster exists)\n");
     out.push_str("      ansible.builtin.command: pcs cluster start --all\n");
     out.push_str("      run_once: true\n");
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
     out.push_str("      when: pcs_status.rc != 0\n\n");
 
-    out.push_str("    - name: 클러스터 부팅시 활성화 (클러스터 미존재 시)\n");
+    out.push_str("    - name: Enable the cluster at boot (only if no cluster exists)\n");
     out.push_str("      ansible.builtin.command: pcs cluster enable --all\n");
     out.push_str("      run_once: true\n");
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
     out.push_str("      when: pcs_status.rc != 0\n\n");
 
     // 7. 클러스터 속성 (매번 재실행해도 안전 — pcs property set은 이미 멱등)
-    out.push_str("    - name: no-quorum-policy 설정\n");
+    out.push_str("    - name: Set no-quorum-policy\n");
     out.push_str(&format!(
         "      ansible.builtin.command: \"pcs property set no-quorum-policy={}\"\n",
         yaml_dquote_inner(&config.cluster.no_quorum_policy)
@@ -582,7 +582,7 @@ fn build_bootstrap_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
     out.push_str("      changed_when: true\n\n");
 
-    out.push_str("    - name: stonith-enabled 설정\n");
+    out.push_str("    - name: Set stonith-enabled\n");
     out.push_str(&format!(
         "      ansible.builtin.command: \"pcs property set stonith-enabled={}\"\n",
         config.cluster.stonith_enabled
@@ -604,7 +604,7 @@ fn build_stonith_play(config: &PacemakerConfig, hosts: &str, user: &str, key: &s
     }
 
     let mut out = String::new();
-    out.push_str("- name: STONITH(fencing) 리소스 등록\n");
+    out.push_str("- name: Register the STONITH (fencing) resources\n");
     out.push_str(&format!("  hosts: {}\n", hosts));
     out.push_str(&format!("  remote_user: {}\n", user));
     out.push_str("  become: yes\n");
@@ -612,7 +612,7 @@ fn build_stonith_play(config: &PacemakerConfig, hosts: &str, user: &str, key: &s
     out.push_str(&format!("    ansible_ssh_private_key_file: {}\n", key));
     out.push_str("  tasks:\n");
 
-    out.push_str("    - name: 기존 STONITH 리소스 조회\n");
+    out.push_str("    - name: Capture the existing STONITH resources\n");
     out.push_str("      ansible.builtin.command: pcs stonith status\n");
     out.push_str("      run_once: true\n");
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
@@ -622,7 +622,7 @@ fn build_stonith_play(config: &PacemakerConfig, hosts: &str, user: &str, key: &s
 
     for dev in &config.stonith_devices {
         let id = format!("stonith-ipmi-{}", sanitize_stonith_id(&dev.node));
-        out.push_str(&format!("    - name: STONITH 생성 ({})\n", dev.node));
+        out.push_str(&format!("    - name: Create STONITH device ({})\n", dev.node));
         // command 가 아니라 shell 이어야 위의 작은따옴표 인용이 해석된다.
         out.push_str("      ansible.builtin.shell: >\n");
         // ansible.builtin.command 의 `>` 폴드 스칼라는 셸을 거치지 않지만
@@ -676,7 +676,7 @@ fn build_stonith_play(config: &PacemakerConfig, hosts: &str, user: &str, key: &s
 /// (PLAN.md 검증/테스트 계획 참고).
 fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: &str) -> String {
     let mut out = String::new();
-    out.push_str("- name: Pacemaker 리소스 및 제약조건 구성\n");
+    out.push_str("- name: Configure the Pacemaker resources and constraints\n");
     out.push_str(&format!("  hosts: {}\n", hosts));
     out.push_str(&format!("  remote_user: {}\n", user));
     out.push_str("  become: yes\n");
@@ -684,14 +684,14 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     out.push_str(&format!("    ansible_ssh_private_key_file: {}\n", key));
     out.push_str("  tasks:\n");
 
-    out.push_str("    - name: 기존 pcs resource 구성 조회\n");
+    out.push_str("    - name: Capture the existing pcs resource configuration\n");
     out.push_str("      ansible.builtin.command: pcs resource config\n");
     out.push_str("      run_once: true\n");
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
     out.push_str("      register: existing_resource_config\n");
     out.push_str("      changed_when: false\n\n");
 
-    out.push_str("    - name: 기존 pcs constraint 구성 조회\n");
+    out.push_str("    - name: Capture the existing pcs constraint configuration\n");
     out.push_str("      ansible.builtin.command: pcs constraint --full\n");
     out.push_str("      run_once: true\n");
     out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
@@ -704,7 +704,7 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     for drbd in &config.drbd_resources {
         push_guarded_resource_task(
             &mut out,
-            &format!("DRBD Promotable Clone 생성 ({})", drbd.resource_name),
+            &format!("Create DRBD promotable clone ({})", drbd.resource_name),
             &generate_drbd_resource_cmds(drbd, node_count),
             &drbd.resource_name,
         );
@@ -713,7 +713,7 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     for fs in &config.fs_resources {
         push_guarded_resource_task(
             &mut out,
-            &format!("Filesystem 리소스 생성 ({})", fs.resource_name),
+            &format!("Create Filesystem resource ({})", fs.resource_name),
             &generate_fs_resource_cmds(fs),
             &fs.resource_name,
         );
@@ -722,7 +722,7 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
     for svc in &config.systemd_resources {
         push_guarded_resource_task(
             &mut out,
-            &format!("Systemd 리소스 생성 ({})", svc.resource_name),
+            &format!("Create systemd resource ({})", svc.resource_name),
             &generate_systemd_resource_cmds(svc),
             &svc.resource_name,
         );
@@ -730,7 +730,7 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
 
     // 리소스 그룹: pcs resource group add는 이미 멱등이라 가드 불필요
     for grp in &config.resource_groups {
-        out.push_str(&format!("    - name: 리소스 그룹 구성 ({})\n", grp.group_name));
+        out.push_str(&format!("    - name: Configure resource group ({})\n", grp.group_name));
         out.push_str(&format!("      ansible.builtin.command: {}\n", yaml_dquote(&generate_resource_group_cmd(grp))));
         out.push_str("      run_once: true\n");
         out.push_str("      delegate_to: \"{{ ansible_play_batch | first }}\"\n");
@@ -747,7 +747,7 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
         );
         push_guarded_constraint_task(
             &mut out,
-            &format!("Order 제약조건 ({} → {})", ord.first, ord.then),
+            &format!("Order constraint ({} -> {})", ord.first, ord.then),
             &generate_order_constraint(ord),
             &pattern,
         );
@@ -778,7 +778,7 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
         };
         push_guarded_constraint_task(
             &mut out,
-            &format!("Colocation 제약조건 ({} with {})", col.rsc, col.with_rsc),
+            &format!("Colocation constraint ({} with {})", col.rsc, col.with_rsc),
             &generate_colocation_constraint(col),
             &pattern,
         );
@@ -792,7 +792,7 @@ fn build_resources_play(config: &PacemakerConfig, hosts: &str, user: &str, key: 
         );
         push_guarded_constraint_task(
             &mut out,
-            &format!("Location 제약조건 ({} → {})", loc.rsc, loc.node),
+            &format!("Location constraint ({} -> {})", loc.rsc, loc.node),
             &generate_location_constraint(loc),
             &pattern,
         );
@@ -889,7 +889,7 @@ async fn pcsd_fetch_cluster_info(url: &str) -> anyhow::Result<serde_json::Value>
 
     if !resp.status().is_success() {
         return Err(anyhow::anyhow!(
-            "클러스터 상태 조회 실패: HTTP {}",
+            "Failed to query the cluster status: HTTP {}",
             resp.status()
         ));
     }
@@ -898,7 +898,7 @@ async fn pcsd_fetch_cluster_info(url: &str) -> anyhow::Result<serde_json::Value>
 
     if status.get("notauthorized").and_then(|v| v.as_str()) == Some("true") {
         return Err(anyhow::anyhow!(
-            "pcsd 인증 실패: known-hosts 토큰이 유효하지 않습니다"
+            "pcsd authentication failed: the known-hosts token is not valid"
         ));
     }
 
@@ -934,13 +934,13 @@ async fn pcsd_fetch_cluster_info(url: &str) -> anyhow::Result<serde_json::Value>
 fn pcsd_read_node_token(host: &str) -> anyhow::Result<String> {
     let path = "/var/lib/pcsd/known-hosts";
     let content = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("{} 읽기 실패: {}.\n클러스터 노드에서 실행해야 합니다.", path, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}.\nThis must run on a cluster node.", path, e))?;
 
     let json: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| anyhow::anyhow!("{} 파싱 실패: {}", path, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", path, e))?;
 
     let known = json.get("known_hosts")
-        .ok_or_else(|| anyhow::anyhow!("known_hosts 키 없음"))?;
+        .ok_or_else(|| anyhow::anyhow!("no known_hosts key"))?;
 
     let entry = known.get(host)
         .or_else(|| known.as_object().and_then(|m| m.values().next()));
@@ -949,7 +949,7 @@ fn pcsd_read_node_token(host: &str) -> anyhow::Result<String> {
         .and_then(|e| e.get("token"))
         .and_then(|t| t.as_str())
         .map(|t| t.to_string())
-        .ok_or_else(|| anyhow::anyhow!("호스트 '{}' 의 토큰을 찾을 수 없습니다", host))
+        .ok_or_else(|| anyhow::anyhow!("no token found for host '{}'", host))
 }
 
 #[cfg(test)]
@@ -993,7 +993,7 @@ mod tests {
         let form = sample_form();
         let config = PacemakerConfig::default(); // nodes 비어 있음
         let playbook = generate_pacemaker_ansible_playbook(&form, &config);
-        assert!(!playbook.contains("클러스터 부트스트랩"));
+        assert!(!playbook.contains("Bootstrap the Pacemaker cluster"));
     }
 
     #[test]
@@ -1002,7 +1002,7 @@ mod tests {
         let config = config_with_nodes(3);
         let playbook = generate_pacemaker_ansible_playbook(&form, &config);
 
-        assert!(playbook.contains("클러스터 부트스트랩"));
+        assert!(playbook.contains("Bootstrap the Pacemaker cluster"));
         assert!(playbook.contains("dnf config-manager --set-enabled crb"));
         assert!(playbook.contains("dnf config-manager --set-enabled highavailability"));
         assert!(playbook.contains("dnf versionlock add"));
@@ -1021,7 +1021,7 @@ mod tests {
         let form = sample_form();
         let config = config_with_nodes(3);
         let playbook = generate_pacemaker_ansible_playbook(&form, &config);
-        assert!(!playbook.contains("STONITH(fencing) 리소스 등록"));
+        assert!(!playbook.contains("Register the STONITH (fencing) resources"));
     }
 
     #[test]

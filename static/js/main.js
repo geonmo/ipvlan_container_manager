@@ -190,7 +190,7 @@ async function loadProfileSelector(selectId, onChange) {
   if (!sel) return;
   try {
     const profiles = await fetch('/api/ansible-profiles').then(r => r.json());
-    sel.innerHTML = '<option value="">-- 프로파일 선택 --</option>';
+    sel.innerHTML = '<option value="">-- select profile --</option>';
     profiles.forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.name;
@@ -206,7 +206,7 @@ async function loadProfileSelector(selectId, onChange) {
       });
     }
   } catch (e) {
-    console.warn('프로파일 로드 실패:', e);
+    console.warn('Failed to load profiles:', e);
   }
 }
 
