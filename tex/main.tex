@@ -23,14 +23,14 @@
   Small scientific computing sites run a handful of stateful grid
   services on a handful of machines, administered by one or two people
   with other duties, and need high availability without the operational
-  overhead of a general-purpose orchestrator. The design follows three
+  overhead of a general-purpose orchestrator. The design follows two
   constraints: a small team favors the availability layer the OS vendor
   supports directly, so Pacemaker and Corosync replace a separate
-  control plane; containerised services favor Podman Quadlet, which
+  control plane, and containerised services favor Podman Quadlet, which
   turns container definitions into systemd units Pacemaker manages
-  natively; and the absence of external shared storage makes DRBD
-  replication between the cluster nodes the mechanism by which a service
-  finds its configuration and state on whichever node runs it. The
+  natively. With no external shared storage, DRBD replication between
+  the cluster nodes is how a service finds its configuration and state
+  on whichever node runs it. The
   central difficulty is the chain of Pacemaker resource, operation and
   constraint definitions binding DRBD promotion to container start,
   since its failure modes are silent: several configurations are
@@ -65,7 +65,7 @@ problem for a larger one, while managing containers by hand is
 error-prone and has no central place for the availability logic to
 live.
 
-\subsection{Three constraints and the choices they force}
+\subsection{Two constraints and the choices they force}
 \label{sec:choices}
 
 \paragraph{A small team implies a vendor-supported availability layer.}
@@ -87,26 +87,27 @@ turns declarative unit files into systemd services at generator time,
 and Pacemaker manages systemd units natively -- no container-specific
 resource agent, daemon or second lifecycle manager required.
 
-\paragraph{No external shared storage implies replication between the
-nodes themselves.}
-A classical Pacemaker service assumes the failing-over data is reachable
-from every node, typically an NFS server or a SAN -- infrastructure our
-target sites lack, and adding it would just create a new single point of
-failure. What these services carry across a failover is a small,
-write-sensitive working set (a configuration tree, a job spool, cached
-accounting records), not bulk data. DRBD~\cite{drbd9} replicates that
-synchronously between the nodes and exposes a single virtual block
-device, so the service finds an identical configuration and state
+\subsection{Two characteristics of the resulting system}
+
+\paragraph{No external shared storage: replication between the nodes
+themselves.} The system carries no NFS server or SAN: adding one would
+just introduce a new single point of failure to be made highly available
+in turn. What a failing-over service needs is not bulk data but a small,
+write-sensitive working set -- a configuration tree, a job spool, cached
+accounting records -- and DRBD~\cite{drbd9} replicates that synchronously
+between the cluster nodes themselves, exposing a single virtual block
+device so the service finds an identical configuration and state
 directory wherever it runs, with no storage appliance involved.
 
-A fourth characteristic shapes networking rather than availability:
-data-intensive workloads are sensitive to container-networking overhead,
-since a bridge-and-NAT path or VXLAN overlay adds per-packet work and an
-address space invisible outside the host. The in-kernel IPVLAN
-driver~\cite{ipvlan} in L2 mode instead attaches a container directly to
-a physical NIC with an address on the physical subnet -- an ordinary LAN
-host to clients and firewalls alike, keeping that address across a
-restart on another node.
+\paragraph{IPVLAN attachment: simpler to operate, not only faster.}
+Containers attach directly to a physical NIC via the in-kernel IPVLAN
+driver~\cite{ipvlan} in L2 mode, holding an address on the physical
+subnet rather than the per-packet overhead and host-invisible address
+space of a bridge-and-NAT path or VXLAN overlay. The performance case is
+real, but for a minimally-staffed site the bigger effect is operational:
+the container is an ordinary LAN host to clients, firewalls and
+monitoring alike, with no separate address space or NAT rules to reason
+about, and it keeps that address across a restart on another node.
 
 \subsection{The remaining problem, and our contribution}
 
