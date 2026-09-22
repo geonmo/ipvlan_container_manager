@@ -14,10 +14,7 @@
        generating verified Pacemaker configurations for
        minimally-staffed scientific computing sites}
 %
-%% TODO author block: confirm spelling, order and any co-authors.
-\author{\firstname{Geonmo} \lastname{Ryu}\inst{1}\fnsep\thanks{\email{geonmo@kisti.re.kr}}
-        % \and \firstname{Second} \lastname{Author}\inst{1}
-}
+\author{\firstname{Geonmo} \lastname{Ryu}\inst{1}\fnsep\thanks{\email{geonmo@kisti.re.kr}}}
 
 \institute{Korea Institute of Science and Technology Information (KISTI),
            Daejeon, Republic of Korea}
@@ -602,13 +599,47 @@ containers started. The constraint chain of Sect.~\ref{sec:promote} was
 necessary and sufficient for this, and the failures described there were
 all encountered on the way to it.
 
-%% TODO (author): insert the failover timing here from the production
-%% logs -- wall-clock time from node loss to service ready, and the
-%% dominant contribution (typically the promote timeout or the
-%% filesystem check). A sentence of the form "In production, relocation
-%% of <service> completed in X s, of which Y s was ..." is enough.
-%% No network throughput measurement is needed: that IPVLAN is closer
-%% to native than a bridge or VXLAN path is established knowledge.
+We can quantify this from \texttt{pacemaker.log} on service01, retained
+without gaps since 2026-02-12. Before the fence-peer handler was deployed
+(Sect.~\ref{sec:promote}, commit \texttt{df0c377}, applied 2026-07-23
+17:06 KST), every relocation recorded in that window failed outright:
+with the peer unreachable, promotion blocked for the full operation
+timeout (90\,s for demote, 120\,s for promote) and was then reported as a
+resource failure rather than completing -- the failure mode described in
+Sect.~\ref{sec:promote}. After the fix, four administrator-triggered
+relocations (\texttt{pcs resource move}) of the production services
+completed as shown in Table~\ref{tab:failover}: HTCondor-CE (2 DRBD
+volumes, 2 filesystems, 1 systemd resource) service01$\to$service02 in
+7.8\,s; site-BDII/APEL, whose accounting-database volume follows the
+site-BDII volume under the multi-volume colocation of
+Sect.~\ref{sec:promote} (2 DRBD volumes, 2 filesystems, 4 systemd
+resources) service03$\to$service01 in 6.9\,s and, in the reverse
+direction three days later, in 6.8\,s; and dCache (2 DRBD volumes, 2
+filesystems, 13 systemd-managed containers) service03$\to$service01 in
+1\,min\,55\,s, excluding an external monitoring gate unrelated to
+Pacemaker. DRBD promotion itself completed in the same single-digit-second
+range in all four cases; dCache's outlier duration is accounted for by
+its thirteen containers starting in the sequence the group resource
+imposes, not by a slower promotion or filesystem check. The handler fix
+therefore did not make relocation faster: it made it succeed. These
+figures are for administrator-initiated moves rather than an unplanned
+node loss; measuring the latter under the fixed configuration remains
+future work (Sect.~\ref{sec:discussion}).
+
+\begin{table}[h]
+\centering
+\caption{Resource composition and relocation time for
+administrator-triggered moves of the production services, measured after
+the fence-peer handler fix of Sect.~\ref{sec:promote}.}
+\label{tab:failover}
+\begin{tabular}{lccc}
+\hline
+Service & DRBD vols. & Resources & Relocation \\\hline
+HTCondor-CE     & 2 & 5  & 7.8\,s \\
+site-BDII/APEL  & 2 & 8  & 6.9\,s / 6.8\,s \\
+dCache          & 2 & 17 & 1\,min\,55\,s \\\hline
+\end{tabular}
+\end{table}
 
 Because IPVLAN places containers on the physical subnet, access control
 cannot be delegated to a NAT boundary. The tool generates an nftables
@@ -677,9 +708,25 @@ containers and described declaratively, the unit of deployment is
 already the unit a container orchestrator would schedule; what is
 specific to this stack is the availability and storage layer, not the
 workload definition. We consider that claim provisional until
-demonstrated rather than argued, and it -- together with quantitative
-failover and networking measurements, and divergence reporting between
+demonstrated rather than argued, and it -- together with failover
+measurements under an actual unplanned node loss, as opposed to the
+administrator-initiated relocations reported in Sect.~\ref{sec:deployment},
+quantitative networking measurements, and divergence reporting between
 generated and live configuration -- is the direction of future work.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section*{Declaration on the use of generative AI}
+
+During preparation of this manuscript the author used Claude Code
+(Anthropic), an AI coding and writing assistant, across several Claude
+model versions including Claude Sonnet 5, to assist with LaTeX
+formatting, with editing prose for language and clarity, and with
+organising the log- and \texttt{pcs}-derived measurements reported in
+Sect.~\ref{sec:deployment} from data the author supplied. All
+AI-assisted content, including the measurements and their sourcing, was
+reviewed and verified by the author, who takes full responsibility for
+the content of this publication. The tool is not an author and is not
+cited as a source.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \begin{thebibliography}{99}
@@ -744,11 +791,10 @@ D.~Thain, T.~Tannenbaum, M.~Livny, Concurrency and Computation: Practice
 and Experience \textbf{17}, 323--356 (2005)
 
 \bibitem{apel}
-M.~Jiang \textit{et al.}, \textit{An APEL Tool Based CPU Usage
-Accounting Infrastructure for Large Scale Computing Grids}, in Data
-Driven e-Science (Springer, New York, 2011) pp.~175--186
-%% TODO: verify the page range and volume details of this APEL
-%% reference against the published version before submission.
+M.~Jiang, C.~Del Cano Novales, G.~Mathieu, J.~Casson, W.~Rogers,
+J.~Gordon, \textit{An APEL Tool Based CPU Usage Accounting
+Infrastructure for Large Scale Computing Grids}, in Data Driven
+e-Science (Springer, New York, 2011) pp.~175--186
 
 \end{thebibliography}
 
