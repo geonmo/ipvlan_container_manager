@@ -1,111 +1,112 @@
 {% extends "base.html" %}
-{% block title %}LINSTOR 배포 - IPVLAN Container Manager{% endblock %}
+{% block title %}LINSTOR Deployment - IPVLAN Container Manager{% endblock %}
 {% block nav_linstor %}active{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
   <div class="col-lg-10">
-    <h2 class="fw-bold mb-1"><i class="bi bi-hdd-stack-fill"></i> LINSTOR 배포 <span class="badge bg-warning text-dark">실험적</span></h2>
+    <h2 class="fw-bold mb-1"><i class="bi bi-hdd-stack-fill"></i> LINSTOR Deployment <span class="badge bg-warning text-dark">experimental</span></h2>
     <p class="text-muted mb-2">
-      LINBIT 공식 Ansible 컬렉션(<code>linbit.linstor</code>)을 이용해 LINSTOR 클러스터를
-      설치/초기화하고, 그 위에 DRBD 리소스를 프로비저닝하는 인벤토리 + 플레이북을 생성합니다.
-      이 앱이 <code>linstor</code> CLI 명령을 직접 조립하지 않고, 공식 컬렉션의 role/module을
-      그대로 호출합니다 (PLAN.md Section D 참고).
+      Generates an inventory and playbook that install and initialise a LINSTOR cluster using
+      LINBIT's official Ansible collection (<code>linbit.linstor</code>) and provision DRBD
+      resources on top of it. This app never assembles <code>linstor</code> CLI commands itself
+      &mdash; it calls the collection's roles and modules directly (see PLAN.md section D).
     </p>
     <div class="alert alert-warning small">
       <i class="bi bi-exclamation-triangle-fill"></i>
-      RHEL/AlmaLinux9는 LINBIT 공식 Save소가 구독 고객 전용이라 무료 접근이 불가능합니다.
-      아래 <strong>RPM 디렉터리</strong>에는 별도 빌드 파이프라인(<code>gsdc-linbit-build</code>,
-      이 Save소 범위 밖)이 만든 <code>linstor-*.rpm</code> 파일들이 이미 있어야 합니다 —
-      생성된 플레이북이 이를 각 노드에 로컬 설치한 뒤 공식 컬렉션에 이어받깁니다.
+      On RHEL/AlmaLinux9 the official LINBIT repository is subscription-only, so there is no
+      free package source. The <strong>RPM directory</strong> below must already contain
+      <code>linstor-*.rpm</code> files built by a separate pipeline
+      (<code>gsdc-linbit-build</code>, outside this repository). The generated playbook installs
+      them locally on each node before handing off to the official collection.
     </div>
     <div class="d-flex align-items-center gap-2 mb-4">
-      <span class="small text-muted">현재 감지된 스토리지 백엔드:</span>
-      <span class="badge" id="linstorBackendBadge">확인 중...</span>
-      <a href="/nodes/" class="small">Node Pool에서 다시 감지</a>
+      <span class="small text-muted">Detected storage backend:</span>
+      <span class="badge" id="linstorBackendBadge">checking...</span>
+      <a href="/nodes/" class="small">Re-detect on the Node Pool page</a>
     </div>
 
     <form action="/linstor/generate" method="post" id="linstorForm">
 
-      <!-- 노드 역할 배정 -->
+      <!-- Node roles -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-dark text-white fw-bold">
-          <i class="bi bi-diagram-2-fill"></i> 노드 역할 배정
+          <i class="bi bi-diagram-2-fill"></i> Node roles
         </div>
         <div class="card-body">
           <input type="hidden" name="controller_nodes_json" id="controllerNodesJson" value="[]">
           <input type="hidden" name="satellite_nodes_json" id="satelliteNodesJson" value="[]">
           <div class="row g-3">
             <div class="col-md-6">
-              <label class="form-label fw-semibold">Controller 노드 <small class="text-muted">(linstor_controllers)</small></label>
+              <label class="form-label fw-semibold">Controller nodes <small class="text-muted">(linstor_controllers)</small></label>
               <div id="controllerNodeList" class="border rounded p-2" style="min-height:80px"></div>
             </div>
             <div class="col-md-6">
-              <label class="form-label fw-semibold">Satellite 노드 <small class="text-muted">(linstor_satellites)</small></label>
+              <label class="form-label fw-semibold">Satellite nodes <small class="text-muted">(linstor_satellites)</small></label>
               <div id="satelliteNodeList" class="border rounded p-2" style="min-height:80px"></div>
             </div>
           </div>
           <div class="form-text mt-2">
-            한 노드가 Controller와 Satellite 양쪽에 동시에 속해도 됩니다(결합 노드) — 소규모
-            클러스터에서 흔한 구성입니다.
+            A node can be both a controller and a satellite (a combined node) &mdash; a common
+            layout for small clusters.
           </div>
         </div>
       </div>
 
-      <!-- RPM 및 배포 옵션 -->
+      <!-- RPM and deployment options -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-secondary text-white fw-bold">
-          <i class="bi bi-box-seam"></i> RPM 및 배포 옵션
+          <i class="bi bi-box-seam"></i> RPM and deployment options
         </div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-8">
-              <label class="form-label fw-semibold">RPM 디렉터리 (제어 노드 로컬 경로)</label>
+              <label class="form-label fw-semibold">RPM directory (local path on the control node)</label>
               <input type="text" class="form-control" name="rpm_dir" placeholder="/opt/linstor-rpms" required>
             </div>
             <div class="col-md-4 d-flex align-items-end gap-3">
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" name="deploy_storage" id="deployStorage" checked>
-                <label class="form-check-label" for="deployStorage">스토리지 풀 생성</label>
+                <label class="form-check-label" for="deployStorage">Create storage pools</label>
               </div>
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" name="ha_database" id="haDatabase">
-                <label class="form-check-label" for="haDatabase">HA DB 전환</label>
+                <label class="form-check-label" for="haDatabase">Convert DB to HA</label>
               </div>
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" name="token_auth" id="tokenAuth" checked>
-                <label class="form-check-label" for="tokenAuth">토큰 인증</label>
+                <label class="form-check-label" for="tokenAuth">Token auth</label>
               </div>
               <div class="form-check">
                 <input class="form-check-input" type="checkbox" name="pacemaker_managed" id="pacemakerManaged" checked>
-                <label class="form-check-label" for="pacemakerManaged">Pacemaker 관리</label>
+                <label class="form-check-label" for="pacemakerManaged">Pacemaker-managed</label>
               </div>
             </div>
           </div>
           <div class="alert alert-secondary py-2 px-3 small mt-2 mb-0">
             <i class="bi bi-info-circle"></i>
-            <strong>Pacemaker 관리</strong>를 켜면 생성될 DRBD 리소스를
-            <a href="/pacemaker/" target="_blank">Pacemaker 탭</a>의
-            <code>ocf:linbit:drbd</code> promotable clone으로 관리한다는 전제로,
-            플레이북에 아래 전제조건이 함께 들어갑니다 (3노드 실클러스터에서
-            이것들이 빠지면 각각 다른 증상으로 실패하는 것을 확인했습니다):
+            With <strong>Pacemaker-managed</strong> enabled, the playbook assumes the DRBD resources
+            will be driven by an <code>ocf:linbit:drbd</code> promotable clone from the
+            <a href="/pacemaker/" target="_blank">Pacemaker tab</a>, and adds the prerequisites
+            below. Each of these was observed to fail differently on a real 3-node cluster when
+            missing:
             <ul class="mb-0 mt-1">
-              <li><code>auto-promote no</code> — DRBD 기본값이 yes라 커널이 먼저 승격해
-                  Pacemaker의 승격 통제와 어긋납니다.</li>
-              <li><code>drbd-selinux</code> — 없으면 RA가 커널과 통신할 netlink 소켓조차
-                  만들지 못합니다.</li>
-              <li><code>/var/lib/linstor.d</code> → <code>etc_t</code> 라벨 — LINSTOR가 쓴
-                  <code>.res</code>를 RA가 읽지 못해
-                  <em>"DRBD resource ... not found in configuration file"</em>로 실패합니다.</li>
+              <li><code>auto-promote no</code> &mdash; the DRBD default is yes, so the kernel promotes
+                  on its own and fights Pacemaker for control of promotion.</li>
+              <li><code>drbd-selinux</code> &mdash; without it the resource agent cannot even create the
+                  netlink socket it needs to talk to the kernel.</li>
+              <li><code>/var/lib/linstor.d</code> relabelled to <code>etc_t</code> &mdash; otherwise the
+                  resource agent cannot read the <code>.res</code> files LINSTOR writes and fails
+                  with <em>"DRBD resource ... not found in configuration file"</em>.</li>
             </ul>
           </div>
         </div>
       </div>
 
-      <!-- 스토리지 풀 -->
+      <!-- Storage pools -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-primary text-white fw-bold d-flex align-items-center">
-          <span><i class="bi bi-hdd-fill"></i> 스토리지 풀 (linstor_storage_pools)</span>
+          <span><i class="bi bi-hdd-fill"></i> Storage pools (linstor_storage_pools)</span>
           <button type="button" class="btn btn-sm btn-outline-light ms-auto" onclick="loadStoragePoolExample()">
             <i class="bi bi-lightning-fill"></i> Example
           </button>
@@ -115,26 +116,26 @@
                     data-mode="javascript" style="min-height:160px">[]</textarea>
           <div class="px-3 py-2 small text-muted bg-light border-top">
             <code>pool_type</code>: lvm | lvmthin | zfs | zfsthin | file | filethin,
-            lvm/lvmthin은 <code>vg</code>(+lvmthin은 <code>vg_thinpool</code>),
-            zfs 계열은 <code>zpool</code>, <code>physical_devices</code>는 백엔드 디바이스 목록,
-            <code>nodes</code>는 이 풀을 적용할 satellite 노드 목록.
+            lvm/lvmthin need <code>vg</code> (plus <code>vg_thinpool</code> for lvmthin),
+            zfs variants need <code>zpool</code>. <code>physical_devices</code> lists the backing devices
+            and <code>nodes</code> lists the satellites this pool applies to.
           </div>
         </div>
       </div>
 
-      <!-- 리소스 그룹 / 리소스 -->
+      <!-- Resource groups / resources -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-success text-white fw-bold d-flex align-items-center">
-          <span><i class="bi bi-hdd-network-fill"></i> 리소스 그룹 / 리소스 (DRBD 볼륨)</span>
+          <span><i class="bi bi-hdd-network-fill"></i> Resource groups / resources (DRBD volumes)</span>
           <button type="button" class="btn btn-sm btn-outline-light ms-auto" onclick="loadResourceExample()">
             <i class="bi bi-lightning-fill"></i> Example
           </button>
         </div>
         <div class="card-body p-0">
-          <div class="px-3 pt-2 small text-muted">리소스 그룹 (place_count = 복제본 수)</div>
+          <div class="px-3 pt-2 small text-muted">Resource groups (place_count = number of replicas)</div>
           <textarea id="resourceGroupsJson" name="resource_groups_json" class="code-editor"
                     data-mode="javascript" style="min-height:100px">[]</textarea>
-          <div class="px-3 pt-2 small text-muted">리소스 스폰 (그룹으로부터 실제 DRBD 볼륨 생성)</div>
+          <div class="px-3 pt-2 small text-muted">Resource spawn (creates the actual DRBD volume from a group)</div>
           <textarea id="resourcesJson" name="resources_json" class="code-editor"
                     data-mode="javascript" style="min-height:100px">[]</textarea>
         </div>
@@ -170,7 +171,7 @@
       </div>
 
       <button type="submit" class="btn btn-dark btn-lg">
-        <i class="bi bi-gear-fill"></i> 인벤토리 + 플레이북 생성
+        <i class="bi bi-gear-fill"></i> Generate inventory + playbook
       </button>
     </form>
   </div>
@@ -186,7 +187,7 @@ function renderNodeCheckList(containerId, selected, onToggle) {
   const container = document.getElementById(containerId);
   const pool = getNodePool();
   if (!pool.length) {
-    container.innerHTML = '<div class="text-muted small">Node Pool이 비어 있습니다. <a href="/nodes/">Node Pool에서 Add</a></div>';
+    container.innerHTML = '<div class="text-muted small">The node pool is empty. <a href="/nodes/">Add nodes</a></div>';
     return;
   }
   container.innerHTML = pool.map(n => `
@@ -291,11 +292,11 @@ async function loadLinstorBackendBadge() {
       badge.textContent = 'LINSTOR';
     } else {
       badge.className = 'badge bg-secondary';
-      badge.textContent = '커널모듈 (DRBD)';
+      badge.textContent = 'kernel module (DRBD)';
     }
   } catch (e) {
     badge.className = 'badge bg-secondary';
-    badge.textContent = '알 수 없음';
+    badge.textContent = 'unknown';
   }
 }
 

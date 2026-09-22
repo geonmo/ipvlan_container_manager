@@ -6,98 +6,98 @@
 <div class="row justify-content-center">
   <div class="col-lg-10">
     <h2 class="fw-bold mb-1"><i class="bi bi-box-seam-fill text-success"></i> Pod Settings</h2>
-    <p class="text-muted mb-4">Podman Pod와 연결할 네트워크를 설정합니다. Container Settings은 <a href="/container/">Container Settings</a> 페이지에서 합니다.</p>
+    <p class="text-muted mb-4">Configure the networks a Podman pod attaches to. Containers are configured on the <a href="/container/">Containers</a> page.</p>
 
     <form action="/quadlet/generate" method="post" id="quadletForm">
-      <!-- 숨겨진 pod_networks_json 필드 -->
+      <!-- hidden pod_networks_json field -->
       <input type="hidden" name="pod_networks_json" id="podNetworksJson" value="[]">
 
       <!-- Pod Name -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-dark text-white fw-bold">
-          <i class="bi bi-collection-fill"></i> Pod 기본 설정
+          <i class="bi bi-collection-fill"></i> Pod basics
         </div>
         <div class="card-body">
           <div class="row g-3">
             <div class="col-md-4">
               <label class="form-label fw-semibold">Pod Name</label>
               <input type="text" class="form-control" name="pod_name" id="podName" placeholder="mypod">
-              <div class="form-text">생성: <code>&lt;name&gt;.pod</code></div>
+              <div class="form-text">Creates <code>&lt;name&gt;.pod</code></div>
             </div>
             <div class="col-md-4">
               <label class="form-label fw-semibold">Hostname (HostName)</label>
               <input type="text" class="form-control" name="pod_hostname" id="podHostname" placeholder="myapp.example.com">
-              <div class="form-text">Pod 내부 컨테이너의 hostname</div>
+              <div class="form-text">Hostname for containers inside the pod</div>
             </div>
             <div class="col-md-2">
               <label class="form-label fw-semibold">ShmSize</label>
               <input type="text" class="form-control" name="pod_shm_size" id="podShmSize" placeholder="128G">
-              <div class="form-text">공유 메모리 크기 (선택)</div>
+              <div class="form-text">Shared memory size (optional)</div>
             </div>
             <div class="col-md-8">
               <label class="form-label fw-semibold">Description (Description)</label>
               <input type="text" class="form-control" name="pod_description" id="podDescription" placeholder="My Application Pod">
-              <div class="form-text">[Unit] Description= 에 표시될 Description (선택)</div>
+              <div class="form-text">Shown as [Unit] Description= (optional)</div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- 네트워크 목록 -->
+      <!-- Network list -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-info text-white fw-bold d-flex align-items-center">
-          <span><i class="bi bi-diagram-3-fill"></i> Pod 네트워크 설정</span>
+          <span><i class="bi bi-diagram-3-fill"></i> Pod networks</span>
           <a href="/nodes/" target="_blank" class="btn btn-sm btn-light ms-auto">
-            <i class="bi bi-pencil-fill"></i> 네트워크 풀 편집
+            <i class="bi bi-pencil-fill"></i> Edit network pool
           </a>
         </div>
         <div class="card-body">
           <p class="text-muted small mb-3">
-            네트워크 풀에서 선택하거나 직접 Name을 입력하세요. 각 네트워크에 고정 IP를 지정할 수 있습니다.
+            Pick from the network pool or type a name. You can assign a static IP per network.
           </p>
 
-          <!-- 네트워크 행 목록 -->
+          <!-- Network rows -->
           <div id="networkRows"></div>
 
-          <!-- 네트워크 Add -->
+          <!-- Add network -->
           <div class="d-flex gap-2 align-items-center mt-3">
             <select class="form-select form-select-sm w-auto" id="netPoolSelect" style="min-width:200px">
-              <option value="">-- 풀에서 선택 --</option>
+              <option value="">-- from pool --</option>
             </select>
             <button type="button" class="btn btn-sm btn-outline-info" onclick="addNetworkFromPool()">
-              <i class="bi bi-arrow-down-circle"></i> 풀에서 Add
+              <i class="bi bi-arrow-down-circle"></i> Add from pool
             </button>
             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addNetworkRow('', '')">
-              <i class="bi bi-plus-circle"></i> 직접 입력
+              <i class="bi bi-plus-circle"></i> Enter manually
             </button>
           </div>
         </div>
       </div>
 
-      <!-- nft 서비스 참조 -->
+      <!-- nft service reference -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-danger text-white fw-bold d-flex align-items-center"
              style="cursor:pointer" onclick="toggleNftRef()">
-          <span><i class="bi bi-shield-fill-check"></i> 방화벽 서비스 참조 (nftables)</span>
-          <small class="ms-2 fw-normal opacity-75">Pod에 적용할 nft 서비스를 확인합니다</small>
+          <span><i class="bi bi-shield-fill-check"></i> Firewall services (nftables)</span>
+          <small class="ms-2 fw-normal opacity-75">Review the nft services that apply to this pod</small>
           <i class="bi bi-chevron-down ms-auto" id="nftRefChevron"></i>
         </div>
         <div id="nftRefBody" class="d-none">
           <div class="card-body">
             <p class="text-muted small mb-3">
-              아래에서 이 Pod의 IP에 적용할 방화벽 서비스를 확인하고,
-              <a href="/nft/" target="_blank">nftables 규칙 생성</a>에서 설정하세요.
+              Review the firewall services that apply to this pod's IPs, then configure them on the
+              <a href="/nft/" target="_blank">firewall page</a>.
             </p>
             <div id="nftServiceList"><span class="text-muted small">Loading...</span></div>
           </div>
         </div>
       </div>
 
-      <!-- 숨겨진 Ansible 인증 필드 (프로파일에서 자동 채워짐) -->
+      <!-- hidden Ansible credentials, filled from the selected profile -->
       <input type="hidden" name="ansible_user" id="quadletAnsibleUser" value="root">
       <input type="hidden" name="ansible_ssh_key" id="quadletAnsibleKey" value="~/.ssh/id_rsa">
 
-      <!-- Ansible 배포 - 노드 셔틀 -->
+      <!-- Ansible deployment - node picker -->
       <div class="card shadow-sm mb-4">
         <div class="card-header bg-warning text-dark fw-bold">
           <i class="bi bi-send-fill"></i> Ansible Deployment
@@ -105,7 +105,7 @@
         <div class="card-body">
           <div class="row g-3 mb-3">
             <div class="col-md-6">
-              <label class="form-label fw-semibold">대상 노드 선택</label>
+              <label class="form-label fw-semibold">Target nodes</label>
               <textarea name="ansible_hosts" id="quadletHosts" class="d-none"></textarea>
               <div class="row g-2">
                 <div class="col-6">
@@ -116,7 +116,7 @@
                   <button type="button" class="btn btn-outline-warning btn-sm" id="qPoolList_add"><i class="bi bi-arrow-right"></i></button>
                 </div>
                 <div class="col">
-                  <div class="small text-muted mb-1">선택됨</div>
+                  <div class="small text-muted mb-1">Selected</div>
                   <ul class="list-group" id="qSelectedList" style="min-height:70px;max-height:150px;overflow-y:auto"></ul>
                 </div>
               </div>
@@ -127,7 +127,7 @@
                 <option value="">-- none --</option>
               </select>
               <div class="form-text">
-                <a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i> 프로파일 관리</a>
+                <a href="/nodes/" target="_blank"><i class="bi bi-pencil"></i> Manage profiles</a>
               </div>
             </div>
           </div>
@@ -135,7 +135,7 @@
       </div>
 
       <button type="submit" class="btn btn-success btn-lg" onclick="serializePodNetworks(); syncProfileToForm()">
-        <i class="bi bi-gear-fill"></i> Pod 유닛 파일 생성
+        <i class="bi bi-gear-fill"></i> Generate pod unit files
       </button>
     </form>
   </div>
@@ -157,14 +157,14 @@ function renderNetworkRows() {
     row.innerHTML = `
       <div class="row g-2 align-items-center mb-1">
         <div class="col-md-4">
-          <input type="text" class="form-control form-control-sm" placeholder="네트워크 Name (예: ipvlan0)"
+          <input type="text" class="form-control form-control-sm" placeholder="Network name (e.g. ipvlan0)"
                  value="${escHtmlQ(entry.network)}"
                  oninput="podNetworks[${i}].network = this.value; syncNetworksJson()">
         </div>
         <div class="col-md-4">
           <div class="input-group input-group-sm">
             <span class="input-group-text text-muted small">IPv4</span>
-            <input type="text" class="form-control form-control-sm" placeholder="IPv4 주소 (필수)"
+            <input type="text" class="form-control form-control-sm" placeholder="IPv4 address (required)"
                    value="${escHtmlQ(entry.ip || '')}"
                    oninput="podNetworks[${i}].ip = this.value; syncNetworksJson(); autoDetectNetworkForEntry(${i}, this.value.trim())">
           </div>
@@ -172,7 +172,7 @@ function renderNetworkRows() {
         </div>
         <div class="col-auto d-flex gap-1">
           <button type="button" class="btn btn-sm ${hasIp6 ? 'btn-info' : 'btn-outline-secondary'}"
-                  title="IPv6 주소" onclick="toggleIp6Row(${i})">
+                  title="IPv6 address" onclick="toggleIp6Row(${i})">
             <i class="bi bi-${hasIp6 ? 'dash' : 'plus'}-circle"></i> IPv6
           </button>
           <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeNetworkRow(${i})">
@@ -184,7 +184,7 @@ function renderNetworkRows() {
         <div class="col-md-4 offset-md-4">
           <div class="input-group input-group-sm">
             <span class="input-group-text text-primary small">IPv6</span>
-            <input type="text" class="form-control form-control-sm" placeholder="IPv6 주소 (선택)"
+            <input type="text" class="form-control form-control-sm" placeholder="IPv6 address (optional)"
                    value="${escHtmlQ(entry.ip6 || '')}"
                    oninput="podNetworks[${i}].ip6 = this.value; syncNetworksJson()">
           </div>
@@ -235,7 +235,7 @@ function serializePodNetworks() {
 // ── 네트워크 풀 ───────────────────────────────────────────────
 function initNetPool() {
   const sel = document.getElementById('netPoolSelect');
-  sel.innerHTML = '<option value="">-- 풀에서 선택 --</option>';
+  sel.innerHTML = '<option value="">-- from pool --</option>';
   getNetworkPool().forEach((n, i) => {
     const opt = document.createElement('option');
     opt.value = i;
@@ -271,7 +271,7 @@ async function autoDetectNetworkForEntry(i, ip) {
     const networks = await fetch('/api/networks').then(r => r.json());
     const match = networks.find(n => n.subnet && ipInCidr(ip, n.subnet));
     if (match) {
-      hint.textContent = `네트워크 자동 감지: ${match.name} (${match.subnet})`;
+      hint.textContent = `Matched network: ${match.name} (${match.subnet})`;
       hint.className = 'form-text text-success';
       // 네트워크 Name이 비어있으면 자동 채우기
       if (!podNetworks[i].network) {
@@ -280,7 +280,7 @@ async function autoDetectNetworkForEntry(i, ip) {
         syncNetworksJson();
       }
     } else {
-      hint.textContent = '일치하는 네트워크를 찾을 수 없습니다.';
+      hint.textContent = 'No matching network found.';
       hint.className = 'form-text text-warning';
     }
   } catch(e) {
@@ -347,7 +347,7 @@ async function loadNftServices() {
     const resp = await fetch('/api/nft/services');
     const services = await resp.json();
     if (!services.length) {
-      container.innerHTML = '<span class="text-muted small">등록된 서비스가 없습니다. <a href="/nft/" target="_blank">nftables 방화벽</a>에서 Add하세요.</span>';
+      container.innerHTML = '<span class="text-muted small">No services defined yet. Add them on the <a href="/nft/" target="_blank">firewall page</a>.</span>';
       return;
     }
     container.innerHTML = `
@@ -362,10 +362,10 @@ async function loadNftServices() {
           </tr>`).join('')}
         </tbody>
       </table>
-      <div class="mt-2"><a href="/nft/" target="_blank" class="btn btn-sm btn-outline-danger"><i class="bi bi-shield-fill-check"></i> nftables 방화벽 관리</a></div>
+      <div class="mt-2"><a href="/nft/" target="_blank" class="btn btn-sm btn-outline-danger"><i class="bi bi-shield-fill-check"></i> Manage nftables firewall</a></div>
     `;
   } catch(e) {
-    container.innerHTML = '<span class="text-danger small">서비스 로딩 실패: ' + e.message + '</span>';
+    container.innerHTML = '<span class="text-danger small">Failed to load services: ' + e.message + '</span>';
   }
 }
 
