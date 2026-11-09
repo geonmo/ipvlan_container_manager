@@ -595,6 +595,115 @@ fn generated_ansible_playbooks_pass_syntax_check() {
     }
 }
 
+// ─── Pacemaker pcs 스크립트 → pcs -f + crm_verify ───────────────────────────
+//
+// 생성 스크립트는 CIB 사본에 `pcs -f` 로 적용한 뒤 crm_verify 를 통과해야만
+// push 한다. `ICM_CIB_SOURCE` 로 빈 CIB(`cibadmin --empty`)에서 시작하게 하면
+// 클러스터 없이도 스크립트 전체(멱등 가드, pcs 문법, CIB schema, crm_verify)를
+// 실제 도구로 끝까지 돌려 볼 수 있다. 무조건 dry-run 이라 push 는 일어나지 않는다.
+
+/// STONITH 장치(fence agent 필요)를 뺀, 펜싱 없는 구성.
+/// on-fail=fence 는 펜싱이 꺼져 있으면 crm_verify 가 거부하므로 stop 으로 둔다.
+fn pacemaker_config_without_fencing() -> PacemakerConfig {
+    let mut config = pacemaker_config();
+    config.stonith_devices.clear();
+    config.cluster.stonith_enabled = false;
+    for d in &mut config.drbd_resources {
+        d.on_fail = "stop".to_string();
+    }
+    config
+}
+
+fn pcs_toolchain() -> Result<(), &'static str> {
+    for bin in ["pcs", "crm_verify", "crm_simulate", "crm_attribute", "cibadmin", "crm_resource"] {
+        if which(bin).is_none() {
+            return Err("pcs / pacemaker-cli 미설치");
+        }
+    }
+    let drbd_agent = run_shell("crm_resource --show-metadata ocf:linbit:drbd >/dev/null 2>&1");
+    if !drbd_agent.ok {
+        return Err("ocf:linbit:drbd 리소스 에이전트 없음 (drbd-pacemaker / drbd9x-utils)");
+    }
+    Ok(())
+}
+
+fn run_pcs_script(dir: &TempDir, script: &str, cib: &Path, extra_env: &[(&str, &str)]) -> Run {
+    let path = dir.write("pacemaker_setup.sh", script);
+    let mut cmd = Command::new("bash");
+    cmd.arg(&path)
+        .env("ICM_CIB_SOURCE", cib)
+        .env("ICM_DRY_RUN", "1")
+        .env("TMPDIR", dir.path());
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    exec(cmd)
+}
+
+#[test]
+fn generated_pcs_script_passes_pcs_and_crm_verify_on_an_empty_cib() {
+    if let Err(why) = pcs_toolchain() {
+        skip("Pacemaker pcs 스크립트 검증", why);
+        return;
+    }
+    let dir = TempDir::new("pcs");
+    let empty = dir.path().join("empty-cib.xml");
+    let made = run_shell(&format!("cibadmin --empty > '{}'", empty.display()));
+    assert!(made.ok, "cibadmin --empty 실패:\n{}", made.text);
+
+    // negative control: crm_verify 가 schema 위반 CIB 를 실제로 거부하는지.
+    let bad = dir.write(
+        "bad-cib.xml",
+        "<cib validate-with=\"pacemaker-3.9\" epoch=\"1\" num_updates=\"0\" admin_epoch=\"0\">\
+         <configuration><crm_config/><nodes/><resources><bogus/></resources><constraints/>\
+         </configuration><status/></cib>",
+    );
+    let neg = run(&which("crm_verify").unwrap(), &["--xml-file", bad.to_str().unwrap()]);
+    assert!(
+        !neg.ok,
+        "negative control 실패: crm_verify 가 schema 위반 CIB 를 통과시켰다 — 이 검증은 신뢰할 수 없다:\n{}",
+        neg.text
+    );
+
+    use crate::generators::pacemaker::{generate_default_constraints, generate_pcs_script};
+    let mut config = pacemaker_config_without_fencing();
+    // `systemd:` 에이전트 조회는 D-Bus/systemd 가 필요하다 (컨테이너 CI 에는 없음).
+    // 없으면 systemd 리소스와 그룹만 빼고 DRBD+FS+제약조건 경로는 그대로 검증한다.
+    if !run_shell("crm_resource --show-metadata systemd:dbus.service >/dev/null 2>&1").ok {
+        skip("pcs 스크립트의 systemd 리소스/그룹 부분", "systemd/D-Bus 없음 (컨테이너?)");
+        config.systemd_resources.clear();
+        config.resource_groups.clear();
+        config.order_constraints.clear();
+        config.colocation_constraints.clear();
+        generate_default_constraints(&mut config);
+    }
+    config.location_constraints.push(crate::models::pacemaker::LocationConstraint {
+        id: "loc-drbd-r0-node1".to_string(),
+        rsc: "drbd-r0-clone".to_string(),
+        node: "node1".to_string(),
+        score: "100".to_string(),
+    });
+    let script = generate_pcs_script(&config);
+
+    // 1) STONITH 가드: 빈 CIB 의 stonith-enabled 는 기본값 true → 끄려면 명시 허용 필요
+    let guarded = run_pcs_script(&dir, &script, &empty, &[]);
+    assert!(
+        !guarded.ok && guarded.text.contains("ICM_ALLOW_STONITH_DISABLE"),
+        "STONITH 를 끄는 스크립트가 가드 없이 진행됐다:\n{}",
+        guarded.text
+    );
+
+    // 2) 본 검증: 모든 pcs 명령 + crm_verify 통과, dry-run 으로 종료
+    let out = run_pcs_script(&dir, &script, &empty, &[("ICM_ALLOW_STONITH_DISABLE", "1")]);
+    assert!(
+        out.ok && out.text.contains("DRY RUN"),
+        "생성된 pcs 스크립트가 빈 CIB 에서 실패했다:\n{}\n--- 생성물 ---\n{}",
+        out.text,
+        script
+    );
+    assert!(!out.text.contains("Deprecation Warning"), "deprecated pcs 문법 사용:\n{}", out.text);
+}
+
 // ─── LINSTOR (외부 컬렉션 필요) ─────────────────────────────────────────────
 
 use crate::models::linstor::{
@@ -756,6 +865,11 @@ fn report_external_validator_availability() {
             "ansible-inventory (인벤토리)",
             which("ansible-inventory").is_some(),
             "ansible-core",
+        ),
+        (
+            "pcs + crm_verify (pcs 스크립트)",
+            pcs_toolchain().is_ok(),
+            "pcs pacemaker-cli + drbd-pacemaker",
         ),
         (
             "linbit.linstor 컬렉션",

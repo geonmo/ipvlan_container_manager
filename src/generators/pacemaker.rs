@@ -21,9 +21,16 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
     lines.push(String::new());
     lines.push("set -euo pipefail".to_string());
     lines.push(String::new());
+    lines.extend(shadow_cib_prologue());
+    lines.push(String::new());
+    // 여기부터 검증 epilogue 전까지의 `pcs` 호출은 전부 shadow CIB 로 보낸다.
+    let body_start = lines.len();
 
     // 클러스터 전역 설정
     lines.push("# --- Cluster-wide properties -------------------------------------".to_string());
+    if !config.cluster.stonith_enabled {
+        lines.extend(stonith_disable_guard());
+    }
     lines.push(format!(
         "pcs property set stonith-enabled={}",
         config.cluster.stonith_enabled
@@ -32,12 +39,11 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
         "pcs property set no-quorum-policy={}",
         config.cluster.no_quorum_policy
     ));
+    // `pcs resource defaults <name>=<value>` 는 pcs 0.11 에서 deprecated
+    // (실측: "Please use 'pcs resource defaults update' instead").
     lines.push(format!(
-        "pcs resource defaults migration-threshold={}",
-        config.cluster.migration_threshold
-    ));
-    lines.push(format!(
-        "pcs resource defaults failure-timeout={}",
+        "pcs resource defaults update migration-threshold={} failure-timeout={}",
+        config.cluster.migration_threshold,
         config.cluster.failure_timeout
     ));
     lines.push(String::new());
@@ -152,8 +158,128 @@ pub fn generate_pcs_script(config: &PacemakerConfig) -> String {
         lines.push(String::new());
     }
 
-    lines.push("echo 'Pacemaker configuration complete'".to_string());
+    for line in &mut lines[body_start..] {
+        *line = to_shadow_cib(line);
+    }
+    lines.extend(verify_and_push_epilogue());
     lines.join("\n")
+}
+
+/// 모든 설정 명령이 붙는 shadow CIB 접두사.
+const PCS_SHADOW: &str = "pcs -f \"$CIB_NEW\"";
+
+/// 한 줄 안의 `pcs` 호출을 shadow CIB 대상(`pcs -f "$CIB_NEW"`)으로 바꾼다.
+///
+/// 설정 명령뿐 아니라 멱등 가드(`if ! pcs resource config …`,
+/// `pcs constraint --full | grep`)도 같은 파일을 봐야 한다 — 그래야 이 스크립트가
+/// 앞에서 만든 리소스까지 "이미 있음"으로 인식한다. 주석과 echo 문구는 건드리지 않는다.
+fn to_shadow_cib(line: &str) -> String {
+    let t = line.trim_start();
+    if t.starts_with('#') || t.starts_with("echo ") {
+        return line.to_string();
+    }
+    let mut out = String::with_capacity(line.len() + 16);
+    let mut rest = line;
+    while let Some(i) = rest.find("pcs ") {
+        let at_word_start = i == 0
+            || matches!(rest.as_bytes()[i - 1], b' ' | b'\t' | b'(' | b'!' | b';' | b'|' | b'&');
+        out.push_str(&rest[..i]);
+        if at_word_start {
+            out.push_str(PCS_SHADOW);
+            out.push(' ');
+        } else {
+            out.push_str("pcs ");
+        }
+        rest = &rest[i + 4..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// 라이브 CIB 대신 사본에 먼저 적용하기 위한 준비 단계.
+///
+/// 라이브 CIB에 명령을 하나씩 직접 넣으면, 중간 명령이 실패했을 때 리소스는
+/// 생겼는데 order/colocation 은 빠진 "반쪽" 상태가 클러스터에 남는다
+/// (pacemaker-drbd-guide 3.1, 7.1절의 사고가 정확히 이 상태였다). 사본에 전부
+/// 적용하고 crm_verify 를 통과한 경우에만 원본 대비 diff 를 한 번에 push 한다.
+///
+/// `ICM_CIB_SOURCE=<file>` 을 주면 라이브 CIB 대신 그 파일에서 시작한다 —
+/// 클러스터 밖에서(저장해 둔 CIB 나 `cibadmin --empty`) 검증할 때 쓴다.
+fn shadow_cib_prologue() -> Vec<String> {
+    [
+        "# --- Offline (shadow) CIB -------------------------------------------",
+        "# Every change below goes to a COPY of the CIB via 'pcs -f'. The live",
+        "# cluster is only touched by the final cib-push, and only after",
+        "# crm_verify accepts the result.",
+        "#   ICM_DRY_RUN=1      verify + simulate only, never push",
+        "#   ICM_CIB_SOURCE=f   start from CIB file f instead of the live cluster",
+        "#                      (implies ICM_DRY_RUN=1)",
+        "WORKDIR=$(mktemp -d \"${TMPDIR:-/tmp}/icm-pcs.XXXXXX\")",
+        "if [ -n \"${ICM_CIB_SOURCE:-}\" ]; then ICM_DRY_RUN=1; fi",
+        "if [ \"${ICM_DRY_RUN:-0}\" != \"1\" ]; then trap 'rm -rf \"$WORKDIR\"' EXIT; fi",
+        "CIB_ORIG=\"$WORKDIR/cib-orig.xml\"",
+        "CIB_NEW=\"$WORKDIR/cib-new.xml\"",
+        "if [ -n \"${ICM_CIB_SOURCE:-}\" ]; then",
+        "  cp \"$ICM_CIB_SOURCE\" \"$CIB_ORIG\"",
+        "else",
+        "  pcs cluster cib \"$CIB_ORIG\"",
+        "fi",
+        "cp \"$CIB_ORIG\" \"$CIB_NEW\"",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// STONITH 가 켜진 클러스터에서 실수로 끄는 것을 막는다.
+///
+/// 폼 기본값(stonith-enabled=false)이 그대로 들어가면 운영 클러스터의 펜싱이
+/// 꺼진다. 기존 리소스에 on-fail=fence 가 있으면 crm_verify 가 잡지만(실측:
+/// "'fence' is not valid when fencing is disabled" → schema 오류), 없으면 조용히
+/// 통과하므로 원본 CIB 사본의 현재 값을 따로 본다. 미설정이면 Pacemaker 기본값 true.
+fn stonith_disable_guard() -> Vec<String> {
+    [
+        "LIVE_STONITH=$(CIB_file=\"$CIB_ORIG\" crm_attribute --type crm_config --name stonith-enabled --query --quiet 2>/dev/null || echo true)",
+        "if [ \"$LIVE_STONITH\" = \"true\" ] && [ \"${ICM_ALLOW_STONITH_DISABLE:-0}\" != \"1\" ]; then",
+        "  echo 'ERROR: the cluster currently has stonith-enabled=true and this script would disable it.' >&2",
+        "  echo '       Re-run with ICM_ALLOW_STONITH_DISABLE=1 if that is really intended.' >&2",
+        "  exit 1",
+        "fi",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// shadow CIB 검증(crm_verify) → 시뮬레이션(crm_simulate) → diff push.
+fn verify_and_push_epilogue() -> Vec<String> {
+    [
+        "# --- Verify ----------------------------------------------------------",
+        "echo '>> crm_verify: checking the modified CIB'",
+        "if ! crm_verify --xml-file \"$CIB_NEW\" -V; then",
+        "  echo 'ERROR: crm_verify failed - nothing was applied to the live cluster.' >&2",
+        "  echo \"       CIB under test: $CIB_NEW\" >&2",
+        "  trap - EXIT",
+        "  exit 1",
+        "fi",
+        "",
+        "echo '>> crm_simulate: expected transition'",
+        "crm_simulate --simulate --xml-file \"$CIB_NEW\" || echo 'WARNING: crm_simulate failed (crm_verify passed)'",
+        "",
+        "if [ \"${ICM_DRY_RUN:-0}\" = \"1\" ]; then",
+        "  echo \"DRY RUN - nothing pushed. Verified CIB: $CIB_NEW\"",
+        "  echo \"  diff: crm_diff --original $CIB_ORIG --new $CIB_NEW\"",
+        "  exit 0",
+        "fi",
+        "",
+        "# --- Apply (push only the diff against the original) ----------------",
+        "pcs cluster cib-push \"$CIB_NEW\" diff-against=\"$CIB_ORIG\"",
+        "echo 'Pacemaker configuration complete'",
+        "pcs status",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 /// 리소스가 이미 있으면 건너뛰도록 `pcs resource create` 묶음을 감싼다.
@@ -293,23 +419,19 @@ pub(crate) fn generate_drbd_resource_cmds(drbd: &DrbdPacemakerResource, node_cou
         t = drbd.stop_timeout
     ));
 
+    // pcs 0.11: clone id 는 위치 인자, 메타 속성은 `meta` 뒤에 둔다.
+    // `... id=<clone>` / meta 키워드 없는 형식은 deprecated 경고가 난다(실측).
     cmds.push(format!(
-        "pcs resource promotable {name} \\",
-        name = drbd.resource_name
+        "pcs resource promotable {name} {clone_name} meta \\",
+        name = drbd.resource_name,
+        clone_name = drbd.clone_name
     ));
     cmds.push("    promoted-max=1 promoted-node-max=1 \\".to_string());
     cmds.push(format!(
         "    clone-max={n} clone-node-max=1 \\",
         n = node_count
     ));
-    cmds.push(format!(
-        "    notify={notify} \\",
-        notify = drbd.notify
-    ));
-    cmds.push(format!(
-        "    id={clone_name}",
-        clone_name = drbd.clone_name
-    ));
+    cmds.push(format!("    notify={notify}", notify = drbd.notify));
 
     if let Some(node) = &drbd.target_role_master_node {
         cmds.push(format!(
@@ -361,7 +483,7 @@ pub(crate) fn generate_systemd_resource_cmds(svc: &SystemdResource) -> Vec<Strin
     if svc.clone {
         if let Some(clone_name) = &svc.clone_name {
             cmds.push(format!(
-                "pcs resource clone {name} id={clone}",
+                "pcs resource clone {name} {clone}",
                 name = svc.resource_name,
                 clone = clone_name,
             ));
@@ -423,8 +545,12 @@ pub(crate) fn generate_colocation_constraint(col: &ColocationConstraint) -> Stri
 }
 
 pub(crate) fn generate_location_constraint(loc: &LocationConstraint) -> String {
+    // `location <rsc> prefers <node>=<score>` 형식은 id= 를 받지 않는다.
+    // 뒤에 붙인 `id=x` 를 또 하나의 노드=점수 쌍으로 읽어 실패한다
+    // (실측 pcs 0.11.11: "Error: invalid score 'x', use integer or INFINITY").
+    // id 를 지정하려면 `location add` 를 쓴다.
     format!(
-        "pcs constraint location {rsc} prefers {node}={score} id={id}",
+        "pcs constraint location add {id} {rsc} {node} {score}",
         rsc = loc.rsc,
         node = loc.node,
         score = loc.score,
@@ -992,7 +1118,7 @@ mod tests {
     /// 감싸야 재실행이 안전하다.
     #[test]
     fn every_resource_create_is_guarded() {
-        let script = generate_pcs_script(&full_config());
+        let script = unshadow(&generate_pcs_script(&full_config()));
 
         for line in script.lines().filter(|l| l.trim_start().starts_with("pcs resource create")) {
             // 가드 블록 안이라면 두 칸 들여쓰기돼 있다
@@ -1008,7 +1134,7 @@ mod tests {
 
     #[test]
     fn every_constraint_is_guarded() {
-        let script = generate_pcs_script(&full_config());
+        let script = unshadow(&generate_pcs_script(&full_config()));
         for line in script
             .lines()
             .filter(|l| l.trim_start().starts_with("pcs constraint"))
@@ -1208,5 +1334,277 @@ mod tests {
         assert!(script.contains("op promote interval=0s timeout=90s"));
         assert!(script.contains("op start   interval=0s timeout=240s"));
         assert!(script.contains("op stop    interval=0s timeout=100s"));
+    }
+
+    /// shadow CIB 접두사를 떼어 기존 문자열 단언을 그대로 쓸 수 있게 한다.
+    fn unshadow(script: &str) -> String {
+        script.replace("pcs -f \"$CIB_NEW\" ", "pcs ")
+    }
+
+    /// 스크립트에서 `\` 줄 잇기를 합쳐 명령 단위로 만든다.
+    fn commands(script: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cur = String::new();
+        for line in script.lines() {
+            let t = line.trim();
+            if let Some(stripped) = t.strip_suffix('\\') {
+                cur.push_str(stripped);
+                cur.push(' ');
+            } else {
+                cur.push_str(t);
+                if !cur.trim().is_empty() {
+                    out.push(cur.split_whitespace().collect::<Vec<_>>().join(" "));
+                }
+                cur.clear();
+            }
+        }
+        out
+    }
+
+    // ── shadow CIB → crm_verify → push ───────────────────────────────────────
+
+    #[test]
+    fn every_pcs_call_targets_the_shadow_cib() {
+        let script = generate_pcs_script(&full_config());
+        assert!(script.contains("set -euo pipefail"));
+        // 라이브 CIB 를 건드려도 되는 것은 원본 덤프, 최종 push, 상태 출력뿐이다.
+        let live_ok = |c: &str| {
+            c.starts_with("pcs cluster cib \"$CIB_ORIG\"")
+                || c.starts_with("pcs cluster cib-push ")
+                || c == "pcs status"
+        };
+        for cmd in commands(&script) {
+            let t = cmd.trim_start_matches("if ! ").trim_start_matches("if ");
+            if t.starts_with('#') || t.starts_with("echo ") {
+                continue;
+            }
+            let mut rest = t;
+            while let Some(i) = rest.find("pcs ") {
+                let tail = &rest[i..];
+                assert!(
+                    tail.starts_with("pcs -f \"$CIB_NEW\" ") || live_ok(tail),
+                    "라이브 CIB 에 직접 가는 pcs 호출: {cmd}"
+                );
+                rest = &rest[i + 4..];
+            }
+        }
+        // 멱등 가드도 shadow 를 봐야 같은 실행 안에서 만든 리소스를 인식한다.
+        assert!(script.contains("if ! pcs -f \"$CIB_NEW\" resource config"));
+        assert!(script.contains("pcs -f \"$CIB_NEW\" constraint --full 2>/dev/null | grep -q"));
+    }
+
+    #[test]
+    fn verify_happens_before_push_and_dry_run_stops_in_between() {
+        let script = generate_pcs_script(&full_config());
+        let pos = |needle: &str| script.find(needle).unwrap_or_else(|| panic!("없음: {needle}"));
+        let dump = pos("pcs cluster cib \"$CIB_ORIG\"");
+        let last_cfg = script.rfind("pcs -f \"$CIB_NEW\"").unwrap();
+        let verify = pos("crm_verify --xml-file \"$CIB_NEW\"");
+        let dry_run = pos("if [ \"${ICM_DRY_RUN:-0}\" = \"1\" ]");
+        let push = pos("pcs cluster cib-push \"$CIB_NEW\" diff-against=\"$CIB_ORIG\"");
+        assert!(dump < last_cfg && last_cfg < verify && verify < dry_run && dry_run < push);
+        // 외부 CIB 로 시작하면 무조건 dry-run (라이브에 push 할 근거가 없다)
+        assert!(script.contains("if [ -n \"${ICM_CIB_SOURCE:-}\" ]; then ICM_DRY_RUN=1; fi"));
+    }
+
+    #[test]
+    fn disabling_stonith_is_guarded_against_the_current_value() {
+        let mut c = full_config();
+        c.cluster.stonith_enabled = false;
+        let script = generate_pcs_script(&c);
+        let guard = script.find("ICM_ALLOW_STONITH_DISABLE").expect("STONITH 가드 없음");
+        let set = script.find("property set stonith-enabled=false").unwrap();
+        assert!(guard < set);
+        assert!(script.contains("CIB_file=\"$CIB_ORIG\" crm_attribute"), "원본 사본에서 조회해야 함");
+
+        c.cluster.stonith_enabled = true;
+        assert!(!generate_pcs_script(&c).contains("ICM_ALLOW_STONITH_DISABLE"));
+    }
+
+    // ── pcs 0.11 문법 (실측) ─────────────────────────────────────────────────
+
+    #[test]
+    fn location_with_id_uses_location_add() {
+        let cmd = generate_location_constraint(&LocationConstraint {
+            id: "loc-1".to_string(),
+            rsc: "grp-app".to_string(),
+            node: "node1".to_string(),
+            score: "100".to_string(),
+        });
+        assert_eq!(cmd, "pcs constraint location add loc-1 grp-app node1 100");
+    }
+
+    #[test]
+    fn promotable_uses_positional_clone_id_and_meta_keyword() {
+        let script = unshadow(&generate_pcs_script(&full_config()));
+        let cmd = commands(&script)
+            .into_iter()
+            .find(|c| c.contains("resource promotable"))
+            .unwrap();
+        assert!(cmd.contains("pcs resource promotable drbd-r0 drbd-r0-clone meta "), "{cmd}");
+        assert!(!cmd.contains(" id="), "{cmd}");
+    }
+
+    #[test]
+    fn resource_defaults_use_update_subcommand() {
+        let script = unshadow(&generate_pcs_script(&full_config()));
+        assert!(script.contains("pcs resource defaults update migration-threshold=3 failure-timeout=60s"));
+    }
+
+    // ── pacemaker-drbd-guide 6절: 자동 생성 규칙 ─────────────────────────────
+
+    fn drbd_named(name: &str) -> DrbdPacemakerResource {
+        DrbdPacemakerResource {
+            resource_name: format!("drbd_{name}"),
+            drbd_resource_name: name.to_string(),
+            clone_name: format!("drbd_{name}-clone"),
+            ..DrbdPacemakerResource::default()
+        }
+    }
+
+    fn svc_named(name: &str) -> SystemdResource {
+        SystemdResource {
+            resource_name: name.to_string(),
+            systemd_unit: format!("{name}.service"),
+            ..SystemdResource::default()
+        }
+    }
+
+    /// 제약 자동 생성의 네 갈래 + 무관한 두 서비스.
+    fn constraint_cases() -> Vec<(&'static str, PacemakerConfig)> {
+        let finish = |mut c: PacemakerConfig| {
+            generate_default_constraints(&mut c);
+            c
+        };
+        let mut cases = vec![("drbd+fs+group", full_config())];
+
+        let mut c = config_with_nodes(3);
+        c.fs_resources.push(FsResource {
+            drbd_clone_name: c.drbd_resources[0].clone_name.clone(),
+            ..FsResource::default()
+        });
+        c.systemd_resources.push(svc_named("app"));
+        cases.push(("drbd+fs", finish(c)));
+
+        let mut c = config_with_nodes(3);
+        c.systemd_resources.push(svc_named("app"));
+        c.resource_groups.push(ResourceGroup {
+            group_name: "grp-app".to_string(),
+            members: vec!["app".to_string()],
+            after_fs: None,
+        });
+        cases.push(("drbd+group", finish(c)));
+
+        let mut c = config_with_nodes(3);
+        c.systemd_resources.push(svc_named("app1"));
+        c.systemd_resources.push(svc_named("app2"));
+        cases.push(("drbd-only", finish(c)));
+
+        let mut c = config_with_nodes(3);
+        c.drbd_resources = vec![drbd_named("mariadb"), drbd_named("bdii")];
+        for n in ["mariadb", "bdii"] {
+            c.fs_resources.push(FsResource {
+                resource_name: format!("fs_{n}"),
+                device: format!("/dev/drbd/by-res/{n}/0"),
+                directory: format!("/opt/{n}"),
+                drbd_clone_name: format!("drbd_{n}-clone"),
+                ..FsResource::default()
+            });
+            c.systemd_resources.push(svc_named(n));
+            c.resource_groups.push(ResourceGroup {
+                group_name: format!("group_{n}"),
+                members: vec![n.to_string()],
+                after_fs: Some(format!("fs_{n}")),
+            });
+        }
+        cases.push(("two-services", finish(c)));
+        cases
+    }
+
+    /// 6절 2항: colocation 과 order 는 항상 짝으로 생성돼야 한다.
+    /// (7.1절 사고: colocation 만 있고 order 가 빠져 promote 전에 마운트 시도)
+    #[test]
+    fn every_colocation_has_matching_order_and_vice_versa() {
+        for (name, c) in constraint_cases() {
+            assert!(!c.colocation_constraints.is_empty(), "[{name}] 제약 없음");
+            for col in &c.colocation_constraints {
+                assert!(
+                    c.order_constraints.iter().any(|o| o.first == col.with_rsc && o.then == col.rsc),
+                    "[{name}] colocation {} 에 대응하는 order({} then {}) 없음",
+                    col.id, col.with_rsc, col.rsc
+                );
+            }
+            for o in &c.order_constraints {
+                assert!(
+                    c.colocation_constraints.iter().any(|col| col.with_rsc == o.first && col.rsc == o.then),
+                    "[{name}] order {} 에 대응하는 colocation 없음",
+                    o.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn drbd_anchored_constraints_use_promote_and_promoted_role() {
+        for (name, c) in constraint_cases() {
+            let clones: Vec<&str> = c.drbd_resources.iter().map(|d| d.clone_name.as_str()).collect();
+            for o in c.order_constraints.iter().filter(|o| clones.contains(&o.first.as_str())) {
+                assert_eq!(o.first_action, "promote", "[{name}] {}", o.id);
+                assert_eq!(o.kind, "Mandatory", "[{name}] {}", o.id);
+            }
+            for col in c.colocation_constraints.iter().filter(|x| clones.contains(&x.with_rsc.as_str())) {
+                assert_eq!(col.with_rsc_role.as_deref(), Some("Promoted"), "[{name}] {}", col.id);
+                assert_eq!(col.score, "INFINITY", "[{name}] {}", col.id);
+            }
+        }
+    }
+
+    #[test]
+    fn every_service_is_started_by_an_order_constraint() {
+        for (name, c) in constraint_cases() {
+            let targets: Vec<&String> = if c.resource_groups.is_empty() {
+                c.systemd_resources.iter().map(|s| &s.resource_name).collect()
+            } else {
+                c.resource_groups.iter().map(|g| &g.group_name).collect()
+            };
+            for t in targets {
+                assert!(c.order_constraints.iter().any(|o| &o.then == t), "[{name}] {t} 를 시작시키는 order 없음");
+            }
+        }
+    }
+
+    #[test]
+    fn constraint_ids_are_unique_and_reference_known_resources() {
+        for (name, c) in constraint_cases() {
+            let mut known: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            known.extend(c.drbd_resources.iter().map(|d| d.clone_name.as_str()));
+            known.extend(c.fs_resources.iter().map(|f| f.resource_name.as_str()));
+            known.extend(c.systemd_resources.iter().map(|s| s.resource_name.as_str()));
+            known.extend(c.resource_groups.iter().map(|g| g.group_name.as_str()));
+
+            let mut ids = std::collections::HashSet::new();
+            for o in &c.order_constraints {
+                assert!(ids.insert(o.id.clone()), "[{name}] id 중복 {}", o.id);
+                assert!(known.contains(o.first.as_str()) && known.contains(o.then.as_str()), "[{name}] {}", o.id);
+            }
+            for col in &c.colocation_constraints {
+                assert!(ids.insert(col.id.clone()), "[{name}] id 중복 {}", col.id);
+                assert!(known.contains(col.rsc.as_str()) && known.contains(col.with_rsc.as_str()), "[{name}] {}", col.id);
+            }
+        }
+    }
+
+    /// 2.3절: 무관한 서비스를 남의 DRBD 에 묶으면 한쪽 장애가 다른 쪽 승급까지 막는다.
+    #[test]
+    fn independent_services_are_not_cross_coupled() {
+        let (_, c) = constraint_cases().pop().unwrap();
+        for (mine, other) in [("mariadb", "bdii"), ("bdii", "mariadb")] {
+            let fs = format!("fs_{mine}");
+            let grp = format!("group_{mine}");
+            let other_clone = format!("drbd_{other}-clone");
+            let other_fs = format!("fs_{other}");
+            assert!(!c.colocation_constraints.iter().any(|x| x.rsc == fs && x.with_rsc == other_clone));
+            assert!(!c.order_constraints.iter().any(|o| o.then == grp && o.first == other_fs));
+        }
     }
 }

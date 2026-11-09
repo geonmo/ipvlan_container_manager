@@ -122,19 +122,30 @@
         <i class="bi bi-info-circle-fill"></i> Running it manually
       </div>
       <div class="card-body">
-        <pre class="bg-dark text-light p-3 rounded small"><code># 1. Copy and run the script (on the first node)
+        <pre class="bg-dark text-light p-3 rounded small"><code># The script applies everything to a COPY of the CIB ('pcs -f'), runs
+# crm_verify + crm_simulate, and pushes the diff only if verification passes.
+
+# 1. Copy the script (to the first node)
 scp pacemaker_setup.sh root@node1:/tmp/
+
+# 2. Verify only - the live cluster is not changed
+ssh root@node1 "ICM_DRY_RUN=1 bash /tmp/pacemaker_setup.sh"
+
+# 3. Apply once verification passes
 ssh root@node1 "bash /tmp/pacemaker_setup.sh"
 
-# 2. Check cluster status
-pcs status
-pcs resource show
-pcs constraint show
+# Offline check against a saved CIB (always a dry run):
+#   ICM_CIB_SOURCE=saved-cib.xml bash pacemaker_setup.sh
 
-# 3. Check DRBD status
+# 4. Check cluster status (pcs 0.11)
+pcs status --full
+pcs resource config
+pcs constraint --full
+
+# 5. Check DRBD status
 drbdadm status
 
-# 4. Check the Quadlet services
+# 6. Check the Quadlet services
 systemctl status myapp.service</code></pre>
       </div>
     </div>
