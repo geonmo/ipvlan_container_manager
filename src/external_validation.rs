@@ -704,6 +704,157 @@ fn generated_pcs_script_passes_pcs_and_crm_verify_on_an_empty_cib() {
     assert!(!out.text.contains("Deprecation Warning"), "deprecated pcs 문법 사용:\n{}", out.text);
 }
 
+/// negative control: 실제로 문제가 됐던 pcs 문법을 pcs 가 정말 거부하는지.
+/// 같은 리소스에 대한 올바른 형식은 통과해야 한다 — 그래야 거부가 환경 문제가
+/// 아니라 문법 때문임이 보장된다.
+#[test]
+fn pcs_rejects_previously_generated_bad_syntax() {
+    if let Err(why) = pcs_toolchain() {
+        skip("pcs 문법 negative control", why);
+        return;
+    }
+    let dir = TempDir::new("pcs-neg");
+    let cib = dir.path().join("cib.xml");
+    let cib_s = cib.display().to_string();
+    let setup = run_shell(&format!(
+        "cibadmin --empty > '{c}' && pcs -f '{c}' resource create a ocf:heartbeat:Dummy \
+         && pcs -f '{c}' resource create b ocf:pacemaker:Stateful \
+         && pcs -f '{c}' resource promotable b b-clone",
+        c = cib_s
+    ));
+    assert!(setup.ok, "준비 실패:\n{}", setup.text);
+
+    let cases = [
+        // (설명, 거부돼야 할 명령, 통과해야 할 올바른 형식)
+        (
+            "colocation 역할을 뒤에 붙임",
+            "constraint colocation add a with b-clone role=Promoted score=INFINITY id=c-bad",
+            "constraint colocation add a with Promoted b-clone score=INFINITY id=c-good",
+        ),
+        (
+            "prefers 형식에 id= 지정",
+            "constraint location a prefers node1=100 id=l-bad",
+            "constraint location add l-good a node1 100",
+        ),
+    ];
+    for (what, bad, good) in cases {
+        let b = run_shell(&format!("pcs -f '{}' {}", cib_s, bad));
+        assert!(!b.ok, "negative control 실패: pcs 가 잘못된 문법({what})을 받아들였다:\n{bad}\n{}", b.text);
+        let g = run_shell(&format!("pcs -f '{}' {}", cib_s, good));
+        assert!(g.ok, "올바른 형식({what})이 거부됐다:\n{good}\n{}", g.text);
+    }
+}
+
+/// 생성 스크립트를 dry-run 이 **아닌** 실제 적용 경로로 실행한다.
+///
+/// PATH 앞에 둔 가짜 `pcs` 가 라이브 클러스터를 건드리는 두 호출만 가로챈다:
+/// `pcs cluster cib <f>` → 준비한 CIB 복사, `pcs cluster cib-push …` → 로그 기록.
+/// 나머지(`pcs -f …`)는 진짜 pcs 로 넘긴다. 그래서 "검증이 실패하면 push 하지
+/// 않는다"는 보장을 push 호출 여부로 직접 확인할 수 있다.
+fn run_pcs_script_live_path(
+    dir: &TempDir,
+    tag: &str,
+    script: &str,
+    source_cib: &Path,
+    extra_env: &[(&str, &str)],
+) -> (Run, String) {
+    let real_pcs = which("pcs").unwrap();
+    let shim_dir = dir.path().join(format!("shim-{tag}"));
+    std::fs::create_dir_all(&shim_dir).unwrap();
+    let push_log = dir.path().join(format!("push-{tag}.log"));
+    let shim = format!(
+        "#!/bin/bash\n\
+         if [ \"$1 $2\" = \"cluster cib\" ]; then cp '{src}' \"$3\"; exit 0; fi\n\
+         if [ \"$1 $2\" = \"cluster cib-push\" ]; then echo \"$*\" >> '{log}'; exit 0; fi\n\
+         if [ \"$1\" = \"status\" ]; then exit 0; fi\n\
+         exec '{real}' \"$@\"\n",
+        src = source_cib.display(),
+        log = push_log.display(),
+        real = real_pcs.display()
+    );
+    let shim_path = shim_dir.join("pcs");
+    std::fs::write(&shim_path, shim).unwrap();
+    let chmod = run_shell(&format!("chmod +x '{}'", shim_path.display()));
+    assert!(chmod.ok);
+
+    let path = dir.write(&format!("setup-{tag}.sh"), script);
+    let mut cmd = Command::new("bash");
+    let sys_path = std::env::var("PATH").unwrap_or_default();
+    cmd.arg(&path)
+        .env("PATH", format!("{}:{}:/usr/sbin:/sbin", shim_dir.display(), sys_path))
+        .env("TMPDIR", dir.path())
+        .env_remove("ICM_DRY_RUN")
+        .env_remove("ICM_CIB_SOURCE");
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    let out = exec(cmd);
+    let pushed = std::fs::read_to_string(&push_log).unwrap_or_default();
+    (out, pushed)
+}
+
+#[test]
+fn pcs_script_pushes_only_when_every_check_passes() {
+    if let Err(why) = pcs_toolchain() {
+        skip("pcs 스크립트 차단 경로 검증", why);
+        return;
+    }
+    use crate::generators::pacemaker::{generate_default_constraints, generate_pcs_script};
+
+    let dir = TempDir::new("pcs-gate");
+    let empty = dir.path().join("empty-cib.xml");
+    assert!(run_shell(&format!("cibadmin --empty > '{}'", empty.display())).ok);
+
+    let mut config = pacemaker_config_without_fencing();
+    if !run_shell("crm_resource --show-metadata systemd:dbus.service >/dev/null 2>&1").ok {
+        skip("차단 경로 검증의 systemd 리소스/그룹 부분", "systemd/D-Bus 없음 (컨테이너?)");
+        config.systemd_resources.clear();
+        config.resource_groups.clear();
+        config.order_constraints.clear();
+        config.colocation_constraints.clear();
+        generate_default_constraints(&mut config);
+    }
+    let allow = [("ICM_ALLOW_STONITH_DISABLE", "1")];
+
+    // positive control: 정상 설정이면 실제로 push 까지 간다 (diff 기반).
+    let good = generate_pcs_script(&config);
+    let (out, pushed) = run_pcs_script_live_path(&dir, "good", &good, &empty, &allow);
+    assert!(out.ok, "정상 설정이 실패했다:\n{}", out.text);
+    assert!(
+        pushed.contains("cluster cib-push") && pushed.contains("diff-against="),
+        "정상 설정인데 diff push 가 일어나지 않았다:\n{}\n{}",
+        pushed,
+        out.text
+    );
+
+    // 1) pcs 가 거부하는 명령 → 그 자리에서 중단, crm_verify 에도 도달하지 않고 push 없음.
+    let bad_pcs = good.replacen(
+        "# --- Verify",
+        "pcs -f \"$CIB_NEW\" constraint colocation add fs-r0 with drbd-r0-clone role=Promoted score=INFINITY id=col-bad\n\n# --- Verify",
+        1,
+    );
+    assert_ne!(bad_pcs, good, "주입 지점(# --- Verify)을 찾지 못했다");
+    let (out, pushed) = run_pcs_script_live_path(&dir, "bad-pcs", &bad_pcs, &empty, &allow);
+    assert!(!out.ok, "pcs 오류인데 스크립트가 성공으로 끝났다:\n{}", out.text);
+    assert!(!out.text.contains(">> crm_verify"), "pcs 오류 뒤에도 계속 진행했다:\n{}", out.text);
+    assert!(pushed.is_empty(), "pcs 오류인데 push 가 일어났다: {pushed}");
+
+    // 2) pcs 는 받아들이지만 crm_verify 가 거부하는 설정 → 검증 단계에서 중단, push 없음.
+    //    STONITH 를 켜 두고 fencing 장치를 하나도 정의하지 않으면 crm_verify 가
+    //    "no STONITH resources have been defined" 로 거부한다(실측 rc=78).
+    let mut no_fence_dev = config.clone();
+    no_fence_dev.cluster.stonith_enabled = true;
+    let verify_fail = generate_pcs_script(&no_fence_dev);
+    let (out, pushed) = run_pcs_script_live_path(&dir, "bad-verify", &verify_fail, &empty, &[]);
+    assert!(!out.ok, "crm_verify 실패인데 스크립트가 성공으로 끝났다:\n{}", out.text);
+    assert!(
+        out.text.contains("crm_verify failed - nothing was applied"),
+        "crm_verify 단계에서 멈추지 않았다:\n{}",
+        out.text
+    );
+    assert!(pushed.is_empty(), "crm_verify 실패인데 push 가 일어났다: {pushed}");
+}
+
 // ─── LINSTOR (외부 컬렉션 필요) ─────────────────────────────────────────────
 
 use crate::models::linstor::{
