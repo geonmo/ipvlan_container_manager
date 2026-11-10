@@ -331,8 +331,9 @@ pub async fn generate(
     }
 
     // 자동 제약조건 생성
+    let mut constraint_warnings = Vec::new();
     if form.auto_constraints.as_deref() == Some("on") {
-        generate_default_constraints(&mut config);
+        constraint_warnings = generate_default_constraints(&mut config);
     }
 
     // 수동 Order 제약조건
@@ -378,6 +379,7 @@ pub async fn generate(
 
     let mut ctx = Context::new();
     ctx.insert("result", &result);
+    ctx.insert("constraint_warnings", &constraint_warnings);
 
     let rendered = state.tera.render("pacemaker/result.html", &ctx)
         .unwrap_or_else(|e| format!("<pre>Template error: {}</pre>", e));

@@ -12,6 +12,15 @@
       </a>
     </div>
 
+    {% if constraint_warnings %}
+    <div class="alert alert-warning">
+      <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle-fill"></i> Check the auto-generated constraints</div>
+      <ul class="mb-0">
+        {% for w in constraint_warnings %}<li>{{ w }}</li>{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
     <!-- pcs script -->
     <div class="card shadow-sm mb-4">
       <div class="card-header bg-danger text-white d-flex align-items-center">

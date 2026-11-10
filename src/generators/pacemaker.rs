@@ -563,127 +563,155 @@ pub(crate) fn generate_location_constraint(loc: &LocationConstraint) -> String {
 /// 체인: DRBD promote → FS mount start → Group(Pod→Container) start
 /// Move 시 역순: Group stop → FS unmount → DRBD demote
 ///
-/// 케이스별 처리:
-/// 1. DRBD + FS + Group  → DRBD→FS, FS→Group (권장)
-/// 2. DRBD + FS (그룹 없음) → DRBD→FS, FS→각 systemd 리소스
-/// 3. DRBD + 그룹 (FS 없음) → DRBD→Group
-/// 4. DRBD만 (레거시) → DRBD→각 systemd 리소스
-pub fn generate_default_constraints(config: &mut PacemakerConfig) {
-    // 사전에 필요한 데이터를 복제 (borrow checker 회피)
-    let drbd_list: Vec<_> = config.drbd_resources.clone();
-    let fs_list: Vec<_> = config.fs_resources.clone();
-    let svc_list: Vec<_> = config.systemd_resources.clone();
-    let grp_list: Vec<_> = config.resource_groups.clone();
+/// **기준점(anchor)**: DRBD 클론마다 서비스가 기다려야 할 지점을 정한다.
+/// - 그 DRBD에 귀속된 FS가 있으면 → 각 FS (DRBD→FS 체인을 먼저 만든다)
+/// - FS가 없으면 → DRBD 클론 자체 (`promote` / `Promoted` 역할로 연결)
+///
+/// 한 서비스가 DRBD 볼륨을 여러 개 쓰면 그 서비스는 **모든 기준점 뒤에**
+/// order + colocation 으로 연결된다. 그래서 어떤 볼륨이든 promote/mount
+/// 되기 전에는 서비스가 뜨지 않고, colocation 이 겹치면서 모든 DRBD가
+/// 같은 노드에서 Promoted 가 된다. DRBD끼리의 순서는 두지 않는다(병렬 promote).
+///
+/// 대상(target):
+/// - 그룹이 있으면 그룹. `after_fs` 에 쉼표로 나열한 FS 이름(또는 FS 없는
+///   DRBD 클론 이름)만 기준점으로 쓴다. `after_fs` 가 없으면 모든 기준점.
+/// - 그룹이 없으면 각 systemd 리소스가 모든 기준점 뒤에 온다.
+///
+/// 반환값: 어떤 서비스에도 연결되지 않은 기준점이나 알 수 없는 `after_fs`
+/// 이름 같은, 사용자가 확인해야 할 경고 목록.
+pub fn generate_default_constraints(config: &mut PacemakerConfig) -> Vec<String> {
+    let mut warnings = Vec::new();
 
-    for drbd in &drbd_list {
-        if !fs_list.is_empty() {
-            // ── 1단계: DRBD → FS ─────────────────────────────────────────────
-            for fs in &fs_list {
-                let linked_drbd = if fs.drbd_clone_name.is_empty() {
-                    &drbd.clone_name
-                } else {
-                    &fs.drbd_clone_name
-                };
-                // FS가 다른 DRBD에 귀속된 경우 건너뜀
-                if !fs.drbd_clone_name.is_empty() && fs.drbd_clone_name != drbd.clone_name {
-                    continue;
-                }
+    #[derive(Clone)]
+    struct Anchor {
+        name: String,
+        /// FS 없는 DRBD 클론이면 true → promote/Promoted 로 연결
+        is_drbd: bool,
+        /// 이 기준점이 속한 DRBD 클론 (after_fs 에 클론 이름을 적은 경우 매칭용)
+        drbd: String,
+    }
 
-                config.order_constraints.push(OrderConstraint {
-                    id: format!("ord-{}-after-{}", fs.resource_name, linked_drbd),
-                    first: linked_drbd.clone(),
-                    first_action: "promote".to_string(),
-                    then: fs.resource_name.clone(),
-                    then_action: "start".to_string(),
-                    kind: "Mandatory".to_string(),
-                });
-                config.colocation_constraints.push(ColocationConstraint {
-                    id: format!("col-{}-with-{}", fs.resource_name, linked_drbd),
-                    rsc: fs.resource_name.clone(),
-                    rsc_role: None,
-                    with_rsc: linked_drbd.clone(),
-                    with_rsc_role: Some("Promoted".to_string()),
-                    score: "INFINITY".to_string(),
-                });
+    let mut orders: Vec<OrderConstraint> = Vec::new();
+    let mut cols: Vec<ColocationConstraint> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut link = |orders: &mut Vec<OrderConstraint>,
+                    cols: &mut Vec<ColocationConstraint>,
+                    first: &str,
+                    first_is_drbd: bool,
+                    then: &str| {
+        if !seen.insert((first.to_string(), then.to_string())) {
+            return;
+        }
+        orders.push(OrderConstraint {
+            id: format!("ord-{then}-after-{first}"),
+            first: first.to_string(),
+            first_action: if first_is_drbd { "promote" } else { "start" }.to_string(),
+            then: then.to_string(),
+            then_action: "start".to_string(),
+            kind: "Mandatory".to_string(),
+        });
+        cols.push(ColocationConstraint {
+            id: format!("col-{then}-with-{first}"),
+            rsc: then.to_string(),
+            rsc_role: None,
+            with_rsc: first.to_string(),
+            with_rsc_role: first_is_drbd.then(|| "Promoted".to_string()),
+            score: "INFINITY".to_string(),
+        });
+    };
 
-                // ── 2단계: FS → Group 또는 FS → 개별 리소스 ─────────────────
-                let groups_for_fs: Vec<&ResourceGroup> = grp_list
-                    .iter()
-                    .filter(|g| {
-                        g.after_fs.as_deref() == Some(&fs.resource_name)
-                            || g.after_fs.is_none()
-                    })
-                    .collect();
-
-                if !groups_for_fs.is_empty() {
-                    for grp in groups_for_fs {
-                        config.order_constraints.push(OrderConstraint {
-                            id: format!("ord-{}-after-{}", grp.group_name, fs.resource_name),
-                            first: fs.resource_name.clone(),
-                            first_action: "start".to_string(),
-                            then: grp.group_name.clone(),
-                            then_action: "start".to_string(),
-                            kind: "Mandatory".to_string(),
-                        });
-                        config.colocation_constraints.push(ColocationConstraint {
-                            id: format!("col-{}-with-{}", grp.group_name, fs.resource_name),
-                            rsc: grp.group_name.clone(),
-                            rsc_role: None,
-                            with_rsc: fs.resource_name.clone(),
-                            with_rsc_role: None,
-                            score: "INFINITY".to_string(),
-                        });
-                    }
-                } else {
-                    // 그룹 없음 → 개별 systemd 리소스에 직접 연결
-                    for svc in &svc_list {
-                        config.order_constraints.push(OrderConstraint {
-                            id: format!("ord-{}-after-{}", svc.resource_name, fs.resource_name),
-                            first: fs.resource_name.clone(),
-                            first_action: "start".to_string(),
-                            then: svc.resource_name.clone(),
-                            then_action: "start".to_string(),
-                            kind: "Mandatory".to_string(),
-                        });
-                        config.colocation_constraints.push(ColocationConstraint {
-                            id: format!("col-{}-with-{}", svc.resource_name, fs.resource_name),
-                            rsc: svc.resource_name.clone(),
-                            rsc_role: None,
-                            with_rsc: fs.resource_name.clone(),
-                            with_rsc_role: None,
-                            score: "INFINITY".to_string(),
-                        });
-                    }
-                }
+    // ── 1단계: DRBD → FS, 기준점 수집 ────────────────────────────────────
+    let mut anchors: Vec<Anchor> = Vec::new();
+    for drbd in &config.drbd_resources {
+        let mut has_fs = false;
+        for fs in &config.fs_resources {
+            // drbd_clone_name 이 비어 있으면 모든 DRBD 에 귀속된 것으로 본다.
+            if !fs.drbd_clone_name.is_empty() && fs.drbd_clone_name != drbd.clone_name {
+                continue;
             }
-        } else {
-            // FS 없음 — DRBD → Group 또는 DRBD → 개별 리소스
-            let targets: Vec<String> = if !grp_list.is_empty() {
-                grp_list.iter().map(|g| g.group_name.clone()).collect()
-            } else {
-                svc_list.iter().map(|s| s.resource_name.clone()).collect()
-            };
-
-            for target in targets {
-                config.order_constraints.push(OrderConstraint {
-                    id: format!("ord-{}-after-{}", target, drbd.clone_name),
-                    first: drbd.clone_name.clone(),
-                    first_action: "promote".to_string(),
-                    then: target.clone(),
-                    then_action: "start".to_string(),
-                    kind: "Mandatory".to_string(),
-                });
-                config.colocation_constraints.push(ColocationConstraint {
-                    id: format!("col-{}-with-{}", target, drbd.clone_name),
-                    rsc: target.clone(),
-                    rsc_role: None,
-                    with_rsc: drbd.clone_name.clone(),
-                    with_rsc_role: Some("Promoted".to_string()),
-                    score: "INFINITY".to_string(),
+            has_fs = true;
+            link(&mut orders, &mut cols, &drbd.clone_name, true, &fs.resource_name);
+            if !anchors.iter().any(|a| a.name == fs.resource_name) {
+                anchors.push(Anchor {
+                    name: fs.resource_name.clone(),
+                    is_drbd: false,
+                    drbd: drbd.clone_name.clone(),
                 });
             }
         }
+        if !has_fs {
+            anchors.push(Anchor {
+                name: drbd.clone_name.clone(),
+                is_drbd: true,
+                drbd: drbd.clone_name.clone(),
+            });
+        }
     }
+
+    // ── 2단계: 기준점 → 그룹 / 개별 리소스 ───────────────────────────────
+    let mut used = vec![false; anchors.len()];
+    if !config.resource_groups.is_empty() {
+        for grp in &config.resource_groups {
+            let selected: Vec<usize> = match &grp.after_fs {
+                None => (0..anchors.len()).collect(),
+                Some(list) => {
+                    let mut sel = Vec::new();
+                    for name in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                        let hits: Vec<usize> = (0..anchors.len())
+                            .filter(|&i| anchors[i].name == name || anchors[i].drbd == name)
+                            .collect();
+                        if hits.is_empty() {
+                            warnings.push(format!(
+                                "그룹 {}의 after_fs '{}'는 FS나 DRBD 클론 이름이 아니라 무시했습니다.",
+                                grp.group_name, name
+                            ));
+                        }
+                        sel.extend(hits);
+                    }
+                    sel
+                }
+            };
+            for i in selected {
+                used[i] = true;
+                link(&mut orders, &mut cols, &anchors[i].name, anchors[i].is_drbd, &grp.group_name);
+            }
+        }
+        // 그룹이 하나뿐이면 남은 기준점도 그 그룹의 것이다 (예전 UI가
+        // after_fs 에 첫 FS 하나만 채우던 설정을 그대로 넣어도 안전하게).
+        if config.resource_groups.len() == 1 {
+            let grp = &config.resource_groups[0].group_name;
+            for i in 0..anchors.len() {
+                if !used[i] {
+                    used[i] = true;
+                    link(&mut orders, &mut cols, &anchors[i].name, anchors[i].is_drbd, grp);
+                }
+            }
+        }
+    } else {
+        for svc in &config.systemd_resources {
+            for (i, a) in anchors.iter().enumerate() {
+                used[i] = true;
+                link(&mut orders, &mut cols, &a.name, a.is_drbd, &svc.resource_name);
+            }
+        }
+    }
+
+    let has_targets = !config.resource_groups.is_empty() || !config.systemd_resources.is_empty();
+    if has_targets {
+        for (i, a) in anchors.iter().enumerate() {
+            if !used[i] {
+                warnings.push(format!(
+                    "{}는 어떤 그룹의 after_fs에도 없어 서비스 시작 순서에 묶이지 않았습니다. \
+                     이 볼륨을 쓰는 그룹의 after_fs에 추가하세요.",
+                    a.name
+                ));
+            }
+        }
+    }
+
+    config.order_constraints.extend(orders);
+    config.colocation_constraints.extend(cols);
+    warnings
 }
 
 /// 이 설정이 만든 Pacemaker 리소스/제약조건을 제거하는 스크립트 생성.
@@ -1518,7 +1546,129 @@ mod tests {
             });
         }
         cases.push(("two-services", finish(c)));
+
+        for (label, case) in multi_volume_cases() {
+            cases.push((label, finish(case)));
+        }
         cases
+    }
+
+    fn fs_of(n: &str) -> FsResource {
+        FsResource {
+            resource_name: format!("fs_{n}"),
+            device: format!("/dev/drbd/by-res/{n}/0"),
+            directory: format!("/opt/{n}"),
+            drbd_clone_name: format!("drbd_{n}-clone"),
+            ..FsResource::default()
+        }
+    }
+
+    /// 한 서비스(그룹 grp, 멤버 app)가 DRBD 볼륨 a, b 를 함께 쓰는 경우들.
+    fn multi_volume_cases() -> Vec<(&'static str, PacemakerConfig)> {
+        let base = |fs: &[&str], after_fs: Option<&str>| {
+            let mut c = config_with_nodes(2);
+            c.drbd_resources = vec![drbd_named("a"), drbd_named("b")];
+            c.fs_resources = fs.iter().map(|n| fs_of(n)).collect();
+            c.systemd_resources.push(svc_named("app"));
+            c.resource_groups.push(ResourceGroup {
+                group_name: "grp".to_string(),
+                members: vec!["app".to_string()],
+                after_fs: after_fs.map(str::to_string),
+            });
+            c
+        };
+        let mut no_group = base(&["a", "b"], None);
+        no_group.resource_groups.clear();
+        vec![
+            ("multi: 2 FS, after_fs 없음", base(&["a", "b"], None)),
+            ("multi: 2 FS, after_fs 둘 다", base(&["a", "b"], Some("fs_a, fs_b"))),
+            // 예전 UI 가 채우던 값 (첫 FS 하나만)
+            ("multi: 2 FS, after_fs 첫 FS만", base(&["a", "b"], Some("fs_a"))),
+            ("multi: a만 FS", base(&["a"], None)),
+            ("multi: a만 FS, after_fs 둘 다", base(&["a"], Some("fs_a,drbd_b-clone"))),
+            ("multi: FS 없음", base(&[], None)),
+            ("multi: 그룹 없음", no_group),
+        ]
+    }
+
+    /// order 그래프에서 `from` 이 `to` 의 상류(먼저 시작)인지.
+    fn starts_before(c: &PacemakerConfig, from: &str, to: &str) -> bool {
+        let mut stack = vec![to.to_string()];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(n) = stack.pop() {
+            for o in c.order_constraints.iter().filter(|o| o.then == n) {
+                if o.first == from {
+                    return true;
+                }
+                if seen.insert(o.first.clone()) {
+                    stack.push(o.first.clone());
+                }
+            }
+        }
+        false
+    }
+
+    /// 한 서비스가 DRBD 볼륨을 여러 개 쓰면, 모든 볼륨이 promote(와 mount)된
+    /// 뒤에야 서비스가 시작되고, 모두 같은 노드여야 한다.
+    #[test]
+    fn service_waits_for_every_drbd_volume_it_uses() {
+        for (name, c) in multi_volume_cases() {
+            let mut c = c;
+            let warnings = generate_default_constraints(&mut c);
+            assert!(warnings.is_empty(), "[{name}] 경고 {warnings:?}");
+            let target = if c.resource_groups.is_empty() { "app" } else { "grp" };
+            for d in &c.drbd_resources {
+                assert!(starts_before(&c, &d.clone_name, target), "[{name}] {target} 가 {} 를 기다리지 않음", d.clone_name);
+            }
+            for fs in &c.fs_resources {
+                assert!(starts_before(&c, &fs.resource_name, target), "[{name}] {target} 가 {} 를 기다리지 않음", fs.resource_name);
+            }
+            // 같은 노드 강제: target 이 각 기준점과 직접 colocation
+            for d in &c.drbd_resources {
+                let anchor = c.fs_resources.iter()
+                    .find(|f| f.drbd_clone_name == d.clone_name)
+                    .map(|f| f.resource_name.clone())
+                    .unwrap_or_else(|| d.clone_name.clone());
+                assert!(
+                    c.colocation_constraints.iter().any(|x| x.rsc == target && x.with_rsc == anchor),
+                    "[{name}] {target} 와 {anchor} colocation 없음"
+                );
+            }
+        }
+    }
+
+    /// 그룹이 있으면 제약은 그룹에만 건다. 멤버에 따로 걸면 그룹이 쪼개진다.
+    #[test]
+    fn group_members_never_get_their_own_constraints() {
+        for (name, c) in constraint_cases() {
+            let members: Vec<&String> = c.resource_groups.iter().flat_map(|g| &g.members).collect();
+            for m in members {
+                assert!(!c.order_constraints.iter().any(|o| &o.then == m || &o.first == m), "[{name}] 멤버 {m} 에 order");
+                assert!(!c.colocation_constraints.iter().any(|x| &x.rsc == m || &x.with_rsc == m), "[{name}] 멤버 {m} 에 colocation");
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_after_fs_name_is_reported() {
+        let mut c = multi_volume_cases().remove(0).1;
+        c.resource_groups[0].after_fs = Some("fs_a, fs_typo".to_string());
+        let warnings = generate_default_constraints(&mut c);
+        assert!(warnings.iter().any(|w| w.contains("fs_typo")), "{warnings:?}");
+    }
+
+    /// 그룹이 여럿인데 어떤 볼륨이 어느 그룹의 after_fs 에도 없으면 아무 서비스도
+    /// 그 볼륨을 기다리지 않는다. 조용히 넘어가지 말고 경고해야 한다.
+    #[test]
+    fn volume_claimed_by_no_group_is_reported() {
+        let mut c = constraint_cases().into_iter().find(|(n, _)| *n == "two-services").unwrap().1;
+        c.order_constraints.clear();
+        c.colocation_constraints.clear();
+        c.drbd_resources.push(drbd_named("extra"));
+        c.fs_resources.push(fs_of("extra"));
+        let warnings = generate_default_constraints(&mut c);
+        assert!(warnings.iter().any(|w| w.contains("fs_extra")), "{warnings:?}");
+        assert!(!c.order_constraints.iter().any(|o| o.first == "fs_extra" && o.then.starts_with("group_")));
     }
 
     /// 6절 2항: colocation 과 order 는 항상 짝으로 생성돼야 한다.
@@ -1597,7 +1747,7 @@ mod tests {
     /// 2.3절: 무관한 서비스를 남의 DRBD 에 묶으면 한쪽 장애가 다른 쪽 승급까지 막는다.
     #[test]
     fn independent_services_are_not_cross_coupled() {
-        let (_, c) = constraint_cases().pop().unwrap();
+        let (_, c) = constraint_cases().into_iter().find(|(n, _)| *n == "two-services").unwrap();
         for (mine, other) in [("mariadb", "bdii"), ("bdii", "mariadb")] {
             let fs = format!("fs_{mine}");
             let grp = format!("group_{mine}");

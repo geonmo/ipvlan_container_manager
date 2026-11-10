@@ -198,7 +198,9 @@ impl Default for FsResource {
 pub struct ResourceGroup {
     pub group_name: String,         // e.g. "grp-myapp"
     pub members: Vec<String>,       // 순서 있는 리소스 이름 목록 (pod → container들)
-    /// 이 그룹이 어느 FS 리소스 뒤에 와야 하는지 (없으면 DRBD clone 직후)
+    /// 이 그룹이 기다릴 기준점: 쉼표로 나열한 FS 이름 또는 FS 없는 DRBD 클론 이름.
+    /// 없으면 모든 DRBD 볼륨(의 FS) 뒤에 온다. 한 서비스가 볼륨을 여러 개
+    /// 쓰면 전부 나열해야 한다 — 하나라도 빠지면 그 볼륨보다 먼저 뜰 수 있다.
     pub after_fs: Option<String>,
 }
 

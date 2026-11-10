@@ -160,7 +160,8 @@
               <div class="px-3 py-2 small text-muted bg-light border-top">
                 <code>group_name</code>: group name (e.g. <code>grp-myapp</code>),
                 <code>members</code>: ordered list of resource names &mdash; pod first,
-                <code>after_fs</code>: name of the preceding FS resource
+                <code>after_fs</code>: FS resources (or DRBD clones without FS) the group waits for, comma-separated &mdash;
+                list <strong>every</strong> volume the group uses; leave it out to wait for all of them
               </div>
             </div>
           </div>
@@ -678,6 +679,16 @@ function syncDrbdJson() {
   document.getElementById('drbdResourcesJson').value = JSON.stringify(drbdGroups);
 }
 
+// 그룹이 기다려야 할 기준점 = 모든 DRBD 볼륨의 FS (FS 없는 DRBD는 클론 이름).
+// 한 서비스가 볼륨을 여러 개 쓰면 하나라도 빠지면 그 볼륨보다 먼저 뜰 수 있으므로
+// 첫 FS 하나가 아니라 전부를 쉼표로 나열한다.
+function defaultAfterFs() {
+  return drbdGroups
+    .map(g => (g.fs && g.fs.resource_name) ? g.fs.resource_name : g.clone_name)
+    .filter(Boolean)
+    .join(', ');
+}
+
 function updateGrpAfterFs() {
   if (!drbdGroups.length) return;
   const grpEl = document.getElementById('grpJson');
@@ -685,8 +696,8 @@ function updateGrpAfterFs() {
   try {
     const grps = JSON.parse(grpVal);
     if (grps.length > 0) {
-      const firstFs = drbdGroups[0].fs && drbdGroups[0].fs.resource_name;
-      if (firstFs) grps.forEach(g => { if (!g.after_fs || g.after_fs.startsWith('fs-')) g.after_fs = firstFs; });
+      const anchors = defaultAfterFs();
+      if (anchors) grps.forEach(g => { if (!g.after_fs || g.after_fs.startsWith('fs-')) g.after_fs = anchors; });
       const updated = JSON.stringify(grps, null, 2);
       if (grpEl._cmEditor) grpEl._cmEditor.setValue(updated);
       else grpEl.value = updated;
@@ -760,7 +771,7 @@ function loadExample() {
 }
 
 function loadGrpExample() {
-  const firstFs = drbdGroups.length && drbdGroups[0].fs ? drbdGroups[0].fs.resource_name : 'fs-r0';
+  const firstFs = defaultAfterFs() || 'fs-r0';
   const example = JSON.stringify([
     {
       "group_name": "grp-myapp",
@@ -1116,7 +1127,7 @@ function applyServiceToForm(dataStr) {
 
   const groups = resources.filter(r => classifyResource(r) === 'group');
   if (groups.length) {
-    const firstFs = drbdGroups.length && drbdGroups[0].fs ? drbdGroups[0].fs.resource_name : '';
+    const firstFs = defaultAfterFs();
     const grpData = groups.map(g => ({
       group_name: g.id,
       members:    (g.members||[]).map(m=>m.id),
