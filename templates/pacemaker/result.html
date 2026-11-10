@@ -12,12 +12,27 @@
       </a>
     </div>
 
-    {% if constraint_warnings %}
-    <div class="alert alert-warning">
-      <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle-fill"></i> Check the auto-generated constraints</div>
-      <ul class="mb-0">
-        {% for w in constraint_warnings %}<li>{{ w }}</li>{% endfor %}
+    {% if constraint_report %}
+    <!-- 자동 제약 요약: 규칙을 몰라도 결과만 보고 확인할 수 있게 -->
+    <div class="card shadow-sm mb-4">
+      <div class="card-header fw-bold"><i class="bi bi-diagram-3-fill"></i> Startup order (auto-generated constraints)</div>
+      <ul class="list-group list-group-flush">
+        {% for w in constraint_report.waits %}
+        <li class="list-group-item small">
+          <code>{{ w.target }}</code> starts only after:
+          {% if w.anchors %}{% for a in w.anchors %}<code>{{ a }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+          {% else %}<span class="text-danger fw-bold">nothing &mdash; no DRBD volume</span>{% endif %}
+        </li>
+        {% endfor %}
       </ul>
+      {% if constraint_report.warnings %}
+      <div class="card-footer bg-warning-subtle">
+        <div class="fw-bold mb-1"><i class="bi bi-exclamation-triangle-fill"></i> Check these</div>
+        <ul class="mb-0 small">
+          {% for w in constraint_report.warnings %}<li>{{ w }}</li>{% endfor %}
+        </ul>
+      </div>
+      {% endif %}
     </div>
     {% endif %}
 

@@ -558,6 +558,21 @@ pub(crate) fn generate_location_constraint(loc: &LocationConstraint) -> String {
     )
 }
 
+/// 자동 제약 생성 결과 중 사용자에게 보여줄 것.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct ConstraintReport {
+    /// 서비스(그룹 또는 systemd 리소스)마다 시작 전에 기다리는 기준점 목록.
+    pub waits: Vec<ServiceWaits>,
+    /// 알 수 없는 `after_fs` 이름, 어느 서비스도 기다리지 않는 볼륨 등.
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ServiceWaits {
+    pub target: String,
+    pub anchors: Vec<String>,
+}
+
 /// 기본 권장 제약조건 자동 생성
 ///
 /// 체인: DRBD promote → FS mount start → Group(Pod→Container) start
@@ -577,10 +592,11 @@ pub(crate) fn generate_location_constraint(loc: &LocationConstraint) -> String {
 ///   DRBD 클론 이름)만 기준점으로 쓴다. `after_fs` 가 없으면 모든 기준점.
 /// - 그룹이 없으면 각 systemd 리소스가 모든 기준점 뒤에 온다.
 ///
-/// 반환값: 어떤 서비스에도 연결되지 않은 기준점이나 알 수 없는 `after_fs`
-/// 이름 같은, 사용자가 확인해야 할 경고 목록.
-pub fn generate_default_constraints(config: &mut PacemakerConfig) -> Vec<String> {
+/// 예외 규칙은 없다: `after_fs` 를 적었으면 적은 것만 쓴다. 어느 대상에도
+/// 연결되지 않은 볼륨은 자동으로 붙이지 않고 경고로 알린다.
+pub fn generate_default_constraints(config: &mut PacemakerConfig) -> ConstraintReport {
     let mut warnings = Vec::new();
+    let mut waits = Vec::new();
 
     #[derive(Clone)]
     struct Anchor {
@@ -671,21 +687,15 @@ pub fn generate_default_constraints(config: &mut PacemakerConfig) -> Vec<String>
                     sel
                 }
             };
+            let mut names = Vec::new();
             for i in selected {
                 used[i] = true;
                 link(&mut orders, &mut cols, &anchors[i].name, anchors[i].is_drbd, &grp.group_name);
-            }
-        }
-        // 그룹이 하나뿐이면 남은 기준점도 그 그룹의 것이다 (예전 UI가
-        // after_fs 에 첫 FS 하나만 채우던 설정을 그대로 넣어도 안전하게).
-        if config.resource_groups.len() == 1 {
-            let grp = &config.resource_groups[0].group_name;
-            for i in 0..anchors.len() {
-                if !used[i] {
-                    used[i] = true;
-                    link(&mut orders, &mut cols, &anchors[i].name, anchors[i].is_drbd, grp);
+                if !names.contains(&anchors[i].name) {
+                    names.push(anchors[i].name.clone());
                 }
             }
+            waits.push(ServiceWaits { target: grp.group_name.clone(), anchors: names });
         }
     } else {
         for svc in &config.systemd_resources {
@@ -693,6 +703,10 @@ pub fn generate_default_constraints(config: &mut PacemakerConfig) -> Vec<String>
                 used[i] = true;
                 link(&mut orders, &mut cols, &a.name, a.is_drbd, &svc.resource_name);
             }
+            waits.push(ServiceWaits {
+                target: svc.resource_name.clone(),
+                anchors: anchors.iter().map(|a| a.name.clone()).collect(),
+            });
         }
     }
 
@@ -711,7 +725,7 @@ pub fn generate_default_constraints(config: &mut PacemakerConfig) -> Vec<String>
 
     config.order_constraints.extend(orders);
     config.colocation_constraints.extend(cols);
-    warnings
+    ConstraintReport { waits, warnings }
 }
 
 /// 이 설정이 만든 Pacemaker 리소스/제약조건을 제거하는 스크립트 생성.
@@ -1582,8 +1596,7 @@ mod tests {
         vec![
             ("multi: 2 FS, after_fs 없음", base(&["a", "b"], None)),
             ("multi: 2 FS, after_fs 둘 다", base(&["a", "b"], Some("fs_a, fs_b"))),
-            // 예전 UI 가 채우던 값 (첫 FS 하나만)
-            ("multi: 2 FS, after_fs 첫 FS만", base(&["a", "b"], Some("fs_a"))),
+            ("multi: 2 FS, after_fs 에 클론 이름", base(&["a", "b"], Some("drbd_a-clone, drbd_b-clone"))),
             ("multi: a만 FS", base(&["a"], None)),
             ("multi: a만 FS, after_fs 둘 다", base(&["a"], Some("fs_a,drbd_b-clone"))),
             ("multi: FS 없음", base(&[], None)),
@@ -1614,8 +1627,8 @@ mod tests {
     fn service_waits_for_every_drbd_volume_it_uses() {
         for (name, c) in multi_volume_cases() {
             let mut c = c;
-            let warnings = generate_default_constraints(&mut c);
-            assert!(warnings.is_empty(), "[{name}] 경고 {warnings:?}");
+            let report = generate_default_constraints(&mut c);
+            assert!(report.warnings.is_empty(), "[{name}] 경고 {:?}", report.warnings);
             let target = if c.resource_groups.is_empty() { "app" } else { "grp" };
             for d in &c.drbd_resources {
                 assert!(starts_before(&c, &d.clone_name, target), "[{name}] {target} 가 {} 를 기다리지 않음", d.clone_name);
@@ -1653,7 +1666,7 @@ mod tests {
     fn unknown_after_fs_name_is_reported() {
         let mut c = multi_volume_cases().remove(0).1;
         c.resource_groups[0].after_fs = Some("fs_a, fs_typo".to_string());
-        let warnings = generate_default_constraints(&mut c);
+        let warnings = generate_default_constraints(&mut c).warnings;
         assert!(warnings.iter().any(|w| w.contains("fs_typo")), "{warnings:?}");
     }
 
@@ -1666,9 +1679,39 @@ mod tests {
         c.colocation_constraints.clear();
         c.drbd_resources.push(drbd_named("extra"));
         c.fs_resources.push(fs_of("extra"));
-        let warnings = generate_default_constraints(&mut c);
+        let warnings = generate_default_constraints(&mut c).warnings;
         assert!(warnings.iter().any(|w| w.contains("fs_extra")), "{warnings:?}");
         assert!(!c.order_constraints.iter().any(|o| o.first == "fs_extra" && o.then.starts_with("group_")));
+    }
+
+    /// 그룹이 하나여도 예외 없이: after_fs 에 빠진 볼륨은 자동으로 붙이지 않고
+    /// 경고한다 (예전 UI 가 첫 FS 하나만 채우던 설정).
+    #[test]
+    fn after_fs_missing_a_volume_is_reported_even_with_one_group() {
+        let mut c = multi_volume_cases().remove(0).1;
+        c.resource_groups[0].after_fs = Some("fs_a".to_string());
+        let report = generate_default_constraints(&mut c);
+        assert!(report.warnings.iter().any(|w| w.contains("fs_b")), "{:?}", report.warnings);
+        assert!(!c.order_constraints.iter().any(|o| o.first == "fs_b" && o.then == "grp"));
+        assert!(!c.order_constraints.iter().any(|o| o.then == "app"), "멤버에 흩뿌리면 안 됨");
+    }
+
+    /// 결과 화면 요약: 서비스마다 실제로 기다리는 기준점이 정확히 나와야 한다.
+    #[test]
+    fn report_lists_what_each_service_waits_for() {
+        let mut c = multi_volume_cases().into_iter().find(|(n, _)| *n == "multi: a만 FS").unwrap().1;
+        let report = generate_default_constraints(&mut c);
+        assert_eq!(report.waits.len(), 1);
+        assert_eq!(report.waits[0].target, "grp");
+        assert_eq!(report.waits[0].anchors, vec!["fs_a".to_string(), "drbd_b-clone".to_string()]);
+        for a in &report.waits[0].anchors {
+            assert!(starts_before(&c, a, "grp"), "요약에 있는 {a} 가 실제 order 에 없음");
+        }
+
+        let mut c = multi_volume_cases().into_iter().find(|(n, _)| *n == "multi: 그룹 없음").unwrap().1;
+        let report = generate_default_constraints(&mut c);
+        assert_eq!(report.waits[0].target, "app");
+        assert_eq!(report.waits[0].anchors, vec!["fs_a".to_string(), "fs_b".to_string()]);
     }
 
     /// 6절 2항: colocation 과 order 는 항상 짝으로 생성돼야 한다.

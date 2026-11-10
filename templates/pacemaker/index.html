@@ -697,7 +697,8 @@ function updateGrpAfterFs() {
     const grps = JSON.parse(grpVal);
     if (grps.length > 0) {
       const anchors = defaultAfterFs();
-      if (anchors) grps.forEach(g => { if (!g.after_fs || g.after_fs.startsWith('fs-')) g.after_fs = anchors; });
+      // 비어 있을 때만 채운다 — 사용자가 적은 목록은 덮어쓰지 않는다.
+      if (anchors) grps.forEach(g => { if (!g.after_fs) g.after_fs = anchors; });
       const updated = JSON.stringify(grps, null, 2);
       if (grpEl._cmEditor) grpEl._cmEditor.setValue(updated);
       else grpEl.value = updated;
